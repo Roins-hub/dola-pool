@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "豆包 Dola 15秒去水印助手",
+  "version": "1.0.0",
+  "description": "支持15秒配置，并提取豆包和 Dola 的无水印图片、视频资源。",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "downloads"
+  ],
+  "host_permissions": [
+    "*://*.doubao.com/*",
+    "*://*.dola.com/*",
+    "*://*.byteintlapi.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.doubao.com/*",
+        "*://*.dola.com/*"
+      ],
+      "js": [
+        "content-panel.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "豆包 Dola 15秒去水印助手"
+  }
+}

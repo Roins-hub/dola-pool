@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+aiohttp
+requests
+pydantic
+patchright
+python-dotenv
+pillow
+pycryptodome
+cryptography
