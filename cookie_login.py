@@ -18,6 +18,7 @@
 import asyncio
 import json
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -211,14 +212,122 @@ async def _restore_web_storage(page, bundle: dict) -> dict:
     )
 
 
+def _patchright_driver_node() -> Path | None:
+    """patchright 自带的 driver/node 路径；拿不到返回 None。"""
+    try:
+        from patchright._impl._driver import compute_driver_executable
+
+        result = compute_driver_executable()
+        path = Path(str(result[0] if isinstance(result, (tuple, list)) else result))
+        if path.exists():
+            return path
+    except Exception:
+        pass
+    try:
+        import patchright
+
+        path = Path(patchright.__file__).resolve().parent / "driver" / "node"
+        if path.exists():
+            return path
+    except Exception:
+        pass
+    return None
+
+
+def browser_backend_available() -> tuple[bool, str]:
+    """浏览器后端能不能用，返回 (可用, 不可用原因)。
+
+    CentOS 7（glibc 2.17）上 patchright 的 driver/node 需要 glibc>=2.28，
+    启动只会抛「Connection closed while reading from the driver」。
+    这里先跑一次 --version 探明，探不通就让导入落到纯 API 路径
+    （cookie 来源账号出片/验证本来就只走纯 API，不需要浏览器）。
+    """
+    node = _patchright_driver_node()
+    if node is None:
+        return False, "patchright 驱动不存在（未安装或包被裁剪）"
+    try:
+        proc = subprocess.run(
+            [str(node), "--version"], capture_output=True, text=True, timeout=30
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, f"驱动无法执行: {type(exc).__name__}: {exc}"[:200]
+    if proc.returncode != 0:
+        first = ((proc.stderr or proc.stdout or "").strip().splitlines() or [""])[0]
+        return False, f"驱动无法执行: {first.strip()[:180]}"
+    return True, ""
+
+
+async def _apply_browser_profile(name: str, profile_dir: Path, cookies: list[dict],
+                                 storage_bundle: dict) -> tuple[bool, dict | None, str]:
+    """把 cookie 写进浏览器 persistent profile（仅当浏览器可用时走这条）。"""
+    pw_cookies = to_playwright_cookies(cookies)
+    use_edge = shutil.which("microsoft-edge-stable") is not None
+    if use_edge:
+        (profile_dir / EDGE_MARKER).write_text("edge", encoding="utf-8")
+    session_cookie_present = False
+    storage_result = None
+    page_error = ""
+    async with async_playwright() as p:
+        kwargs = {
+            "headless": config.HEADLESS,
+            "args": list(LAUNCH_ARGS),
+            "locale": "ja-JP",
+            "timezone_id": "Asia/Tokyo",
+        }
+        if use_edge:
+            kwargs["channel"] = "msedge"
+        proxy_kwargs = proxy_kwargs_for(name)
+        if proxy_kwargs:
+            kwargs["proxy"] = proxy_kwargs
+        ctx = await p.chromium.launch_persistent_context(
+            str(profile_dir), **kwargs
+        )
+        try:
+            await ctx.add_cookies(pw_cookies)
+            # 完整 bundle 需要打开 origin 后恢复 localStorage/sessionStorage/indexedDB。
+            # 打开后再补写一次 cookies，避免 dola 页面首次加载覆盖导入的会话 cookie。
+            if storage_bundle:
+                page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+                try:
+                    await page.goto(
+                        "https://www.dola.com/chat",
+                        timeout=60000,
+                        wait_until="domcontentloaded",
+                    )
+                    await page.wait_for_timeout(1500)
+                except Exception as exc:
+                    page_error = str(exc)[:300]
+                await ctx.add_cookies(pw_cookies)
+                try:
+                    storage_result = await _restore_web_storage(page, storage_bundle)
+                except Exception as exc:
+                    storage_result = {"errors": [str(exc)[:300]]}
+            stored = await ctx.cookies("https://www.dola.com")
+            session_cookie_present = any(
+                c["name"] == "sessionid" and c.get("value")
+                for c in stored
+            )
+        finally:
+            await ctx.close()
+    return session_cookie_present, storage_result, page_error
+
+
 async def import_cookie_account(name: str, cookie_data,
-                                require_login: bool = True) -> dict:
-    """把 cookie 写入 accounts/<name>/ profile 并验证登录态。
+                                require_login: bool = True,
+                                browser: bool | None = None) -> dict:
+    """把 cookie 导入 accounts/<name>/ 并验证登录态。
+
+    两条路：
+    - 浏览器可用（browser=True 或自动探测可用）：写 persistent profile + add_cookies，
+      有 web storage bundle 时一并恢复，与旧行为一致；
+    - 浏览器不可用（例如 CentOS7 上 patchright 驱动 node 缺 glibc>=2.28）：只落盘
+      cookie_state.json，登录态改走纯 API 探活。cookie 来源账号的出片本来就只走
+      纯 API，所以少了 profile 不影响出片，也不会再抛
+      「写入 cookie profile 失败: Connection closed while reading from the driver」。
 
     验证失败不再删除 profile（非破坏，对齐 dola-pool-cookie）：账号入池并标记「未验证」，
-    配好代理后可到面板点“验证”复核；cookie 同时落盘为 cookie_state.json 供纯 API 复用。
-    require_login=False 时只写入 cookie 不验证（供无 JP/KR 代理时先导入，
-    之后在面板点“验证”复核）。
+    配好代理后可到面板点“验证”复核。
+    require_login=False 时只写入不验证。
     """
     name = (name or "").strip()
     if not name or any(ch in name for ch in "/\\"):
@@ -229,88 +338,73 @@ async def import_cookie_account(name: str, cookie_data,
     cookies = normalize_cookies(cookie_data)
     if not cookies:
         raise ValueError("cookie 列表为空")
-    pw_cookies = to_playwright_cookies(cookies)
     storage_bundle = normalize_storage_bundle(cookie_data)
 
     profile_dir.mkdir(parents=True, exist_ok=False)
     _write_cookie_state(profile_dir, cookies, storage_bundle)
-    use_edge = shutil.which("microsoft-edge-stable") is not None
-    if use_edge:
-        (profile_dir / EDGE_MARKER).write_text("edge", encoding="utf-8")
-    session_cookie_present = False
+    state_file = profile_dir / "cookie_state.json"
+
+    ok, reason = browser_backend_available()
+    use_browser = ok if browser is None else bool(browser)
+    engine = "browser" if use_browser else "pure"
+    browser_error = "" if use_browser else reason
+    session_cookie_present = any(
+        str(c.get("name")) == "sessionid" and c.get("value") for c in cookies
+    )
     storage_result = None
     page_error = ""
-    try:
-        async with async_playwright() as p:
-            kwargs = {
-                "headless": config.HEADLESS,
-                "args": list(LAUNCH_ARGS),
-                "locale": "ja-JP",
-                "timezone_id": "Asia/Tokyo",
-            }
-            if use_edge:
-                kwargs["channel"] = "msedge"
-            proxy_kwargs = proxy_kwargs_for(name)
-            if proxy_kwargs:
-                kwargs["proxy"] = proxy_kwargs
-            ctx = await p.chromium.launch_persistent_context(
-                str(profile_dir), **kwargs
-            )
-            try:
-                await ctx.add_cookies(pw_cookies)
-                # 完整 bundle 需要打开 origin 后恢复 localStorage/sessionStorage/indexedDB。
-                # 打开后再补写一次 cookies，避免 dola 页面首次加载覆盖导入的会话 cookie。
-                if storage_bundle:
-                    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+
+    if use_browser:
+        try:
+            session_cookie_present, storage_result, page_error = \
+                await _apply_browser_profile(name, profile_dir, cookies, storage_bundle)
+        except Exception as exc:
+            # 浏览器路径挂了（驱动/内核/代理）不该让整批导入失败：
+            # cookie_state.json 已落盘，账号照样能走纯 API。
+            browser_error = f"{type(exc).__name__}: {exc}"[:200]
+            engine = "pure"
+            page_error = browser_error
+            for item in list(profile_dir.iterdir()):
+                if item.name == "cookie_state.json":
+                    continue
+                if item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+                else:
                     try:
-                        await page.goto(
-                            "https://www.dola.com/chat",
-                            timeout=60000,
-                            wait_until="domcontentloaded",
-                        )
-                        await page.wait_for_timeout(1500)
-                    except Exception as exc:
-                        page_error = str(exc)[:300]
-                    await ctx.add_cookies(pw_cookies)
-                    try:
-                        storage_result = await _restore_web_storage(page, storage_bundle)
-                    except Exception as exc:
-                        storage_result = {"errors": [str(exc)[:300]]}
-                stored = await ctx.cookies("https://www.dola.com")
-                session_cookie_present = any(
-                    c["name"] == "sessionid" and c.get("value")
-                    for c in stored
-                )
-            finally:
-                await ctx.close()
-    except Exception as exc:
-        shutil.rmtree(profile_dir, ignore_errors=True)
-        raise RuntimeError(f"写入 cookie profile 失败: {exc}") from exc
+                        item.unlink()
+                    except OSError:
+                        pass
 
     verify_error = ""
+    verified = False
     if require_login:
-        # 独立再开一次 context 做真实登录态验证（与面板“验证”按钮同逻辑）
-        try:
-            verified = await check_login_state(name)
-        except Exception as exc:
-            verified = False
-            page_error = page_error or str(exc)[:300]
+        if engine == "browser" and not config.PURE_API_ENABLED:
+            # 只有明确关掉纯 API 时才需要浏览器验证
+            try:
+                verified = await check_login_state(name)
+            except Exception as exc:
+                page_error = page_error or str(exc)[:300]
+            if not verified:
+                verify_error = page_error or "dola.com 未返回已登录状态"
+        else:
+            # cookie 账号走纯 API 探活：不开浏览器，也不会占 profile
+            from pure_api_gen import probe_login
 
-        if not verified:
-            # 非破坏：验证失败保留 profile 与账号（对齐 dola-pool-cookie），
-            # 由调用方把账号标记为「未验证」，而不是删除后报错。
-            verify_error = page_error or "dola.com 未返回已登录状态"
-    else:
-        verified = False
+            valid, detail = await asyncio.to_thread(probe_login, state_file)
+            verified = bool(valid)
+            if not verified:
+                verify_error = detail or "纯 API 探活未通过"
 
     return {
         "ok": True,
         "account": name,
         "cookie_count": len(cookies),
-        "cookie_state_file": str(profile_dir / "cookie_state.json"),
+        "cookie_state_file": str(state_file),
         "session_cookie_present": session_cookie_present,
         "storage_result": storage_result,
         "profile": str(profile_dir),
+        "engine": engine,
+        "browser_error": browser_error,
         "verified": verified,
         "verify_error": verify_error,
     }
@@ -319,7 +413,7 @@ async def import_cookie_account(name: str, cookie_data,
 async def import_cookie_accounts_from_text(pool, raw_text: str,
                                            name_prefix: str = "acc",
                                            require_login: bool = True) -> dict:
-    """多行 Cookie 头文本批量导入（对齐 api-pool 的 import-cookies）。
+    """Cookie 头文本 / Cookie JSON 批量导入（对齐 api-pool 的 import-cookies）。
 
     - 按 sessionid 去重：已存在则记入 updated（不重复建号）；
     - 新 sessionid 自动命名 acc<N>（跳过已占用名）；

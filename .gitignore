@@ -14,6 +14,7 @@ accounts/
 
 # --- generated media ---
 downloads/
+refs/
 
 # --- probe / debug artifacts (contain live session snippets) ---
 /*.html
@@ -23,6 +24,8 @@ downloads/
 /*.txt
 !requirements.txt
 !README.md
+!deploy-constraints.txt
+!deploy-extra-requirements.txt
 
 # --- one-off debug script (contains a signed CDN url) ---
 dl_now.py
@@ -35,3 +38,14 @@ __pycache__/
 # --- deployment secrets / local backups (added locally) ---
 dola.env
 *.bak-*
+
+# --- 服务器专属文件（服务器目录本身是个 git 工作副本，这些不进仓库）---
+# run.sh 里是真实的 DOLA_PUBLIC_BASE 与 DOLA_API_KEYS；仓库里只有 deploy/run.sh.example
+/run.sh
+/service.sh
+/healthcheck.sh
+/DEPLOY-BT.md
+/.pytest_cache/
+# cred_store.py 的加密密钥（用来解密 accounts/<号>/ 里的 cookie）；泄漏 = 号全丢
+/cred.key
+*.key

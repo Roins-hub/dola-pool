@@ -1,7 +1,9 @@
 fastapi
 uvicorn[standard]
+python-multipart
 aiohttp
 requests
+PySocks
 pydantic
 patchright
 python-dotenv

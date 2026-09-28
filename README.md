@@ -52,7 +52,13 @@ export DOLA_ADMIN_KEY=change-me      # 管理面板密钥
 export DOLA_PROXY=http://user:pass@jp-proxy:port
 export DOLA_PUBLIC_BASE=https://your-domain   # 生成 video_url 用的对外地址
 
-uvicorn server:app --host 127.0.0.1 --port 8002
+# 4. 配置服务
+export DOLA_API_KEYS=sk-xxx        # 对外 API key，逗号分隔多个
+export DOLA_MAX_CONCURRENCY=0      # 全局出片并发，0 = 不限（默认）
+export DOLA_VIDEO_TIMEOUT=300      # 出片超时（秒）
+
+# 5. 启动
+uvicorn server:app --host 127.0.0.1 --port 8002   # 只监听本机，由 nginx 对外
 ```
 
 打开 `http://127.0.0.1:8002/` 进入管理面板，`/docs` 是 Swagger 接口文档。

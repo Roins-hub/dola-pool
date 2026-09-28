@@ -1,0 +1,10 @@
+[Unit]
+Description=Run stable-dola-pool health watchdog every 2 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+Unit=stable-dola-pool-health.service
+
+[Install]
+WantedBy=timers.target

@@ -5,67 +5,139 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>dola-pool 管理面板</title>
 <style>
-:root{--bg:#f2f5f4;--card:#fff;--line:#e5e9e8;--text:#1f2a28;--sub:#7a8a86;--accent:#00a870;--accent-d:#008e5d;--red:#e5484d;--orange:#f59e0b;--blue:#3b82f6;--gray:#9aa8a4}
+:root{
+  --bg:#0a0f1d;--card:rgba(255,255,255,.08);
+  --glass:linear-gradient(158deg,rgba(255,255,255,.115),rgba(255,255,255,.035));
+  --glass-hi:linear-gradient(158deg,rgba(255,255,255,.18),rgba(255,255,255,.06));
+  --stroke:rgba(255,255,255,.15);--stroke-hi:rgba(255,255,255,.28);
+  --blur:blur(20px) saturate(170%);
+  --text:#eaf0f7;--sub:#93a2b6;--line:rgba(255,255,255,.11);
+  --accent:#2ee6a8;--accent-d:#12c58c;--red:#ff6b6b;--orange:#ffb454;--blue:#6ba8ff;--gray:#8b98a8;--ok:#2ee6a8;
+  --shadow:0 10px 34px rgba(0,0,0,.34);--r:18px;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#080c18;color:var(--text);font-size:14px;min-height:100vh}
+body::before{content:"";position:fixed;inset:-25vh -25vw;z-index:-2;pointer-events:none;
+  background:
+    radial-gradient(46% 46% at 12% 10%,rgba(46,230,168,.34),transparent 62%),
+    radial-gradient(42% 42% at 88% 6%,rgba(107,168,255,.32),transparent 64%),
+    radial-gradient(50% 50% at 74% 92%,rgba(168,105,255,.30),transparent 62%),
+    radial-gradient(40% 40% at 22% 88%,rgba(255,140,110,.22),transparent 64%);
+  filter:blur(28px);animation:drift 26s ease-in-out infinite alternate}
+body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:linear-gradient(180deg,rgba(8,12,24,.42),rgba(8,12,24,.74))}
+@keyframes drift{from{transform:translate3d(-2%,-1%,0) scale(1)}to{transform:translate3d(3%,2%,0) scale(1.12)}}
 a{color:var(--accent);text-decoration:none}
-header{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;height:56px;padding:0 20px;background:var(--card);border-bottom:1px solid var(--line)}
-.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:16px}
-.dot{width:12px;height:12px;border-radius:3px;background:var(--accent)}
-.head-r{display:flex;align-items:center;gap:14px;color:var(--sub);font-size:13px}
-.head-r label{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
-nav{display:flex;gap:4px;padding:12px 20px 0;border-bottom:1px solid var(--line);background:var(--bg)}
-nav button{border:none;background:none;padding:10px 16px;font-size:14px;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent}
-nav button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
-main{padding:20px;max-width:1180px;margin:0 auto}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+.sidebar{position:fixed;inset:14px auto 14px 14px;width:234px;z-index:30;display:flex;flex-direction:column;gap:16px;padding:16px 13px;
+  background:var(--glass);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+  border:1px solid var(--stroke);border-radius:22px;box-shadow:var(--shadow)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px;padding:6px 8px 0;letter-spacing:.2px}
+.dot{width:11px;height:11px;border-radius:4px;background:linear-gradient(135deg,var(--accent),#6ba8ff);box-shadow:0 0 14px rgba(46,230,168,.75)}
+.side-nav{display:flex;flex-direction:column;gap:4px;flex:1;min-height:0;overflow-y:auto}
+.nav-item{display:flex;align-items:center;gap:11px;width:100%;padding:10px 12px;border-radius:13px;border:1px solid transparent;
+  background:none;color:var(--sub);font-size:14px;font-family:inherit;cursor:pointer;text-align:left;transition:.18s}
+.nav-item svg{width:17px;height:17px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.nav-item:hover{background:rgba(255,255,255,.08);color:var(--text)}
+.nav-item.on{color:#eafff8;font-weight:600;background:linear-gradient(135deg,rgba(46,230,168,.26),rgba(46,230,168,.07));
+  border-color:rgba(46,230,168,.4);box-shadow:0 6px 20px rgba(46,230,168,.16)}
+.side-foot{display:flex;flex-direction:column;gap:8px;padding-top:13px;border-top:1px solid var(--line)}
+.side-foot .btn{width:100%;justify-content:center}
+.sw-row{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sub);cursor:pointer;user-select:none}
+#lastUpdate{font-size:11.5px;color:var(--sub);text-align:center}
+#lastUpdate:empty{display:none}
+main{padding:26px 30px 44px;margin-left:262px;max-width:1320px}
+.card{background:var(--glass);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+  border:1px solid var(--stroke);border-radius:var(--r);padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
 .card h3{font-size:14px;margin-bottom:14px;font-weight:600}
 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
-.stat{padding:16px;border-radius:12px;color:#fff;display:flex;flex-direction:column;gap:6px}
+.stat{padding:16px;border-radius:var(--r);display:flex;flex-direction:column;gap:6px;color:#fff;
+  border:1px solid var(--stroke-hi);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+  box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.22)}
 .stat .v{font-size:28px;font-weight:700}
-.stat .l{font-size:13px;opacity:.85}
-.s1{background:linear-gradient(135deg,#00b875,#00945f)}.s2{background:linear-gradient(135deg,#e5484d,#b93237)}
-.s3{background:linear-gradient(135deg,#3b82f6,#2563eb)}.s4{background:linear-gradient(135deg,#f59e0b,#d97706)}
+.stat .l{font-size:13px;opacity:.9}
+.s1{background:linear-gradient(135deg,rgba(46,230,168,.62),rgba(0,148,95,.44))}
+.s2{background:linear-gradient(135deg,rgba(255,107,107,.60),rgba(185,50,55,.42))}
+.s3{background:linear-gradient(135deg,rgba(107,168,255,.60),rgba(37,99,235,.42))}
+.s4{background:linear-gradient(135deg,rgba(255,180,84,.64),rgba(217,119,6,.46))}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
 th{color:var(--sub);font-weight:500;white-space:nowrap}
+tbody tr{transition:.15s}
+tbody tr:hover{background:rgba(255,255,255,.045)}
+.pager{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 2px 2px;color:var(--sub);font-size:12px}
+.pager button[disabled]{opacity:.45;cursor:not-allowed}
+.thumb{width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in;
+  border:1px solid var(--line);vertical-align:middle;display:block}
+#thumbImg{max-width:100%;max-height:70vh;border-radius:8px;display:block}
+.prompt-body{white-space:pre-wrap;word-break:break-word;max-height:60vh;overflow:auto;
+  background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:8px;
+  padding:12px;font-size:13px;line-height:1.6}
 td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;white-space:nowrap}
-.b-green{background:#e6f7f0;color:#00945f}.b-red{background:#fdeaea;color:#c03237}
-.b-orange{background:#fef4e6;color:#c77a00}.b-blue{background:#e8f1fe;color:#2563eb}
-.b-gray{background:#eef1f0;color:#7a8a86}
-.btn{border:1px solid var(--line);background:#fff;color:var(--text);padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px}
-.btn:hover{border-color:var(--accent);color:var(--accent)}
-.btn-p{background:var(--accent);color:#fff;border:none}
-.btn-p:hover{background:var(--accent-d);color:#fff}
-.btn-danger{color:#c03237}
-.btn-danger:hover{border-color:#e5484d;color:#e5484d}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;white-space:nowrap;border:1px solid transparent}
+.b-green{background:rgba(46,230,168,.16);color:#5cf0bb;border-color:rgba(46,230,168,.3)}
+.b-red{background:rgba(255,107,107,.16);color:#ff9a9a;border-color:rgba(255,107,107,.3)}
+.b-orange{background:rgba(255,180,84,.16);color:#ffcb85;border-color:rgba(255,180,84,.3)}
+.b-blue{background:rgba(107,168,255,.16);color:#a3c9ff;border-color:rgba(107,168,255,.3)}
+.b-gray{background:rgba(255,255,255,.09);color:#a9b6c6;border-color:rgba(255,255,255,.16)}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--stroke);background:var(--glass-hi);color:var(--text);
+  backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);padding:7px 14px;border-radius:11px;cursor:pointer;
+  font-size:13px;font-family:inherit;transition:.18s}
+.btn:hover{border-color:var(--stroke-hi);background:rgba(255,255,255,.17)}
+.btn-p{background:linear-gradient(135deg,var(--accent),var(--accent-d));color:#052a1e;border-color:transparent;font-weight:600;box-shadow:0 6px 20px rgba(46,230,168,.24)}
+.btn-p:hover{background:linear-gradient(135deg,#3df0b4,#16d698);color:#052a1e;border-color:transparent}
+.btn-danger{color:#ff9a9a}
+.btn-danger:hover{border-color:rgba(255,107,107,.55);color:#ffb3b3;background:rgba(255,107,107,.12)}
+.btn:disabled{opacity:.42;cursor:not-allowed}
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .toolbar .hint{color:var(--sub);font-size:12px}
-/* nowrap-fix */
+/* 分组按钮条：每个按钮带数量，点一下筛表 */
+.groupbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 0 6px;border-top:1px solid var(--line);margin-top:4px}
+.groupbar .sep{width:1px;height:20px;background:var(--line);margin:0 4px}
+.gbtn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;font-size:13px;cursor:pointer;
+  border:1px solid var(--stroke);background:var(--glass-hi);color:var(--text);transition:.15s;white-space:nowrap}
+.gbtn:hover{border-color:var(--stroke-hi);background:rgba(255,255,255,.17)}
+.gbtn.on{background:linear-gradient(135deg,var(--accent),var(--accent-d));color:#052a1e;border-color:transparent;font-weight:600}
+.gbtn b{font-variant-numeric:tabular-nums}
+.gbtn .n{opacity:.85;font-size:12px}
+.gbtn.points{cursor:default;border-style:dashed}
+.gbtn.points:hover{background:var(--glass-hi);border-color:var(--stroke)}
+.hint{color:var(--sub);font-size:12px;line-height:1.65}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:rgba(255,255,255,.1);padding:1px 5px;border-radius:5px}
+input:not([type=checkbox]):not([type=radio]),select,textarea{background:rgba(255,255,255,.07);color:var(--text);
+  border:1px solid var(--line);border-radius:10px;font-family:inherit;outline:none;transition:.18s}
+input:not([type=checkbox]):not([type=radio]):focus,select:focus,textarea:focus{border-color:rgba(46,230,168,.55);
+  box-shadow:0 0 0 3px rgba(46,230,168,.14);background:rgba(255,255,255,.1)}
+input::placeholder,textarea::placeholder{color:#6d7c90}
+select option{background:#111827;color:var(--text)}
+input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
+#accountsTable,#proxiesTable,#tasksTable,#videosTable,#keysTable,#usersTable,#perAccount{overflow-x:auto}
+/* nowrap-fix：窄屏时按钮/标题不折字，工具栏整体换行 */
 .btn,.toolbar h3,.toolbar select{white-space:nowrap}
 .toolbar{flex-wrap:wrap;gap:10px}
 .toolbar>div{flex-wrap:wrap}
 .sw{position:relative;display:inline-block;width:36px;height:20px}
 .sw input{opacity:0;width:0;height:0}
-.sw i{position:absolute;inset:0;background:#cfd8d5;border-radius:999px;transition:.2s;cursor:pointer}
-.sw i:before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.sw i{position:absolute;inset:0;background:rgba(255,255,255,.18);border-radius:999px;transition:.2s;cursor:pointer}
+.sw i:before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.35)}
 .sw input:checked+i{background:var(--accent)}
 .sw input:checked+i:before{transform:translateX(16px)}
-.mask{position:fixed;inset:0;background:rgba(20,30,28,.45);display:flex;align-items:center;justify-content:center;z-index:100}
-.mask .box{background:#fff;border-radius:14px;padding:28px;width:320px}
+.mask{position:fixed;inset:0;background:rgba(4,8,16,.62);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  display:flex;align-items:center;justify-content:center;z-index:100}
+.mask .box{background:var(--glass);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+  border:1px solid var(--stroke);border-radius:20px;padding:28px;width:330px;box-shadow:var(--shadow)}
 .mask h2{font-size:17px;margin-bottom:18px}
-.mask input{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:14px;font-size:14px}
-.mask .err{color:#c03237;font-size:12px;margin-bottom:10px;display:none}
+.mask input{width:100%;padding:10px 12px;margin-bottom:14px;font-size:14px}
+.mask .err{color:#ff9a9a;font-size:12px;margin-bottom:10px;display:none}
 .mask button{width:100%}
-.dialog{position:fixed;inset:0;background:rgba(20,30,28,.45);display:flex;align-items:center;justify-content:center;z-index:90}
-.dialog .box{background:#fff;border-radius:14px;padding:24px;width:400px;max-width:92vw;max-height:86vh;overflow:auto}
+.dialog{position:fixed;inset:0;background:rgba(4,8,16,.62);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  display:flex;align-items:center;justify-content:center;z-index:90}
+.dialog .box{background:var(--glass);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+  border:1px solid var(--stroke);border-radius:20px;padding:24px;width:400px;max-width:92vw;max-height:86vh;overflow:auto;box-shadow:var(--shadow)}
 .dialog h2{font-size:16px;margin-bottom:16px}
 .dialog label{display:block;font-size:12px;color:var(--sub);margin:10px 0 4px}
-.dialog input{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+.dialog input{width:100%;padding:8px 12px;font-size:13px}
 .dialog .row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
-.keyfull{font-family:monospace;background:#f5f7f6;border:1px dashed var(--line);border-radius:8px;padding:12px;word-break:break-all;margin:10px 0}
+.keyfull{font-family:monospace;background:rgba(255,255,255,.07);border:1px dashed var(--stroke-hi);border-radius:10px;padding:12px;word-break:break-all;margin:10px 0}
 .chart{display:flex;align-items:flex-end;gap:14px;height:140px;padding:0 4px}
 .chart .col{display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;height:100%;justify-content:flex-end}
 .chart .bars{display:flex;gap:4px;align-items:flex-end;height:110px}
@@ -74,7 +146,34 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .empty{padding:34px;text-align:center;color:var(--sub)}
 .video-wrap{display:flex;gap:8px;align-items:center}
 .tiny{font-size:12px;color:var(--sub)}
-.account-id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#52615d;font-weight:600}
+/* 报错/备注：上游拒稿原文（审核不合规、肖像保护、侵权…）字数多且可能带换行，
+   这里完整展开显示，不再为了一行放下而截断成 30 字。 */
+.err{display:inline-block;max-width:420px;white-space:pre-wrap;word-break:break-word;
+  font-size:12px;line-height:1.55;color:#ff9a9a}
+.note{display:inline-block;max-width:300px;white-space:pre-wrap;word-break:break-word;
+  font-size:12px;line-height:1.55;color:var(--sub);cursor:pointer}
+.note:hover{color:#a9d8c6}
+.log-pane{max-height:260px;overflow:auto;background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:10px;
+  padding:10px;white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace}
+.account-id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#a9d8c6;font-weight:600}
+::selection{background:rgba(46,230,168,.32)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:99px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.26)}
+::-webkit-scrollbar-track{background:transparent}
+@media (max-width:920px){
+  .sidebar{inset:10px auto 10px 10px;width:92px;padding:14px 10px;gap:12px}
+  .brand{justify-content:center;padding:0}
+  .brand-t{display:none}
+  .nav-item{justify-content:center;padding:11px 0}
+  .nav-item span{display:none}
+  .side-foot .btn{font-size:11.5px;padding:6px 4px}
+  .sw-row{justify-content:center;font-size:12px}
+  #lastUpdate{display:none}
+  main{margin-left:118px;padding:20px 16px 40px}
+  .cards{grid-template-columns:repeat(2,1fr)}
+  th,td{white-space:nowrap}
+}
 </style>
 </head>
 <body>
@@ -88,32 +187,35 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
   </div>
 </div>
 
-<header>
-  <div class="brand"><span class="dot"></span>dola-pool 管理面板</div>
-  <div class="head-r">
-    <label><input type="checkbox" id="autoCk" checked onchange="autoRefresh=this.checked">自动刷新</label>
+<aside class="sidebar">
+  <div class="brand"><span class="dot"></span><span class="brand-t">dola-pool</span></div>
+
+  <nav class="side-nav">
+    <button class="nav-item on" data-tab="dash" onclick="switchTab('dash')"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8"/></svg><span>仪表盘</span></button>
+    <button class="nav-item" data-tab="accounts" onclick="switchTab('accounts')"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M4.8 20c0-3.5 3.2-5.9 7.2-5.9s7.2 2.4 7.2 5.9"/></svg><span>账号管理</span></button>
+    <button class="nav-item" data-tab="proxies" onclick="switchTab('proxies')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2M12 3.4c2.4 2.7 2.4 14.5 0 17.2M12 3.4c-2.4 2.7-2.4 14.5 0 17.2"/></svg><span>代理管理</span></button>
+    <button class="nav-item" data-tab="tasks" onclick="switchTab('tasks')"><svg viewBox="0 0 24 24"><path d="M9.5 6h10.5M9.5 12h10.5M9.5 18h10.5"/><circle cx="4.8" cy="6" r="1.4"/><circle cx="4.8" cy="12" r="1.4"/><circle cx="4.8" cy="18" r="1.4"/></svg><span>任务列表</span></button>
+    <button class="nav-item" data-tab="videos" onclick="switchTab('videos')"><svg viewBox="0 0 24 24"><rect x="2.8" y="5" width="18.4" height="14" rx="2.6"/><path d="M10.2 9.3l5.2 2.7-5.2 2.7z" fill="currentColor" stroke="none"/></svg><span>视频管理</span></button>
+    <button class="nav-item" data-tab="keys" onclick="switchTab('keys')"><svg viewBox="0 0 24 24"><circle cx="8" cy="14.4" r="4.3"/><path d="M11.2 11.2l8-8M17 5.4l2.4 2.4M14.4 8l2.4 2.4"/></svg><span>API 密钥</span></button>
+    <button class="nav-item" data-tab="users" onclick="switchTab('users')"><svg viewBox="0 0 24 24"><circle cx="9.4" cy="8" r="3.4"/><path d="M2.9 20c0-3.4 2.9-5.6 6.5-5.6s6.5 2.2 6.5 5.6"/><path d="M17.2 5.3a3.4 3.4 0 010 6.5M18.6 20c0-2.4-.8-4.2-2.2-5.2"/></svg><span>用户管理</span></button>
+  </nav>
+
+  <div class="side-foot">
+    <label class="sw-row"><input type="checkbox" id="autoCk" checked onchange="autoRefresh=this.checked">自动刷新</label>
     <span id="lastUpdate"></span>
     <button class="btn" onclick="refresh()">刷新</button>
     <button class="btn btn-p" onclick="openStress()">压力测试</button>
-    <button class="btn" onclick="logout()" title="清除面板密码">注销</button>
+    <button class="btn btn-danger" onclick="logout()" title="清除面板密码">注销</button>
   </div>
-</header>
-
-<nav>
-  <button class="on" data-tab="dash" onclick="switchTab('dash')">仪表盘</button>
-  <button data-tab="accounts" onclick="switchTab('accounts')">账号管理</button>
-  <button data-tab="proxies" onclick="switchTab('proxies')">代理管理</button>
-  <button data-tab="tasks" onclick="switchTab('tasks')">任务列表</button>
-  <button data-tab="videos" onclick="switchTab('videos')">视频管理</button>
-  <button data-tab="keys" onclick="switchTab('keys')">API 密钥</button>
-  <button data-tab="users" onclick="switchTab('users')">用户管理</button>
-</nav>
+</aside>
 
 <main>
   <section id="tab-dash">
     <div class="cards" id="statCards"></div>
     <div class="card"><h3>近 7 日出片趋势</h3><div class="chart" id="chart"></div></div>
-    <div class="card"><h3>号池概况</h3><div id="perAccount"></div></div>
+    <div class="card"><h3>号池概况</h3>
+      <div class="groupbar" id="poolGroups" style="border-top:none;padding:0 0 12px"></div>
+      <div id="perAccount"></div></div>
   </section>
 
   <section id="tab-accounts" style="display:none">
@@ -122,25 +224,22 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
         <h3 style="margin:0">账号列表</h3>
         <span id="resetHint" class="tiny"></span>
         <div style="display:flex;gap:8px">
-          <select id="srcFilter" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--tx)" onchange="srcFilterVal=this.value;clearAccSel();loadAccounts()">
+          <select id="srcFilter" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)" onchange="srcFilterVal=this.value;accPage=1;loadAccounts()">
             <option value="all">全部来源</option>
             <option value="login">账号登录</option>
             <option value="cookie">Cookie 载入</option>
           </select>
-          <select id="stFilter" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--tx)" onchange="stFilterVal=this.value;clearAccSel();loadAccounts()">
-            <option value="all">全部状态</option>
-            <option value="ok">有效</option>
-            <option value="bad">失效</option>
-            <option value="unknown">未验证</option>
-          </select>
           <button class="btn btn-danger" id="btnDelSel" onclick="delSelected()" disabled>删除选中</button>
           <button class="btn" id="btnVerifySel" onclick="batchVerifySelected()" disabled>一键验证</button>
+          <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="发一句「你好」判风控：被登出或没回复 → 进【风控】组；不勾选就对当前筛选出来的号批量探测">你好探测</button>
+          <button class="btn" id="btnBatchRecover" onclick="batchRecover()" title="批量把选中的号从【风控】/【异常】组放出来（风控恢复后回到【待激活】，建议接着探测一次）">批量恢复</button>
           <button class="btn" id="btnProxySel" onclick="openBatchProxy()" disabled>更改代理</button>
           <button class="btn" onclick="resetAllQuotas()" title="立即恢复全池额度（每天按设定时点自动执行一次）">重置额度</button>
           <button class="btn" onclick="openBatchAdd()">＋ 批量添加</button>
           <button class="btn btn-p" onclick="openAddAccount()">＋ 添加账号</button>
         </div>
       </div>
+      <div class="groupbar" id="groupBar"></div>
       <div id="accountsTable"></div>
     </div>
   </section>
@@ -175,7 +274,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
           <button class="btn" onclick="loadVideos()">刷新</button>
         </div>
       </div>
-      <div id="videoStat" style="margin:10px 0 6px;color:#888;font-size:13px">视频统计加载中…</div>
+      <div id="videoStat" style="margin:10px 0 6px;color:var(--sub);font-size:13px">视频统计加载中…</div>
       <div id="videosTable"></div>
     </div>
   </section>
@@ -204,6 +303,24 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 </main>
 
 <div id="dlg" class="dialog" style="display:none"><div class="box" id="dlgBox"></div></div>
+<div id="promptModal" class="dialog" style="display:none">
+  <div class="box" style="width:720px">
+    <h2>任务提示词</h2>
+    <div class="tiny" id="promptMeta" style="margin-bottom:10px"></div>
+    <div class="prompt-body" id="promptBody"></div>
+    <div class="row">
+      <button class="btn" id="promptCopyBtn" onclick="copyPrompt()">复制</button>
+      <button class="btn" onclick="hide('promptModal')">关闭</button>
+    </div>
+  </div>
+</div>
+<div id="thumbModal" class="dialog" style="display:none">
+  <div class="box" style="width:520px">
+    <h2>参考图</h2>
+    <img id="thumbImg" alt="参考图">
+    <div class="row"><button class="btn" onclick="hide('thumbModal')">关闭</button></div>
+  </div>
+</div>
 <div id="videoModal" class="dialog" style="display:none">
   <div class="box" style="width:640px">
     <h2>视频预览</h2>
@@ -248,7 +365,7 @@ function logout(){adminKey='';localStorage.removeItem(LS_KEY);showLogin();}
 
 function switchTab(t){
   curTab=t;
-  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
+  document.querySelectorAll('.side-nav .nav-item').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
   ['dash','accounts','proxies','tasks','videos','keys','users'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
   refresh();
 }
@@ -276,6 +393,7 @@ async function loadDash(){
     <div class="stat s2"><div class="v">${st.today_failed}</div><div class="l">今日失败</div></div>
     <div class="stat s3"><div class="v">${sr}</div><div class="l">成功率</div></div>
     <div class="stat s4"><div class="v">${st.available_accounts}/${st.total_accounts}</div><div class="l">可用号 · 剩余 ${st.total_remaining} 点</div></div>`;
+  renderGroupBar(st,'#poolGroups',true);
   const max=Math.max(1,...st.per_day.map(d=>d.completed+d.failed));
   q('#chart').innerHTML=st.per_day.map(d=>`
     <div class="col">
@@ -286,30 +404,28 @@ async function loadDash(){
       <div class="lbl">${d.day}</div>
     </div>`).join('');
   q('#perAccount').innerHTML=table(
-    ['账号','状态','调度','剩余额度','累计出片','最近使用'],
+    ['账号','组','调度','剩余额度','累计出片','最近使用','备注'],
     st.per_account.map(a=>[
       accLabel(a),
-      statusBadge(a),
+      groupBadge(a),
       `<label class="sw"><input type="checkbox" ${a.scheduling?'checked':''} onchange="setSched('${a.name}',this.checked)"><i></i></label>`,
       `<b>${a.remaining}</b> / ${a.limit}<span class="tiny">（点数/上限）</span>`+
         (a.credit_balance==null?'':`<div class="tiny">上游余额 ${a.credit_balance}${a.credit_balance<2?'（已用完）':''}</div>`),
       a.completed_total||0,
-      fmt(a.last_used_at)
+      fmt(a.last_used_at),
+      noteCell(a)
     ])
   );
 }
 
 function accLabel(x){return x.email?`<div>${esc(x.email)}</div>`:'<span class="tiny">未录入邮箱</span>';}
+/** 运行态（与分组正交的瞬时信息）：出片中 / 加号任务 / 动态代理出口 IP。
+    风控、冷却、待激活、异常这些「状态」已经由分组列表达，不在这里重复；
+    「限流」「失败(待全池重置)」两个概念已于 2.1.0 P3 删除。 */
 function statusBadge(a){
   if(a.busy)return '<span class="badge b-blue">出片中</span>';
-  if(a.risk_control)return '<span class="badge b-orange" title="'+esc(a.risk_reason||'被风控')+'">风控</span>';
-  if(a.rate_limited)return '<span class="badge b-orange">限流至 '+fmt(a.rate_limited_until)+'</span>';
-  if(a.quota_blocked)return '<span class="badge b-orange">积分不足至 '+fmt(a.quota_blocked_until)+'</span>';
-  if(a.cooling)return '<span class="badge b-orange">冷却至 '+fmtHM(a.cooldown_until)+'</span>';
-  if(a.failed)return '<span class="badge b-red" title="'+esc(a.failed_reason||'生成失败')+'">失败(待全池重置)</span>';
-  if(a.login_ok===0)return '<span class="badge b-red">失效</span>';
-  if(a.login_ok===1)return '<span class="badge b-green">有效</span>';
-  return '<span class="badge b-gray">未验证</span>';
+  if(a.login_ok===0)return '<span class="badge b-red">登录失效</span>';
+  return '<span class="tiny">—</span>';
 }
 
 function table(heads,rows){
@@ -324,16 +440,56 @@ async function setSched(name,on){
 /* ---- 账号管理 ---- */
 let selAccounts=new Set();
 let allAccountNames=[];
+// 账号列表分页：1200 个号一次性渲染 + 每 10 秒重刷会把面板拖死，所以分页渲染
+const ACC_PAGE_SIZE=30;
+let accPage=1;
+let filteredAccounts=[];
+let filteredNames=[];
+let allAccounts=[];
 let proxyCache=[];
 let srcFilterVal='all';
-let stFilterVal='all';
-function stMatch(x){
-  if(stFilterVal==='ok')return x.login_ok===1;
-  if(stFilterVal==='bad')return x.login_ok===0;
-  if(stFilterVal==='unknown')return x.login_ok!==0&&x.login_ok!==1;
-  return true;
+let groupFilterVal='all';   // all / valid / 满额 / 半额 / 冷却 / 生成中 / 风控 / 待激活 / 异常
+
+const GROUP_STYLE={'满额':'b-green','半额':'b-blue','冷却':'b-orange','生成中':'b-blue',
+                   '风控':'b-red','待激活':'b-gray','异常':'b-red'};
+const GROUP_ACTIVE=['满额','半额','冷却','生成中'];
+function groupBadge(a){
+  const g=a.group||'';
+  if(!g)return '<span class="tiny">—</span>';
+  return '<span class="badge '+(GROUP_STYLE[g]||'b-gray')+'" title="'+esc(a.group_reason||g)+'">'+esc(g)+'</span>'
+    +(a.group_reason?'<div class="tiny">'+esc(a.group_reason)+'</div>':'');
 }
-function clearAccSel(){selAccounts.clear();updateSelButtons();}
+function renderGroupBar(d,container,jump){
+  const g=d.groups||{};
+  const n=k=>g[k]||0;
+  const pts=d.remaining_points||0;
+  const go=(key)=>jump?("setGroupFilterGo('"+key+"')"):("setGroupFilter('"+key+"')");
+  const btn=(key,label,count,extra)=>'<button class="gbtn'+(groupFilterVal===key?' on':'')+'"'
+    +' onclick="'+go(key)+'" title="'+esc(extra||('筛选 '+label))+'">'
+    +label+' <b class="n">'+count+'</b></button>';
+  const sep='<span class="sep"></span>';
+  q(container||'#groupBar').innerHTML=
+    btn('all','全部',d.all_count||0,'显示全部账号（含风控/待激活）')+
+    btn('valid','有效',d.valid_count||0,'正常组：满额+半额+冷却+生成中')+sep+
+    btn('满额','满额',n('满额'),'剩余 4 点：seedance-2.0 专用，seedance-2.5 兜底')+
+    btn('半额','半额',n('半额'),'剩余 2 点：seedance-2.5 优先使用')+
+    btn('冷却','冷却',n('冷却'),'剩余 0/1 点：不派发，每日 23:00 重置回满额')+
+    btn('生成中','生成中',n('生成中'),'正在出片')+sep+
+    btn('风控','风控',n('风控'),'发你好不回复或被登出：永久停留，需人工恢复')+
+    btn('待激活','待激活',n('待激活'),'新号，尚未完成首次激活探测')+
+    btn('异常','异常',n('异常'),'派发后 5 分钟无回执，到期自动恢复')+sep+
+    '<span class="gbtn points" title="正常组（满额+半额+冷却+生成中）的剩余总额度；'
+      +'seedance-2.5 每条 2 点、seedance-2.0 每条 3 点">剩余额度 <b>'+pts+'</b> 点'
+      +'<span class="n">≈2.5 可出 '+Math.floor(pts/2)+' 条</span></span>';
+}
+function setGroupFilter(key){groupFilterVal=key;accPage=1;loadAccounts();}
+function setGroupFilterGo(key){groupFilterVal=key;accPage=1;switchTab('accounts');}
+function matchGroup(x){
+  if(groupFilterVal==='all')return true;
+  if(groupFilterVal==='valid')return GROUP_ACTIVE.indexOf(x.group)>=0;
+  return x.group===groupFilterVal;
+}
+
 function srcBadge(x){
   if(x.source==='login')return '<span class="badge b-green" title="Google 账号登录">账号登录</span>';
   if(x.source==='cookie')return '<span class="badge b-orange" title="Cookie 载入">Cookie 载入</span>';
@@ -342,13 +498,22 @@ function srcBadge(x){
 async function loadAccounts(){
   const [a,j]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]);
   const jobs=j.jobs||{};
+  allAccountNames=a.accounts.map(x=>x.name);
+  allAccounts=a.accounts;
   const hint=q('#resetHint');
   if(hint&&a.next_reset_at)hint.textContent=`额度重置：${a.reset_tz} 每天 ${a.reset_hour}:00（下次 ${fmt(a.next_reset_at)}）`;
-  const filtered=a.accounts.filter(x=>(srcFilterVal==='all'||x.source===srcFilterVal)&&stMatch(x));
-  allAccountNames=filtered.map(x=>x.name);
-  // 已删除/被筛掉的账号不再保留勾选
-  for(const n of [...selAccounts])if(!allAccountNames.includes(n))selAccounts.delete(n);
-  const rows=filtered.map(x=>{
+  renderGroupBar(a);
+  // 新增的号排最前（按创建时间倒序）；没有 created_at 的老号沉底，保持原有相对顺序
+  const sorted=[...a.accounts].sort((x,y)=>(y.created_at||0)-(x.created_at||0));
+  filteredAccounts=sorted.filter(x=>
+    (srcFilterVal==='all'||x.source===srcFilterVal)&&matchGroup(x));
+  filteredNames=filteredAccounts.map(x=>x.name);
+  // 被筛掉/已删除的账号不再保留勾选，避免「删除选中」误删看不见的号
+  for(const n of [...selAccounts])if(!filteredNames.includes(n))selAccounts.delete(n);
+  const accTotalPages=Math.max(1,Math.ceil(filteredAccounts.length/ACC_PAGE_SIZE));
+  if(accPage>accTotalPages)accPage=accTotalPages;
+  if(accPage<1)accPage=1;
+  const rows=pageSlice().map(x=>{
     const jb=jobs[x.name];
     const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">加号中</span>'
       :(jb&&jb.kind==='add'&&jb.status==='failed')?'<span class="badge b-red">加号失败</span>'
@@ -364,6 +529,7 @@ async function loadAccounts(){
       `<input type="checkbox" data-name="${esc(x.name)}" ${selAccounts.has(x.name)?'checked':''} onchange="toggleSel('${x.name}',this.checked)">`,
       `<span class="account-id">${esc(x.name)}</span>`,
       accLabel(x)+warn,
+      groupBadge(x),
       badge+ipInfo,
       srcBadge(x),
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
@@ -371,29 +537,102 @@ async function loadAccounts(){
         (x.credit_balance==null?'':`<div class="tiny">上游余额 ${x.credit_balance}${x.credit_balance<2?'（已用完）':''}</div>`),
       fmt(x.last_used_at),
       fmt(x.created_at),
+      noteCell(x),
+      `<button class="btn" style="margin-right:6px" onclick="openRenameAccount('${x.name}')">改名</button>`+
       `<button class="btn" style="margin-right:6px" onclick="verify('${x.name}',this)">验证</button>`+
       `<button class="btn" style="margin-right:6px" onclick="openTestGen('${x.name}')">测试生成</button>`+
       `<button class="btn" style="margin-right:6px" onclick="openSetAccountProxy('${x.name}','${x.proxy_id||''}')">${x.proxy_name?esc(x.proxy_name):'代理(默认)'}</button>`+
+      ((x.group==='风控'||x.group==='待激活')
+        ?`<button class="btn" style="margin-right:6px" title="发一句「你好」：被登出或没回复即判风控" onclick="probeHello('${x.name}')">你好探测</button>`:'')+
+      ((x.group==='风控'||x.group==='异常')
+        ?`<button class="btn" style="margin-right:6px" title="放回正常流程（风控恢复后回到待激活，需重新探测）" onclick="recoverAccount('${x.name}',${x.group==='异常'?"'abnormal'":"'risk'"} )">恢复</button>`:'')+
       `<button class="btn btn-danger" onclick="delAccount('${x.name}')">删除</button>`
     ];
   });
   q('#accountsTable').innerHTML=table(
-    ['<input type="checkbox" id="selAll" onchange="toggleAll(this.checked)" title="全选/取消全选">',
-     '内部账号','名称','状态','来源','调度','剩余额度','最近使用','创建时间','操作'],rows);
+    ['<input type="checkbox" id="selAll" onchange="toggleAll(this.checked)" title="全选=当前筛选结果的全部账号（跨页保持）">',
+     '内部账号','名称','组','运行','来源','调度','剩余额度','最近使用','创建时间','备注','操作'],rows)
+    +accPager(accTotalPages);
   updateSelButtons();
+}
+
+/** 备注单元格：显示账号备注（审核拒稿原文会自动追加到这里），点一下可直接编辑。 */
+function noteCell(x){
+  const note=x.note||'';
+  const open=`onclick="editNote('${x.name}')"`;
+  if(!note)return `<span class="tiny" style="cursor:pointer" title="点击可填写备注" ${open}>—</span>`;
+  return `<span class="note" title="点击编辑备注" ${open}>${esc(note)}</span>`;
+}
+async function editNote(name){
+  const cur=(allAccounts.find(a=>a.name===name)||{}).note||'';
+  const v=prompt('账号备注（上游拒稿原文会自动追加在此，可手动修改）：',cur);
+  if(v===null||v===cur)return;
+  try{await api('/api/admin/accounts/'+encodeURIComponent(name),{method:'PATCH',body:{note:v}});}
+  catch(e){return alert(e.message);}
+  refresh();
 }
 
 function toggleAll(on){
   selAccounts.clear();
-  if(on)allAccountNames.forEach(n=>selAccounts.add(n));
+  // 「全选」= 当前筛选结果的全部（不是全库，也不是当前页），跨页保持勾选状态
+  if(on)filteredNames.forEach(n=>selAccounts.add(n));
   loadAccounts();
   updateSelButtons();
+}
+
+function pageSlice(){
+  const start=(accPage-1)*ACC_PAGE_SIZE;
+  return filteredAccounts.slice(start,start+ACC_PAGE_SIZE);
+}
+function accGo(p){accPage=Math.max(1,Math.floor(p)||1);loadAccounts();}
+function selPage(){pageSlice().forEach(x=>selAccounts.add(x.name));loadAccounts();updateSelButtons();}
+function clearSel(){selAccounts.clear();loadAccounts();updateSelButtons();}
+function accPager(totalPages){
+  const total=filteredAccounts.length;
+  const start=total?(accPage-1)*ACC_PAGE_SIZE+1:0;
+  const end=Math.min(accPage*ACC_PAGE_SIZE,total);
+  const dis1=accPage<=1?' disabled':'';
+  const dis2=accPage>=totalPages?' disabled':'';
+  return '<div class="pager">'
+    +'<span>共 '+total+' 个号 · 本页 '+(total?start+'-'+end:'0')+' · 第 '+accPage+'/'+totalPages+' 页</span>'
+    +'<button class="btn"'+dis1+' onclick="accGo(1)">首页</button>'
+    +'<button class="btn"'+dis1+' onclick="accGo('+(accPage-1)+')">上一页</button>'
+    +'<button class="btn"'+dis2+' onclick="accGo('+(accPage+1)+')">下一页</button>'
+    +'<button class="btn"'+dis2+' onclick="accGo('+totalPages+')">末页</button>'
+    +'<button class="btn" onclick="selPage()">本页全选</button>'
+    +'<button class="btn" onclick="clearSel()">清空选择</button>'
+    +'</div>';
+}
+
+/** 手动发「你好」：被登出（登录标记不是 1）或没回复 → 该号进【风控】组。 */
+async function probeHello(name){
+  try{
+    const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/probe-hello',{method:'POST'});
+    const p=r.probe||{};
+    alert(`${name} 你好探测：${p.ok?'通过 ✓':'未通过 ✗'}\n`
+      +`登录标记：${p.login_ok?'有效':'已被登出'}\n`
+      +`是否回复：${p.replied?'有回复':'无回复'}\n`
+      +`耗时：${p.elapsed||0}s${p.cached?'（缓存）':''}\n`
+      +`原因：${p.reason||'-'}\n`
+      +`回复：${(p.reply||'').slice(0,80)}`);
+  }catch(e){return alert(e.message);}
+  refresh();
+}
+async function recoverAccount(name,kind){
+  if(!confirm(`确定把 ${name} 从【${kind==='abnormal'?'异常':'风控'}】组恢复出来？\n`
+    +(kind==='risk'?'（风控恢复后回到【待激活】，要再做一次「你好探测」确认登录）':'')))return;
+  try{
+    const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/recover',
+      {method:'POST',body:{kind:kind}});
+    alert(`${name} 已恢复，当前分组：${(r.account&&r.account.group)||'-'}`);
+  }catch(e){return alert(e.message);}
+  refresh();
 }
 
 async function verify(name,btn){
   btn.disabled=true;const old=btn.textContent;btn.textContent='验证中…';
   try{const r=await api('/api/admin/accounts/'+name+'/verify',{method:'POST'});
-    alert(name+' 登录态：'+(r.ok?'有效✓':'失效✗'));
+    alert(name+' 登录态：'+(r.ok?'有效✓':('失效✗'+(r.reason?'\n原因：'+r.reason:''))));
   }catch(e){alert(e.message);}
   btn.disabled=false;btn.textContent=old;refresh();
 }
@@ -481,6 +720,26 @@ async function pollTestGen(taskId,name){
   testGenPollTimer=setInterval(tick,6000);
 }
 
+function openRenameAccount(name){
+  showDlg(`<h2>重命名账号：${esc(name)}</h2>
+    <p class="tiny" style="line-height:1.6">会一起搬走该账号的浏览器 profile、代理绑定、今日额度与登录凭据；账号正在出片时不能改名。</p>
+    <label>新账号名</label>
+    <input id="f_newName" value="${esc(name)}" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;margin-top:4px">
+    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
+      <button class="btn btn-p" onclick="submitRenameAccount('${name}')">保存</button></div>`);
+  const el=q('#f_newName');if(el){el.focus();el.select();}
+}
+async function submitRenameAccount(name){
+  const newName=(q('#f_newName').value||'').trim();
+  if(!newName)return alert('请填新账号名');
+  if(newName===name)return hide('dlg');
+  try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/rename',{method:'POST',body:{new_name:newName}});}
+  catch(e){return alert(e.message);}
+  hide('dlg');
+  selAccounts.delete(name);
+  refresh();
+}
+
 async function delAccount(name){
   if(!confirm('确定删除账号 '+name+'？将同时删除其 profile。'))return;
   try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(e.message);}refresh();
@@ -502,8 +761,9 @@ function updateSelButtons(){
   if(proxyBtn){proxyBtn.disabled=n===0;proxyBtn.textContent=n?`更改代理（${n}）`:'更改代理';}
   const selAll=q('#selAll');
   if(selAll){
-    selAll.checked=n>0&&n===allAccountNames.length;
-    selAll.indeterminate=n>0&&n<allAccountNames.length;
+    const scope=filteredNames.length;
+    selAll.checked=n>0&&n===scope;
+    selAll.indeterminate=n>0&&n<scope;
   }
 }
 
@@ -520,7 +780,7 @@ async function batchVerifySelected(){
   stopBatchPoll();
   showDlg(`<h2>批量验证（${list.length} 个账号）</h2>
     <div id="batchProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
-    <div id="batchOut" class="tiny" style="max-height:260px;overflow:auto;background:#f5f7f6;border-radius:8px;padding:10px;white-space:pre-wrap"></div>
+    <div id="batchOut" class="tiny log-pane"></div>
     <div class="row"><button class="btn" onclick="hide('dlg');stopBatchPoll();refresh()">关闭</button></div>`);
   pollBatch(r.job_id);
   batchPollTimer=setInterval(()=>pollBatch(r.job_id),2000);
@@ -537,6 +797,66 @@ async function pollBatch(jobId){
   out.textContent=(j.results||[]).slice().reverse()
     .map(x=>`${x.ok===true?'✓':(x.ok===false?'✗':'–')} ${x.name}  ${x.message||''}`).join('\n');
   if(j.status!=='running'){stopBatchPoll();refresh();}
+}
+
+/** 顶部「你好探测」：勾选了就探勾选的，没勾选就探当前筛选出来的号（受分组按钮影响）。 */
+async function batchProbeHello(){
+  const sel=[...selAccounts];
+  const list=sel.length?sel:allAccounts.filter(x=>matchGroup(x)&&(srcFilterVal==='all'||x.source===srcFilterVal)).map(x=>x.name);
+  if(!list.length)return alert('没有要探测的账号：先勾选，或用分组按钮筛出一批');
+  if(!confirm(`对 ${list.length} 个账号各发一句「你好」探测风控？\n`
+    +`· 被登出 → 直接进【风控】组；没回复 → 重试一次仍没回复才进\n`
+    +`· 网络或上游限流（710022002）导致没探成 → 只记「未完成」，不会锁号\n`
+    +`· 不限并发全部一起发，通常十几秒内跑完；被限流的那批会显示为「未完成」`))return;
+  let r;
+  try{r=await api('/api/admin/accounts/batch-probe-hello',{method:'POST',body:{names:list}});}
+  catch(e){return alert(e.message);}
+  stopProbePoll();
+  showDlg(`<h2>批量你好探测（${list.length} 个账号）</h2>
+    <div id="probeProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
+    <div id="probeOut" class="tiny log-pane"></div>
+    <div class="row"><button class="btn" onclick="hide('dlg');stopProbePoll();refresh()">关闭</button></div>`);
+  pollProbeBatch(r.job_id);
+  probePollTimer=setInterval(()=>pollProbeBatch(r.job_id),2000);
+}
+
+let probePollTimer=null;
+function stopProbePoll(){if(probePollTimer){clearInterval(probePollTimer);probePollTimer=null;}}
+
+async function pollProbeBatch(jobId){
+  let j;
+  try{j=await api('/api/admin/batch/'+jobId);}catch(e){stopProbePoll();return;}
+  const prog=q('#probeProg'),out=q('#probeOut');
+  if(!prog||!out)return;
+  const pct=j.total?Math.round((j.done/j.total)*100):0;
+  prog.textContent=`进度 ${j.done}/${j.total}（${pct}%）  通过 ${j.ok_count||0}  未通过(进风控) ${j.failed_count||0}  未完成 ${j.skipped_count||0}`
+    +(j.current?`\n当前：${j.current}`:'')+(j.status==='completed'?'\n已完成 ✓':'');
+  out.textContent=(j.results||[]).slice().reverse()
+    .map(x=>`${x.ok===true?'✓':(x.ok===false?'✗':'–')} ${x.name}  [${x.group||'-'}]  ${x.message||''}`
+      +(x.reply?`  回复：${x.reply}`:''))
+    .join('\n');
+  if(j.status!=='running'){stopProbePoll();refresh();}
+}
+
+/** 批量恢复：把选中的（或当前筛出来的）风控/异常号放回流程。 */
+async function batchRecover(){
+  const sel=[...selAccounts];
+  const list=sel.length?sel:allAccounts.filter(x=>matchGroup(x)&&(srcFilterVal==='all'||x.source===srcFilterVal)
+      &&(x.group==='风控'||x.group==='异常')).map(x=>x.name);
+  if(!list.length)return alert('没有要恢复的账号：先勾选，或切到【风控】/【异常】分组再点');
+  if(!confirm(`把 ${list.length} 个账号从【风控】/【异常】组恢复出来？\n`
+    +`· 风控号恢复后登录态会被清空，回到【待激活】\n`
+    +`· 想确认能不能用，恢复后接着点一次「你好探测」`))return;
+  let r;
+  try{r=await api('/api/admin/accounts/batch-recover',{method:'POST',body:{kind:'risk',names:list}});}
+  catch(e){return alert(e.message);}
+  stopProbePoll();
+  showDlg(`<h2>批量恢复（${list.length} 个账号）</h2>
+    <div id="probeProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
+    <div id="probeOut" class="tiny log-pane"></div>
+    <div class="row"><button class="btn" onclick="hide('dlg');stopProbePoll();refresh()">关闭</button></div>`);
+  pollProbeBatch(r.job_id);
+  probePollTimer=setInterval(()=>pollProbeBatch(r.job_id),1500);
 }
 
 async function openBatchProxy(){
@@ -631,11 +951,11 @@ function renderBatchAddForm(){
     return;
   }
   if(batchAddMode==='cookieHeader'){
-    showDlg(`<h2>批量添加账号（Cookie 头文本）</h2>${sw}
-      <label>Cookie 头文本（一行一个账号）</label>
+    showDlg(`<h2>批量添加账号（Cookie 头文本 / Cookie JSON）</h2>${sw}
+      <label>Cookie 头文本或 Cookie JSON（一行一个账号）</label>
       <textarea id="f_cookieHeader" rows="10" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-top:4px" placeholder="passport_csrf_token=aaa; sessionid=sid-one; sid_guard=g1
 passport_csrf_token=bbb; sessionid=sid-two"></textarea>
-      <div class="hint" style="margin-top:6px">每行一个 Cookie 头；自动跳过注释/空行/邮箱行，按 sessionid 去重并自动命名 accN。<br>含 localStorage/sessionStorage/indexedDB 的完整会话请改用「Cookie JSON 文件」模式。</div>
+      <div class="hint" style="margin-top:6px">每行一个 Cookie 头，或粘贴浏览器扩展导出的 Cookie JSON 数组（一个数组一个账号，可多段连续粘贴）；自动跳过注释/空行/邮箱行，按 sessionid 去重并自动命名 accN。<br>含 localStorage/sessionStorage/indexedDB 的完整会话请改用「Cookie JSON 文件」模式。</div>
       <label style="display:flex;align-items:flex-start;gap:6px;color:var(--sub);margin:8px 0">
         <input type="checkbox" id="f_cookieHeaderSkip" style="margin-top:2px;width:auto" checked>
         <span>跳过在线验证（先导入、保留 profile，之后在列表点“验证”复核）</span>
@@ -723,7 +1043,7 @@ async function submitBatchCookieAdd(){
 async function submitBatchCookieHeader(){
   const btn=q('#dlg .btn-p');const res=q('#batchResult');
   const text=q('#f_cookieHeader').value.trim();
-  if(!text)return alert('请粘贴 Cookie 头文本（一行一个账号）');
+  if(!text)return alert('请粘贴 Cookie 头文本或 Cookie JSON（一个账号一份）');
   btn.disabled=true;res.textContent='导入中…';
   try{
     const r=await api('/api/admin/accounts/import-cookies',{method:'POST',body:{
@@ -757,7 +1077,7 @@ function buildRecord(f){
 
 function parseBatchInput(text){
   const out=[];
-  let autoN=document.querySelectorAll('#accountsTable tbody tr').length;
+  let autoN=allAccounts.length;   // 分页后可见行数恒为 30，必须用账号总数
   // 统一全角分隔符
   text=String(text||'').replace(/[，；｜]/g,c=>({'，':',','；':';','｜':'|'}[c]));
   // 先按换行/分号/逗号切成块
@@ -856,7 +1176,7 @@ async function submitBatchAdd(){
 
 let addMode='google';
 function nextAccName(){
-  let def='acc2';try{const n=document.querySelectorAll('#accountsTable tbody tr').length;def='acc'+(n+1);}catch(e){}
+  let def='acc2';try{def='acc'+(allAccounts.length+1);}catch(e){}
   return def;
 }
 function addModeSwitch(){
@@ -1239,12 +1559,17 @@ function accChain(t){
     ?'<span class="tiny" title="换号顺序：'+esc(txt)+'">'+arr.map(esc).join('<span style="color:var(--gray)"> → </span>')+'</span>'
     :esc(arr[0]);
 }
+let TASK_MAP={};
 async function loadTasks(){
   const r=await api('/api/admin/tasks?limit=50');
+  TASK_MAP={};
+  r.tasks.forEach(t=>{TASK_MAP[t.id]=t;});
   const sb={'queued':'<span class="badge b-gray">排队中</span>','processing':'<span class="badge b-blue">生成中</span>','completed':'<span class="badge b-green">完成</span>','failed':'<span class="badge b-red">失败</span>','风控':'<span class="badge b-orange">风控</span>'};
   const rows=r.tasks.map(t=>[
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
-    '<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>',
+    '<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>'
+      +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">查看</button>',
+    refCell(t),
     accChain(t),
     t.api_key_name||'—',
     (t.duration||10)+'秒',
@@ -1252,9 +1577,44 @@ async function loadTasks(){
     fmt(t.created_at),
     t.video_url
       ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">打开</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">预览</button></div>'
-      :((t.status==='failed'||t.status==='风控')?'<span class="tiny" title="'+esc(t.error||'')+'">'+esc((t.error||'').slice(0,30))+'</span>':'—')
+      :'—',
+    // 报错原文完整展示（含换行）：不再 slice(0,30)，上游「内容审核不合规 / 肖像保护 / 侵权」
+    // 这类话术要能一眼看全。
+    t.error
+      ?'<span class="err" title="'+esc(t.error)+'">'+esc(t.error)+'</span>'
+      :'<span class="tiny">—</span>'
   ]);
-  q('#tasksTable').innerHTML=table(['ID','提示词','账号','客户','时长','状态','创建时间','视频'],rows);
+  q('#tasksTable').innerHTML=table(
+    ['ID','提示词','参考图','账号','客户','时长','状态','创建时间','视频','报错/备注'],rows);
+}
+
+function refThumbs(t){
+  try{const a=JSON.parse(t.reference_thumbs||'[]');return Array.isArray(a)?a:[];}catch(e){return [];}
+}
+/** 参考图缩略图：原图在任务结束时已清理，这里显示的是服务端留存的缩略图。 */
+function refCell(t){
+  const list=refThumbs(t);
+  if(!list.length)return '<span class="tiny">无</span>';
+  const url='/thumbs/'+encodeURIComponent(list[0]);
+  return '<img class="thumb" src="'+url+'" title="点击放大" onclick="showThumb(\''+esc(url)+'\')">'
+    +(list.length>1?'<span class="tiny">+'+(list.length-1)+'</span>':'');
+}
+function showThumb(url){q('#thumbImg').src=url;show('thumbModal');}
+
+function openPrompt(id){
+  const t=TASK_MAP[id]||{};
+  q('#promptMeta').textContent=id+' · '+(t.model||'-')+' · '+(t.duration||10)+'秒 · '
+    +(t.api_key_name?('客户 '+t.api_key_name):'');
+  q('#promptBody').textContent=(t.prompt&&String(t.prompt).length)?t.prompt:'（空提示词）';
+  q('#promptCopyBtn').textContent='复制';
+  show('promptModal');
+}
+function copyPrompt(){
+  const txt=q('#promptBody').textContent||'';
+  const done=()=>{const b=q('#promptCopyBtn');b.textContent='已复制';setTimeout(()=>b.textContent='复制',1200);};
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(done,done);}
+  else{const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();
+       try{document.execCommand('copy');}catch(e){}document.body.removeChild(ta);done();}
 }
 
 function playVideo(url){q('#videoEl').src=url;show('videoModal');}
@@ -1358,6 +1718,8 @@ async function copyLink(url){
 /* ---- API 密钥 ---- */
 async function loadKeys(){
   const r=await api('/api/admin/keys');
+  // 允许时长由后端下发（随 DOLA_NATIVE_DURATION_MAX 变化），不再前端硬编码。
+  if(Array.isArray(r.supported_durations)&&r.supported_durations.length)SUPPORTED_DURATIONS=r.supported_durations;
   const mask=k=>'sk-'+k.slice(3,9)+'…'+k.slice(-4);
   const rows=r.keys.map(k=>[
     '<span style="font-family:monospace">'+mask(k.key)+'</span>',
@@ -1383,9 +1745,11 @@ async function delKey(key){
   if(!confirm('删除该密钥？调用方将立即失效。'))return;
   try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'DELETE'});}catch(e){alert(e.message);}refresh();
 }
+// 仅作接口返回前的占位默认值；真实档位由 /api/admin/keys 下发（随 DOLA_NATIVE_DURATION_MAX 变化）。
+let SUPPORTED_DURATIONS=[5,10,15,30];
 function durationChecks(values){
-  values=values||[5,10,15,30];
-  return [5,10,15,30].map(v=>`<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px"><input type="checkbox" id="f_d${v}" ${values.includes(v)?'checked':''}>${v}秒</label>`).join('');
+  values=values||SUPPORTED_DURATIONS;
+  return SUPPORTED_DURATIONS.map(v=>`<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px"><input type="checkbox" id="f_d${v}" ${values.includes(v)?'checked':''}>${v}秒</label>`).join('');
 }
 function openCreateKey(){
   showDlg(`<h2>创建 API 密钥</h2>
@@ -1396,7 +1760,7 @@ function openCreateKey(){
     <label>过期时间戳（可选，留空 = 永久）</label><input id="f_exp" type="number" min="0" placeholder="Unix 时间戳">
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitCreateKey()">创建</button></div>`);
 }
-function selectedDurations(){return [5,10,15,30].filter(v=>q('#f_d'+v)?.checked);}
+function selectedDurations(){return SUPPORTED_DURATIONS.filter(v=>q('#f_d'+v)?.checked);}
 async function submitCreateKey(){
   const name=q('#f_kname').value.trim();
   const allowed=selectedDurations();
@@ -1448,7 +1812,7 @@ function openStress(){
     <label>最大测试级数（默认 8，最大 12）</label>
     <input id="stressMax" type="number" min="1" max="12" value="8">
     <div class="hint" style="margin-top:4px">测试期间请不要同时进行真实账号登录/视频任务。</div>
-    <div id="stressOut" class="tiny" style="margin-top:10px;white-space:pre-wrap;max-height:230px;overflow:auto;background:#f5f7f6;border-radius:8px;padding:10px"></div>
+    <div id="stressOut" class="tiny log-pane" style="margin-top:10px"></div>
     <div class="row"><button class="btn" onclick="stopStressPoll();hide('dlg')">关闭</button>
       <button class="btn btn-p" id="stressStartBtn" onclick="startStress()">开始压测</button></div>`);
   loadStressStatus(true);

@@ -23,11 +23,17 @@ if (daemon) {
   rl.on('line', async (line) => {
     const text = String(line || '').trim();
     if (!text) return;
+    let rid = '';
     try {
-      const out = await signUrl(JSON.parse(text));
+      const req = JSON.parse(text);
+      rid = req && req.id ? String(req.id) : '';
+      const out = await signUrl(req);
+      if (rid) out.id = rid;
       process.stdout.write(JSON.stringify(out) + '\n');
     } catch (e) {
-      process.stdout.write(JSON.stringify({ error: e && e.stack ? e.stack : String(e) }) + '\n');
+      const err = { error: e && e.stack ? e.stack : String(e) };
+      if (rid) err.id = rid;
+      process.stdout.write(JSON.stringify(err) + '\n');
     }
   });
 } else {
@@ -275,4 +281,8 @@ async function signUrl({ url, method = 'POST', headers = {}, body = '{}', cookie
   };
 }
 
-setTimeout(() => process.exit(0), 25);
+// 一次性模式：签完就退，给父进程收尾留 25ms。
+// 守护模式（--daemon）必须保活，否则每次签名都要冷启动 node（约 475ms）。
+if (!daemon) {
+  setTimeout(() => process.exit(0), 25);
+}

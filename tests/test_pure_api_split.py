@@ -12,6 +12,35 @@ import pytest
 CAP_TEXT = "视频生成目前支持 4 到 15 秒。我将按最接近的支持时长 15 秒生成。"
 
 
+def test_duration_split_detector_covers_new_upstream_wording():
+    """上游 2026-09-22 换了话术（要求确认 / 提示可回「拆成两段」），必须还能认出来。
+
+    认不出来的后果：30 秒任务既不判 duration_split，也不触发两段兜底，
+    一直空等到 NO_ACK_SECONDS 才换号（表现为「任务长时间卡在生成中」）。
+    """
+    from protocol import dola_pure_api as dola
+
+    # CAP_TEXT 属于「上游自己压到 15 秒」那类，只要求 capped 判据命中（原有契约）
+    assert dola.looks_like_duration_capped(CAP_TEXT) is True
+
+    confirm_positives = [
+        "确认后我会直接生成；如果你想拆成多段，也可以回复：“拆成两段”。",
+        "当前提供的分镜时长为30秒，超出单条视频最大支持的15秒。",
+        "需要你确认一个点：你写的是 30 秒内容，但当前单条视频支持 4–15 秒。",
+    ]
+    for text in confirm_positives:
+        assert dola.looks_like_duration_confirm(text) is True, text
+        assert dola.looks_like_duration_capped(text) is True, text
+
+    negatives = [
+        "可以拆成2段生成。硬性要求：两段必须按时间顺序首尾相接",      # 我们自己发的回复
+        "两段已经齐了。硬性要求：请按时间顺序把两段首尾相接",           # 合并指令
+        "本次使用 Dreamina Seedance 2.5 生成，将消耗 2 个视频生成额度",  # 正常受理回执
+    ]
+    for text in negatives:
+        assert dola.looks_like_duration_confirm(text) is False, text
+
+
 class FakePoll:
     def __init__(self, status="pending", vids=None, urls=None, texts=None):
         self.status = status
@@ -94,15 +123,19 @@ def test_upstream_own_two_clips_are_merged():
 
 
 def test_no_upstream_ack_gives_up_early(monkeypatch):
-    """提交成功但上游连额度提示都不回：到阈值就放手，不空等到任务超时。"""
+    """提交成功但上游连额度提示都不回：到阈值判【异常】（2.1.0 P5 起不再只是放手返回）。
+
+    账号由调用方（browser_pool）放进异常组，任务提示「生视频过程中出现异常情况，请重试」。
+    """
     import pure_api_gen
 
     monkeypatch.setattr(pure_api_gen, "NO_ACK_SECONDS", 0)
     dola = FakeDola([FakePoll(status="pending", texts=["生成视频：一只橘猫在窗台上打盹"])])
-    poll, segments = _run(dola)
 
-    assert segments == []
-    assert poll.status == "pending"
+    with pytest.raises(pure_api_gen.AbnormalNoAckError) as exc:
+        _run(dola)
+
+    assert "请重试" in str(exc.value)
 
 
 def test_single_shot_30s_returns_without_negotiation():

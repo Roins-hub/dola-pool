@@ -1,0 +1,68 @@
+#!/bin/bash
+# stable-dola-pool 启动脚本（由 systemd 服务 stable-dola-pool 调用）
+# 用法：cp deploy/run.sh.example /www/wwwroot/stable-dola-pool/run.sh 后改成自己的值
+set -euo pipefail
+cd /www/wwwroot/stable-dola-pool
+
+export TZ=Asia/Shanghai
+export PATH=/usr/local/bin:/usr/bin:/bin
+
+# --- 监听：只给 nginx 反代，公网走 443 ---
+DOLA_HOST=127.0.0.1
+DOLA_PORT=8000
+
+# --- 对外（改成自己的域名与 Key）---
+export DOLA_PUBLIC_BASE=https://YOUR_DOMAIN
+export DOLA_API_KEYS='sk-dola-REPLACE_ME'
+
+# --- 队列 / 超时 ---
+export DOLA_MAX_CONCURRENCY=0            # 0 = 不限并发（与代码默认一致）；想防风控可设 3~6
+# 待处理任务上限：这是放开并发后真正的派发闸门（超出直接 429），不是 MAX_CONCURRENCY
+export DOLA_MAX_PENDING_TASKS=5000
+export DOLA_VIDEO_TIMEOUT=300
+export DOLA_MIN_SUBMIT_INTERVAL_SECONDS=20   # 同号提交间隔，缓解上游 710022002 限流
+# 阻塞线程池：纯 API 出片跑在 asyncio.to_thread 里，0=自动(CPU×8)；机器大就放开
+export DOLA_THREAD_POOL_MAX=512
+
+# --- 号池额度与时长 ---
+export DOLA_DAILY_LIMIT=4
+export DOLA_LIMIT_RESET_TZ=Asia/Tokyo
+export DOLA_NATIVE_DURATION_MAX=15       # 0 = 只放原生 5/10/15/30
+export DOLA_ALLOW_30S_PAIR=1             # 30 秒被要求拆段时，本地 2×15 秒 + ffmpeg 拼接
+
+# --- 浏览器直连（画布）需要 ---
+export DOLA_CORS_ORIGINS='*'
+
+# --- 账号分组（2.1.0）---
+# 派发前的「你好」风控探测：被登出(x-tt-agw-login!=1) 或没有回复 → 进【风控】组（永久，人工恢复）；
+# 网络/上游限流这类软失败不判风控。结果缓存 N 秒，避免每个任务都真探（0 = 每个任务都探）。
+export DOLA_HELLO_PROBE_CACHE_SECONDS=300
+export DOLA_HELLO_PROBE_TIMEOUT=60
+# 探测和出片走同一条上游提交通道：探测通过后隔多久再提交出片（0 = 不等）。
+export DOLA_HELLO_PROBE_SUBMIT_GAP_SECONDS=15
+# seedance-2.0（每条 3 点）只能用【满额】账号；满额暂时用完时的排队上限（0 = 立刻失败）。
+export DOLA_V20_WAIT_SECONDS=600
+# 派发后「上游必须给出任何回应」的时限：超时且一句话都没有 → 账号进【异常】组，
+# 任务报「生视频过程中出现异常情况，请重试」。
+export DOLA_NO_ACK_SECONDS=300
+# 【异常】组的自动恢复时长（秒）。
+export DOLA_ABNORMAL_COOLDOWN_SEC=1800
+
+# --- 代理出口 ---
+export DOLA_PROXY=''                     # 空 = 直连（号级代理优先）
+
+# --- 上游协议：cookie 号走纯 API + bdms 签名（依赖 node）---
+export DOLA_PURE_API=1
+# 上游轮询间隔（秒）：每次轮询都要过一次 BDMS 签名，调大能成比例降低签名压力
+export DOLA_PURE_POLL_INTERVAL=60
+# BDMS 签名进程池大小：签名是 CPU 密集（每次签名都要在 node 里新建 VM 上下文），
+# 并发能力靠进程数横向扩，不靠单进程排队。建议 ≈ CPU 核数，留几个核给转码
+export DOLA_SIGNER_PROCESSES=12
+export DOLA_PURE_REGION=JP
+export DOLA_PURE_PC_VERSION=3.33.11
+export DOLA_PURE_REMOVE_WATERMARK=1
+export DOLA_EXTENSION_ENABLED=0          # 30 秒扩展依赖浏览器；无 Chromium 的机器保持 0
+
+exec /www/wwwroot/stable-dola-pool/.venv/bin/uvicorn server:app \
+  --host "$DOLA_HOST" --port "$DOLA_PORT" --workers 1 \
+  --proxy-headers --forwarded-allow-ips=127.0.0.1

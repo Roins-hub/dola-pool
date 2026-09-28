@@ -1,0 +1,3 @@
+# requirements.txt 漏了但 import 链需要的依赖：
+# server.py -> browser_pool.py -> video_worker_ui.py -> gap.py -> cv2
+opencv-python-headless

@@ -73,7 +73,32 @@ def set_sign_url_impl(func) -> None:
 
 
 VALID_RATIOS = {"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
+# 原生档位：上游 UI 直出的四个选项。这几个永远原样放行 —— 尤其 30 秒，
+# 它是线上绝大多数流量，不能被下面任何上限夹掉（夹了就是把 30 秒片悄悄
+# 变成 15 秒片）。
 VALID_DURATIONS = {5, 10, 15, 30}
+# seedance 2.0 只认 5/10/15；30 秒与其余任意时长都必须走 2.5。
+V20_DURATIONS = {5, 10, 15}
+SEEDANCE_25 = "seedance_v2.5"
+MIN_DURATION = 4
+MAX_DURATION = 30
+# 任意时长（非原生档位）的尝试上限：0 = 关闭（保持旧行为：吸附到最近的原生档位）。
+# 由宿主注入（见 pure_api_gen._dola → set_native_duration_max）。
+NATIVE_DURATION_MAX = 0
+
+
+def set_native_duration_max(value: int) -> None:
+    """运行时调整任意时长上限（0 = 关闭）。"""
+    global NATIVE_DURATION_MAX
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 0
+    NATIVE_DURATION_MAX = 0 if parsed <= 0 else max(MIN_DURATION, min(MAX_DURATION, parsed))
+
+
+def native_duration_max() -> int:
+    return NATIVE_DURATION_MAX
 
 
 def convert_audio_to_mp3(path: Path) -> Path:
@@ -1160,14 +1185,25 @@ def normalize_ratio(ratio: str | None) -> str | None:
 
 
 def normalize_duration(value: int | float | str, default: int = 5) -> int:
-    """Dola UI currently exposes 5/10/15/30 second video durations."""
+    """决定一次请求最终下发给上游的时长。
+
+    原生档位（5/10/15/30）永远原样通过。非原生档位分两种情况：
+      * NATIVE_DURATION_MAX <= 0（默认）：旧行为，吸附到最近的原生档位
+        （请求 20 秒 → 15 秒，请求 25 秒 → 30 秒）。
+      * NATIVE_DURATION_MAX > 0：夹到 [MIN_DURATION, NATIVE_DURATION_MAX]，
+        于是 20 秒真的是 20 秒 —— 这才是「任意时长」生效的那一步。
+    """
     try:
         duration = int(float(value))
     except (TypeError, ValueError):
         duration = int(default)
+    if duration <= 0:
+        duration = int(default)
     if duration in VALID_DURATIONS:
         return duration
-    return min(VALID_DURATIONS, key=lambda item: (abs(item - duration), item))
+    if NATIVE_DURATION_MAX <= 0:
+        return min(VALID_DURATIONS, key=lambda item: (abs(item - duration), item))
+    return max(MIN_DURATION, min(NATIVE_DURATION_MAX, duration))
 
 
 def normalize_image_paths(raw: str | Path | list[str | Path] | tuple[str | Path, ...]) -> list[Path]:
@@ -1758,9 +1794,9 @@ def normalize_video_prompt_for_audios(prompt: str, audios: list[UploadedAudio]) 
 
 def build_ability(model: str, duration: int, ratio: str | None) -> dict[str, Any]:
     duration = normalize_duration(duration, default=duration)
-    if duration >= 30:
-        model = "seedance_v2.5"
-        duration = 30
+    # 非 2.0 原生档位（含 30）一律走 seedance 2.5。
+    if duration not in V20_DURATIONS:
+        model = SEEDANCE_25
     ability_param: dict[str, Any] = {
         "model": model,
         "duration": duration,
@@ -1794,9 +1830,8 @@ def build_payload(
 ) -> tuple[dict[str, Any], str, str]:
     now_ms = int(time.time() * 1000)
     duration = normalize_duration(duration, default=5)
-    if duration >= 30:
-        model = "seedance_v2.5"
-        duration = 30
+    if duration not in V20_DURATIONS:
+        model = SEEDANCE_25
     ratio_value = normalize_ratio(ratio) if video_ability else None
     need_create = (not conversation_id) if need_create_conversation is None else bool(need_create_conversation)
     local_conv_id = local_conversation_id or ("local_" + str(random.randint(10**15, 10**16 - 1)))
@@ -2760,6 +2795,18 @@ def looks_like_duration_confirm(text: str) -> bool:
     if asked_30 and ("4到15秒" in compact or "4-15秒" in compact):
         return True
     if asked_30 and ("一镜到底" in compact or "按默认" in compact):
+        return True
+    # 2026-09-22 上游换了话术：不再列「方案 A/B」，而是要求确认，并提示可以回「拆成两段」。
+    # 之前的规则匹配不到，导致 30 秒任务既不识别为 duration_split、也不触发两段兜底，
+    # 一直空等到 NO_ACK_SECONDS 才换号（表现为「任务长时间在生成中」）。
+    if ("拆成两段" in compact or "拆成2段" in compact or "拆成多段" in compact
+            or "分成两段" in compact or "分两段" in compact):
+        return True
+    if "确认后" in compact and "生成" in compact:
+        return True
+    if "单条视频最大支持" in compact or "单条生成" in compact:
+        return True
+    if "需要你确认" in compact or "需要确认" in compact:
         return True
     return False
 

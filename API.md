@@ -10,7 +10,7 @@
 | 项 | 值 |
 |---|---|
 | 服务名 | `stable-dola-pool` |
-| 代码版本 | `6fa247a`（`feat(panel): 添加代理改为「静态/动态」二选一…`） |
+| 代码版本 | `2.1.3`（见 `CHANGELOG.md`） |
 | **Base URL** | `https://your-domain`（nginx 反代到本服务端口） |
 | 交互式文档 | `https://your-domain/docs`（FastAPI Swagger，实时以代码为准） |
 | OpenAPI Schema | `https://your-domain/openapi.json` |
@@ -41,6 +41,37 @@ curl -s "$BASE/v1/videos/video_xxx/content" -H "Authorization: Bearer $KEY" -o o
 ```
 
 要点：**提交是异步的**（立刻返回 `queued`），出片要轮询；`video_url` 是本服务转存后的稳定地址，不是 dola 的临时 CDN 链接。
+
+### 0.1 排队与进度（`progress`，给客户端显示用）
+
+`POST /v1/videos`（含 `/v1/videos/generations`）与 `GET /v1/videos/{id}` 的响应里都带一个
+`progress` 对象，客户端可以直接拿 `message` 展示，不用自己猜：
+
+```json
+{
+  "id": "video_xxx", "status": "queued",
+  "progress": {
+    "state": "queued",           // queued | running | done | failed
+    "position": 3,                // 排队位次（1 = 下一个出片）
+    "ahead": 2,                   // 前面还有几个任务
+    "running": 2,                 // 正在出片数
+    "workers": 0,                 // 并发槽位；0 = 不限并发
+    "typical_seconds": 260,       // 同档位预计耗时（近 3 天实测均值，样本不足用兜底表）
+    "eta_seconds": 260,
+    "eta_text": "约 4 分钟",
+    "message": "排队中，预计约 4 分钟（前面还有 2 个任务）"
+  }
+}
+```
+
+- `status` 仍是权威状态字段（`queued/processing/completed/failed`），`progress` 只是**附加**信息，
+  老客户端忽略它不受影响；
+- `state` 的取值把服务端的 `processing` 映射成 `running`，方便直接显示"生成中"；
+- `status=queued` 表示**还没拿到账号**（在等空闲账号或并发槽）；真正开始出片后才转成
+  `processing`。所以不限并发时也可能短暂出现 `queued` —— 那是号被占满，不是服务端在限流；
+- 生成大文件（30 秒档）时预计耗时较长（实测 6~10 分钟），客户端**不要**用几分钟的超时把任务判失败；
+  画布前端已按这个字段在视频节点上显示「排队中，预计 N 分钟」。
+- `GET /health` 也带一份队列概况：`queue: {queued, running, workers, typical_seconds, eta_text}`。
 
 ---
 
@@ -138,7 +169,7 @@ Content-Type: application/json
 | 项 | 值 | 说明 |
 |---|---|---|
 | 号池账号数 | 见 `GET /health` | 空池直接 `503` |
-| 服务端全局并发 | `3`（`DOLA_MAX_CONCURRENCY`） | 超过则在 `queued` 排队，不报错 |
+| 服务端全局并发 | `0` = **不限**（`DOLA_MAX_CONCURRENCY`） | 设正数时超过则在 `queued` 排队，不报错 |
 | 待处理任务上限 | `100`（`DOLA_MAX_PENDING_TASKS`） | 满了返回 `429` |
 | 单任务出片截止 | 纯 API 路径 `900` 秒（`DOLA_PURE_TIMEOUT`）／浏览器路径 `300` 秒（`DOLA_VIDEO_TIMEOUT`）；服务重启后续跑的任务，30 秒档放宽到 `1800` 秒 | 超时判 `failed` |
 | 失败重试 | 不限次数，总时限 `600` 秒（`DOLA_TASK_DEADLINE` / `DOLA_VIDEO_MAX_ATTEMPTS`） | 失败自动换号，一轮试完等冷却后再来一轮；超时判 `failed`；已拿到会话的轮询超时不换号 |
@@ -506,7 +537,10 @@ open("out.mp4", "wb").write(requests.get(url, timeout=120).content)
 `seedance-2.5` 才支持 30 秒；默认「不拼接」，也就是必须一次拿到原生 30 秒成片，失败会换号重试，所以耗时会明显更长（超时放宽到 1800 秒）。
 
 **Q：任务失败会退额度吗？**
-账号侧的每日点数是按"实际出片成功"记账的（`MODEL_DURATION_COSTS`），失败重试会换号；但 **API Key 的 `daily_limit` 是按下发任务数计**的（`store.create` 时即计数，与结果无关），所以别用同一个 Key 反复试错。
+账号侧的每日点数是按"实际出片成功"记账的，**只看模型、不看时长**（`seedance-2.5` = 2 点 / `seedance-2.0` = 3 点，未知模型按最贵的 3 点算；见 `config.MODEL_COSTS`），失败重试会换号；但 **API Key 的 `daily_limit` 是按下发任务数计**的（`store.create` 时即计数，与结果无关），所以别用同一个 Key 反复试错。
+
+**Q：能不能出 4~30 秒里任意时长？**
+默认不行：只认原生档位 `5/10/15/30`（`DOLA_NATIVE_DURATION_MAX=0`）。要放开就把 `DOLA_NATIVE_DURATION_MAX` 设成 15 / 20 / 30 —— 非原生时长**只能走 `seedance-2.5`**，且**原生档位永远放行**（把上限设成 15 也不会把 30 秒夹成 15 秒）。上游对号池回的话术是「4到15秒 / 超出了单条生成范围」，所以建议一档一档试；出问题把变量改回 `0` 即可，不用回滚代码。
 
 **Q：我要自己接一个调用方，Key 从哪来？**
 管理面板 → 「API 密钥」标签页创建，可设每日额度/并发/允许时长/过期时间；也可以让运维加到 `DOLA_API_KEYS` 环境变量里（这类 Key 不受限，慎用）。
@@ -608,7 +642,7 @@ open("out.mp4", "wb").write(requests.get(url, timeout=120).content)
 
 | 变量 | 当前值 |
 |---|---|
-| `DOLA_MAX_CONCURRENCY` | `3` |
+| `DOLA_MAX_CONCURRENCY` | `0`（不限并发） |
 | `DOLA_MAX_PENDING_TASKS` | `100` |
 | `DOLA_VIDEO_TIMEOUT` | `300` |
 
@@ -618,8 +652,8 @@ open("out.mp4", "wb").write(requests.get(url, timeout=120).content)
 |---|---|
 | `DOLA_DAILY_LIMIT` | `4`（每号每日点数） |
 | `DOLA_ALLOW_30S_PAIR` | `0`（不拼接 30 秒） |
+| `DOLA_NATIVE_DURATION_MAX` | `0`（关闭任意时长；>0 时才允许非原生时长，建议 15 → 20 → 30 分级放开） |
 | `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `Asia/Tokyo` / `0` |
-| `DOLA_COOKIES_FILE` | `/www/wwwroot/stable-dola-pool/cookies.txt` |
 
 ### 代理与出口
 
@@ -634,8 +668,7 @@ open("out.mp4", "wb").write(requests.get(url, timeout=120).content)
 
 | 变量 | 当前值 | 说明 |
 |---|---|---|
-| `DOLA_PURE_API` | `1` | cookie 号走纯 API（**需要 Node.js**，见附录 C） |
-| `DOLA_PURE_FALLBACK_BROWSER` | `1` | 纯 API 失败是否回落浏览器 |
+| `DOLA_PURE_API` | `1` | cookie 号走纯 API（**需要 Node.js**，见附录 C）。⚠️ **纯 API 失败不回退浏览器**：`source=cookie` 的号直接抛真实错误，只有 login 号才走浏览器/扩展路径 |
 | `DOLA_PURE_REGION` / `DOLA_PURE_PC_VERSION` | `JP` / `3.33.11` | 上游区域与客户端版本 |
 | `DOLA_PURE_REMOVE_WATERMARK` | `1` | 无水印解析 |
 | `DOLA_HEADLESS` | `1` | 浏览器无头；有头路径由 `xvfb-run` 提供显示 |
@@ -698,11 +731,11 @@ vi /www/wwwroot/stable-dola-pool/cookies.txt   # 一行一个
 
 ## 附录 D：与旧版文档的差异
 
-本文档取代了此前那份旧版接口文档 —— 它写的是**上一台服务器**（`110.42.42.218:8000`、systemd、`/opt/stable-dola-pool`、Python 3.12），已不适用。主要差异：
+本文档取代了此前那份旧版接口文档 —— 它写的是**上一台服务器**（直连 8000 端口、systemd、`/opt/stable-dola-pool`、Python 3.12），已不适用。主要差异：
 
 | 项 | 旧（API.md） | 现（本文档） |
 |---|---|---|
-| 地址 | `http://110.42.42.218:8000`（直连 8000） | `https://your-domain`（nginx 80 反代；8000 不对公网开放） |
+| 地址 | `http://旧服务器IP:8000`（直连 8000） | `https://your-domain`（nginx 80 反代；8000 不对公网开放） |
 | 运行环境 | Python 3.12 venv | Python 3.11.6 venv + **Node.js 20（新增依赖，纯 API 签名用）** |
 | 日志 | `/var/log/dola-pool*.log` | `/www/wwwlogs/python/stable-dola-pool/error.log` |
-| 版本 | `0.4.0` | `6fa247a`（动态代理支持「直接粘贴节点」） |
+| 版本 | `2.0.5` | 见 `CHANGELOG.md`（画布直连/参考图落盘/签名器加固/30 秒本地拼接/存储防线） |

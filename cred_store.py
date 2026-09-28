@@ -58,3 +58,11 @@ def load(name: str) -> dict | None:
 
 def all_names() -> list[str]:
     return list(_load_all().keys())
+
+
+def rename(old: str, new: str) -> None:
+    """账号改名时把凭据一起搬（key 就是账号名）。"""
+    data = _load_all()
+    if old in data:
+        data[new] = data.pop(old)
+        _save_all(data)

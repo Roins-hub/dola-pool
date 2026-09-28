@@ -1,0 +1,7 @@
+[Unit]
+Description=stable-dola-pool health watchdog
+After=stable-dola-pool.service
+
+[Service]
+Type=oneshot
+ExecStart=/www/wwwroot/stable-dola-pool/healthcheck.sh

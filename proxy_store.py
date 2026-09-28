@@ -383,6 +383,28 @@ def get_account_proxy(account: str) -> dict | None:
         conn.close()
 
 
+def forget_account(account: str) -> None:
+    """账号删除时清掉它的代理绑定与出口会话，避免同名新号继承旧状态。"""
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM account_proxy WHERE account=?", (account,))
+        conn.execute("DELETE FROM proxy_sessions WHERE account=?", (account,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def rename_account(old: str, new: str) -> None:
+    """账号改名时搬走以账号名为主键的代理记录（绑定 + 出口会话）。"""
+    conn = _connect()
+    try:
+        conn.execute("UPDATE account_proxy SET account=? WHERE account=?", (new, old))
+        conn.execute("UPDATE proxy_sessions SET account=? WHERE account=?", (new, old))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def set_account_proxy(account: str, proxy_id: str | None):
     conn = _connect()
     try:
@@ -544,6 +566,27 @@ def proxy_url_for(account: str, *, rotate: bool = False) -> str:
         info.get("session_template") or "", info.get("username") or "", session
     )
     return _url_from_record(info, username)
+
+
+def _upgrade_socks_dns(url: str) -> str:
+    """socks5:// -> socks5h://（其余 scheme 原样返回）。"""
+    if url.startswith("socks5://"):
+        return "socks5h://" + url[len("socks5://"):]
+    return url
+
+
+def requests_proxy_url(account: str, *, rotate: bool = False) -> str:
+    """给 requests / aiohttp 用的代理 URL：socks5 升级为 socks5h（域名交代理远端解析）。
+
+    socks5:// 会让 requests 先在本机解析域名、再把解析出的 IP 交给代理。dola 的 CDN 与
+    对象存储走 Akamai，会同时返回 IPv4 和 IPv6，本机挑中的地址代理侧经常连不上，表现为
+    「参考图上传失败 ... SOCKSHTTPSConnectionPool(host='tos-...vodupload.com', port=443)
+    ... NewConnectionError」。同一个代理换成 socks5h:// 立刻可通（实测 204）。
+
+    注意：只给 requests 这类路径用。Playwright / Chromium 不认 socks5h 这个 scheme，
+    浏览器路径必须继续用 proxy_url_for() 返回的 socks5://。
+    """
+    return _upgrade_socks_dns(proxy_url_for(account, rotate=rotate))
 
 
 def egress_key_for(account: str) -> str:

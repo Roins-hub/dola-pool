@@ -1,0 +1,24 @@
+[Unit]
+Description=stable-dola-pool (dola 号池 API + 管理面板)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www
+Group=www
+WorkingDirectory=/www/wwwroot/stable-dola-pool
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/www/wwwroot/stable-dola-pool/service.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGINT
+LimitNOFILE=65535
+# 内存上限：单个请求跑飞（例如异常大的响应）会被内核直接杀掉并重启，
+# 而不是把单进程 uvicorn 卡在半死状态。
+# 注意 CentOS 7 的 systemd 219 只认 MemoryLimit（MemoryMax 要 systemd 231+）。
+MemoryLimit=2800M
+
+[Install]
+WantedBy=multi-user.target

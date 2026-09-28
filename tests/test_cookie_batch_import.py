@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 import types
 from pathlib import Path
@@ -111,3 +112,88 @@ def test_batch_import_dedup_and_naming(tmp_path, monkeypatch):
     assert written.get("acc1") == "ok"
     # cookie 导入路径应把来源标记为 cookie
     assert next(x for x in bp.list_accounts() if x["name"] == "acc1")["source"] == "cookie"
+
+
+def _pure_probe_stub(monkeypatch, result=(True, "logged_in")):
+    """把纯 API 探活换成桩，避免测试打真实上游。"""
+    module = types.ModuleType("pure_api_gen")
+    calls: list = []
+    def probe_login(state_file, *args, **kwargs):
+        calls.append(state_file)
+        return result
+    module.probe_login = probe_login
+    monkeypatch.setitem(sys.modules, "pure_api_gen", module)
+    return calls
+
+
+def test_import_cookie_account_falls_back_to_pure(tmp_path, monkeypatch):
+    """浏览器后端不可用（CentOS7 glibc 2.17）时，导入不该失败，而是走纯 API。"""
+    import asyncio
+    import cookie_login
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cookie_login, "browser_backend_available",
+                        lambda: (False, "驱动无法执行: GLIBC_2.28 not found"))
+    probe_calls = _pure_probe_stub(monkeypatch)
+
+    import config
+    monkeypatch.setattr(config, "PURE_API_ENABLED", True)
+
+    bundle = {"cookies": [
+        {"name": "ttwid", "value": "1%7Cabc", "domain": ".dola.com", "path": "/"},
+        {"name": "sessionid", "value": "sid-pure", "domain": ".dola.com", "path": "/"},
+    ]}
+    result = asyncio.get_event_loop().run_until_complete(
+        cookie_login.import_cookie_account("acc1", bundle, require_login=True)
+    )
+
+    assert result["engine"] == "pure"
+    assert result["verified"] is True
+    assert result["browser_error"].startswith("驱动无法执行")
+    assert len(probe_calls) == 1
+    state_file = Path(result["cookie_state_file"])
+    assert state_file.is_file()
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state["cookies"]["sessionid"]["value"] == "sid-pure"
+    # 不应该留下浏览器 profile 里的其它文件
+    assert sorted(p.name for p in state_file.parent.iterdir()) == ["cookie_state.json"]
+
+
+def test_import_cookie_account_forced_browser_still_falls_back(tmp_path, monkeypatch):
+    """即使调用方指定浏览器，驱动不可用时也退回纯 API，而不是整批导入报错。"""
+    import asyncio
+    import cookie_login
+
+    monkeypatch.chdir(tmp_path)
+    probe_calls = _pure_probe_stub(monkeypatch, result=(False, "not logged in"))
+
+    bundle = {"cookies": [
+        {"name": "sessionid", "value": "sid-x", "domain": ".dola.com", "path": "/"},
+    ]}
+    result = asyncio.get_event_loop().run_until_complete(
+        cookie_login.import_cookie_account("acc2", bundle, browser=True)
+    )
+
+    assert result["engine"] == "pure"
+    assert result["verified"] is False
+    assert result["verify_error"] == "not logged in"
+    assert len(probe_calls) == 1
+
+
+def test_import_cookie_account_skip_verify_does_not_probe(tmp_path, monkeypatch):
+    import asyncio
+    import cookie_login
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cookie_login, "browser_backend_available", lambda: (False, "no driver"))
+    probe_calls = _pure_probe_stub(monkeypatch)
+
+    bundle = {"cookies": [
+        {"name": "sessionid", "value": "sid-y", "domain": ".dola.com", "path": "/"},
+    ]}
+    result = asyncio.get_event_loop().run_until_complete(
+        cookie_login.import_cookie_account("acc3", bundle, require_login=False)
+    )
+    assert result["engine"] == "pure"
+    assert result["verified"] is False
+    assert probe_calls == []

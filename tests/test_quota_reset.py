@@ -71,14 +71,18 @@ def test_next_quota_reset_points_at_reset_hour(tmp_path):
 
 def test_reset_daily_quotas_restores_blocked_accounts(tmp_path):
     browser_pool, pool = _pool(tmp_path)
+    # reset_daily_quotas 只认 accounts/ 下的真实目录（避免把已删账号的残留元数据算进去），
+    # 所以这里必须把目录也建出来，否则恒返回 0 —— 这条用例以前一直是红的。
+    for name in ("acc1", "acc2"):
+        (tmp_path / "accounts" / name).mkdir(parents=True, exist_ok=True)
     pool.ensure_account("acc1")
     pool.ensure_account("acc2")
     future = 4102444800.0  # 2100-01-01
     pool._conn.execute(
         "UPDATE accounts_meta SET rate_limited_until=?, limit_reason='每日上限', "
-        "quota_blocked_until=?, quota_reason='积分不足', failed_at=?, failed_reason='生成失败', "
+        "quota_blocked_until=?, quota_reason='积分不足', "
         "credit_balance=0 WHERE name='acc1'",
-        (future, future, 1.0),
+        (future, future),
     )
     pool._conn.execute("UPDATE accounts_meta SET login_ok=0 WHERE name='acc2'")
     pool._conn.commit()
@@ -88,7 +92,7 @@ def test_reset_daily_quotas_restores_blocked_accounts(tmp_path):
     row = pool._meta("acc1")
     assert row["rate_limited_until"] == 0
     assert row["quota_blocked_until"] == 0
-    assert row["failed_at"] == 0
+    # failed_at/failed_reason 是已废弃列（2.1.0 P3 删除「叠加失败」），重置不再碰它
     assert row["credit_balance"] is None
     # 登录态不属于「额度」，重置后仍需重新验证才会恢复调度。
     assert pool._meta("acc2")["login_ok"] == 0
@@ -149,6 +153,54 @@ def test_content_refusal_does_not_mark_account(tmp_path):
     assert not row["quota_blocked_until"]
 
 
+PORTRAIT_REFUSAL = (
+    "连续 3 次生成均失败（依次尝试账号: ckp、ckp2）: ckp 出片未成功 "
+    "status=failed: 出于肖像保护考虑，未认证人脸暂不支持用 Dreamina Seedance 2.5 "
+    "生成视频。你可以尝试换其它参考图或文生视频。"
+)
+
+
+def test_portrait_refusal_writes_account_note(tmp_path):
+    """肖像保护拒稿：归类 content（不标账号失败），且上游原话落到账号备注。"""
+    browser_pool, pool = _pool(tmp_path)
+    pool.ensure_account("ckp")
+
+    assert browser_pool.classify_upstream_failure(PORTRAIT_REFUSAL) == "content"
+    assert pool._note_upstream_failure("ckp", PORTRAIT_REFUSAL, 0) == "content"
+
+    row = pool._meta("ckp")
+    assert row["failed_at"] == 0
+    note = row["note"]
+    assert "肖像保护：出于肖像保护考虑" in note
+    assert "status=failed" not in note          # 备注里不带技术前缀
+
+
+def test_rate_limit_does_not_touch_account_note(tmp_path):
+    """限流不是审核拒稿，别把备注刷成一堆日志。"""
+    browser_pool, pool = _pool(tmp_path)
+    pool.ensure_account("ckr")
+
+    pool._note_upstream_failure("ckr", "ckr 出片未成功 status=failed: 710022002: 当前服务访问频繁，请稍后重试", 0)
+
+    assert pool._meta("ckr")["note"] == ""
+
+
+def test_append_note_keeps_manual_note_and_caps_length(tmp_path):
+    """备注是人工字段：追加时不能把人写的备注冲掉，超长只保留最新内容。"""
+    browser_pool, pool = _pool(tmp_path)
+    pool.ensure_account("ckn")
+    pool.set_note("ckn", "人工备注：本号只用于 2.5 模型")
+
+    pool.append_note("ckn", "[2026-09-23 01:05] 肖像保护：出于肖像保护考虑…")
+    note = pool._meta("ckn")["note"]
+    assert note.startswith("人工备注：")
+    assert "肖像保护：" in note
+
+    pool.append_note("ckn", "底" * 600, limit=500)
+    assert len(pool._meta("ckn")["note"]) == 500
+    assert pool._meta("ckn")["note"].endswith("底")
+
+
 def test_short_clip_does_not_mark_account(tmp_path):
     """「30 秒只给了 15 秒」按不拼接策略重试，不该把账号标成失败或额度不足。"""
     browser_pool, pool = _pool(tmp_path)
@@ -185,22 +237,32 @@ def test_claim_uses_table_not_upstream_quote(tmp_path):
 
 
 def test_upstream_failure_marks_by_kind(tmp_path):
-    """瞬时限流只写短冷却；当日上限/本单额度不够/普通失败各走各的标记。"""
+    """新规则（2.1.0 P3）：限流只换号、不写状态；额度类进冷却；普通失败连续 3 次进异常组。"""
     browser_pool, pool = _pool(tmp_path)
     for name in ("t1", "t2", "t3", "t4"):
         pool.ensure_account(name)
     now = time.time()
 
+    # 上游「访问频繁」：概念已删除 —— 不冷却、不标失败，只换号重试
     assert pool._note_upstream_failure("t1", "710022002: 当前服务访问频繁，请稍后重试") == "transient"
     t1 = pool._meta("t1")
     assert t1["failed_at"] == 0
-    assert now < t1["cooldown_until"] <= now + browser_pool.TRANSIENT_COOLDOWN_SEC + 5
+    assert t1["cooldown_until"] == 0
+    assert t1["rate_limited_until"] == 0
 
+    # 当日次数用完 / 本单额度不够 → 额度口径的冷却（面板归「冷却」组）
     assert pool._note_upstream_failure("t2", "今天的生成次数已经达到上限，明天再来免费生成吧") == "daily"
     assert pool._meta("t2")["rate_limited_until"] > now
 
     assert pool._note_upstream_failure("t3", "今日剩余 2 个视频生成额度，无法生成该视频") == "quota"
     assert pool._meta("t3")["quota_blocked_until"] > now
 
+    # 普通失败：前两次不动状态，第 3 次进【异常】组（到期自动恢复）
+    for _ in range(2):
+        assert pool._note_upstream_failure("t4", "出片超时：1800s 内未出片") == "other"
+    assert pool._meta("t4")["abnormal_until"] == 0
     assert pool._note_upstream_failure("t4", "出片超时：1800s 内未出片") == "other"
-    assert pool._meta("t4")["failed_at"] > 0
+    row = pool._meta("t4")
+    assert row["failed_at"] == 0          # 「叠加失败」概念已删除，不再写这个字段
+    assert row["abnormal_until"] > now    # 改走【异常】组
+    assert "未出片" in row["abnormal_reason"]

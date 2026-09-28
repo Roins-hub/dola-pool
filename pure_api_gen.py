@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -26,9 +27,10 @@ log = logging.getLogger("dola.pure_api")
 # 请求」按 6 点报价，余额不足 6 点时直接拒绝 → 整条 30 秒任务失败。
 # 所以本服务**不再协商拆段**：只等上游自己出片；不足 30 秒时由调用方新开一条对话
 # 补一段，再用 ffmpeg 本地拼接（见 _generate_capped_pair）。
-NO_ACK_SECONDS = 420          # 提交后上游连「将消耗 N 点」都不回时的放弃阈值（秒）
-                              # 实测上游 30 秒档回执延迟 8s~3.5min 不等，给足余量；
-                              # 超过这个时间仍在「只有提示词」状态就放手换号，别空等到 30 分钟超时。
+# 提交后上游连「将消耗 N 点」都不回时的放弃阈值（秒）。
+# 2026-09-23 拍板：改为 5 分钟，且这种「派发后完全没有回应」不再只是换号了事 ——
+# 该账号进【异常】组，任务报「生视频过程中出现异常情况，请重试」。
+NO_ACK_SECONDS = config.NO_ACK_SECONDS
 CONCAT_CONTAINER = "mp4"
 FINAL_POLL_STATUSES = (
     "failed", "rate_limited", "quota_exceeded", "generation_voided",
@@ -95,6 +97,19 @@ class ShortClipError(PureApiError):
     """上游只给了短视频（30 秒请求只回 ~15 秒）：默认不拼接，交给调用方换号重试。"""
 
 
+class AbnormalNoAckError(PureApiError):
+    """派发后 NO_ACK_SECONDS 内上游没有任何回应：账号判【异常】，任务提示重试。"""
+
+
+# 异常类失败的统一用户话术（拍板要求）
+ABNORMAL_RETRY_HINT = "生视频过程中出现异常情况，请重试"
+
+# 等待出片期间的心跳间隔（秒）：短时长任务走 get_video_result（内部轮询不回传进度），
+# 不给任务库刷 last_poll_at 的话，看门狗 10 分钟就会判「卡住」→ 重新派发 →
+# 等于把同一条视频重新投一次（白扣额度）。所以这里起一个心跳线程持续刷进度。
+PROGRESS_TICK_SECONDS = 60
+
+
 # 落地成片短于目标时长的这个比例 → 视为「上游这次只给了短视频」。
 SHORT_CLIP_RATIO = 0.8
 
@@ -105,14 +120,23 @@ def clip_is_short(actual: float | None, target: int) -> bool:
 
 
 def _map_model(model: str, duration: int) -> str:
+    """把对外模型名映射成上游模型名。
+
+    非 2.0 原生档位（含 30 秒与任意时长）只有 2.5 能出，所以这里按时长兜底，
+    与 protocol.build_ability 的口径保持一致。
+    """
     m = (model or "").lower().replace("_", "-")
-    if "2.5" in m:
+    if "2.5" in m or "2-5" in m:
+        return "seedance_v2.5"
+    if int(duration or 0) not in config.V20_DURATIONS:
         return "seedance_v2.5"
     return "seedance_v2.0"
 
 
 def _dola():
     from protocol import dola_pure_api as module
+    # 任意时长上限由 config 注入：protocol 是 vendored 模块，不反向依赖本项目 config。
+    module.set_native_duration_max(config.NATIVE_DURATION_MAX)
     return module
 
 
@@ -288,16 +312,90 @@ def _wait_video_same_conversation(
             split_noted = True
             log.info("pure poll: %s 上游称只支持 4~15 秒，不协商拆段，等上游出片后本地补段", account)
         if not acked and time.time() >= ack_deadline:
-            # 提交成功但上游一直不回话（无额度提示、无状态）：早点放手换号，别干等 30 分钟。
-            log.info("pure poll: %s 上游 %ds 无任何回执，放弃本次", account, NO_ACK_SECONDS)
-            return poll, []
+            # 提交成功但上游一直不回话（无额度提示、无状态）：按拍板判【异常】，
+            # 由调用方把该号放进异常组并换号重试。
+            log.info("pure poll: %s 上游 %ds 无任何回执 → 判异常", account, NO_ACK_SECONDS)
+            raise AbnormalNoAckError(
+                f"{ABNORMAL_RETRY_HINT}（提交后 {NO_ACK_SECONDS} 秒内上游没有任何回执）")
         if time.time() >= deadline:
             return poll, []
         time.sleep(poll_interval)
 
 
+def _progress_heartbeat(on_poll, *, interval: float | None = None):
+    """等待出片期间的心跳：定期回调 on_poll，避免看门狗把正常等待误判成「卡住」重投。
+
+    用上下文管理器包住可能长时间阻塞的同步调用（如 get_video_result），退出即停。
+    """
+    interval = PROGRESS_TICK_SECONDS if interval is None else interval
+
+    class _Heartbeat:
+        def __enter__(self):
+            self._stop = threading.Event()
+            if not on_poll:
+                return self
+            def _tick():
+                while not self._stop.wait(interval):
+                    try:
+                        on_poll(time.time())
+                    except Exception:
+                        pass
+            self._thread = threading.Thread(target=_tick, daemon=True)
+            self._thread.start()
+            return self
+
+        def __exit__(self, *exc_info):
+            stop = getattr(self, "_stop", None)
+            if stop is not None:
+                stop.set()
+            thread = getattr(self, "_thread", None)
+            if thread is not None:
+                thread.join(timeout=1)
+            return False
+
+    return _Heartbeat()
+
+
+
+def _await_first_ack(*, dola, session, ctx, account: str, conversation_id: str,
+                     ack_deadline: float, poll_interval: float,
+                     credits: "_CreditTracker | None" = None, on_poll=None) -> None:
+    """等「第一次回执」——拍板的 5 分钟规则，**所有时长都要过这一关**。
+
+    提交成功后，上游必须在 NO_ACK_SECONDS 内有**任何**回应（额度播报/状态说明/报错），
+    否则判【异常】：账号进异常组，任务提示「生视频过程中出现异常情况，请重试」。
+    拿到回执就立刻返回，后续出片仍按原有超时继续等 —— 只约束"有没有人答话"。
+    提示词回显（自己发的那段话）不算回执。
+    """
+    while time.time() < ack_deadline:
+        try:
+            poll = dola.inspect_video_once(session, ctx, conversation_id)
+        except Exception as exc:
+            log.info("first-ack: %s 轮询异常（继续等）: %s", account, str(exc)[:160])
+            time.sleep(poll_interval)
+            continue
+        texts = [str(item) for item in (getattr(poll, "texts", None) or [])]
+        reasons = [str(item) for item in (getattr(poll, "failure_reasons", None) or [])]
+        if credits is not None:
+            credits.note(texts)
+        if on_poll:
+            try:
+                on_poll(time.time())
+            except Exception:
+                pass
+        evidence = [t for t in (texts + reasons) if t.strip() and not dola.is_prompt_echo_text(t)]
+        status = str(getattr(poll, "status", "") or "")
+        if evidence or status not in ("", "pending"):
+            return
+        time.sleep(poll_interval)
+    raise AbnormalNoAckError(
+        f"{ABNORMAL_RETRY_HINT}（派发后 {NO_ACK_SECONDS} 秒内上游没有任何回应）")
+
+
+
 def _result_from_poll(*, dola, session, ctx, conversation_id: str, poll,
                       remove_watermark: bool, proxy: str) -> dict[str, Any]:
+    """把轮询结果整理成与 dola.get_video_result 同构的返回体（含可下载 URL）。"""
     """把轮询结果整理成与 dola.get_video_result 同构的返回体（含可下载 URL）。"""
     result: dict[str, Any] = {
         "conversation_id": conversation_id,
@@ -603,6 +701,113 @@ def probe_login(
             session.close()
 
 
+def hello_probe(
+    cookie_state_path: str | Path,
+    proxy: str = "",
+    region: str | None = None,
+    pc_version: str | None = None,
+    prompt: str | None = None,
+    timeout_sec: int = 60,
+) -> dict[str, Any]:
+    """发一句「你好」做风控探测，返回可判定的结构化结果（纯 API，秒级，不消耗视频额度）。
+
+    判据（按拍板的规则）：
+      - 被登出（`x-tt-agw-login != 1`）→ ok=False；
+      - 没回复（上游报错 / 超时 / 空回复）→ ok=False；
+      - 有回复且登录标记为 1 → ok=True。
+
+    ⚠️ 实测结论：**只看"有没有回复"不够**——把 sessionid/sid_tt 等会话 cookie 全换成死值后，
+    匿名会话照样回「你好呀！」。所以这里必须同时读登录标记，否则会把已经登出的号判成健康号。
+
+    返回 {"ok", "status", "login_ok", "replied", "reason", "reply", "elapsed"}：
+      - status="ok"          → 登录有效且有回复；
+      - status="logged_out"  → 登录标记不是 1（**硬信号**：判风控）；
+      - status="no_reply"    → 登录有效但一句回复都没有（**硬信号**：按拍板判风控）；
+      - status="error"       → 探测本身没跑成功（网络/上游限流 710022002 等，**软失败**：
+        不能据此判风控 —— 实测健康号也会被上游拒绝一次，误判会把好号永久锁死）。
+    """
+    dola = _dola()
+    region = region or config.PURE_API_REGION
+    pc_version = pc_version or config.PURE_API_PC_VERSION
+    prompt = (prompt or config.HELLO_PROBE_PROMPT or "你好").strip() or "你好"
+    started = time.time()
+    session = None
+    login_ok = False
+    replied = False
+    reply = ""
+    reason = ""
+    status = "error"
+    try:
+        _load_state(Path(cookie_state_path))
+        session, ctx, headers = dola.setup_session(
+            region=region, pc_version=pc_version, proxy=proxy or "",
+            login_pure=True, login_state_file=str(cookie_state_path),
+        )
+        try:
+            dola.warmup_login_session(session, headers)
+        except Exception as exc:
+            log.info("hello_probe warmup warning: %s", str(exc)[:200])
+        # 登录标记：登出/会话失效时 x-tt-agw-login != "1"
+        resp = dola.dola_api_post_response(
+            session, ctx, "/alice/user/get_web_anon_id", {}, label="get_web_anon_id")
+        data = dola.request_json(resp, "get_web_anon_id")
+        dola.assert_ok(data, "get_web_anon_id")
+        agw = dola.agw_login_flag(resp)
+        login_ok = agw == "1"
+        if not login_ok:
+            status = "logged_out"
+            reason = f"被登出（x-tt-agw-login={agw or 'missing'}）"
+        else:
+            status = "no_reply"      # 先假定没回复；拿到回复再改成 ok
+            try:
+                dola.dola_api_post_json(session, ctx, "/alice/user/launch", {}, label="launch")
+            except Exception as exc:
+                log.info("hello_probe launch warning: %s", str(exc)[:200])
+            result = dola.submit_chat_completion(
+                session, ctx, headers, images=[], audios=[], prompt=prompt,
+                duration=0, model="", ratio=None, timeout_sec=timeout_sec,
+                video_ability=False,
+            )
+            reply = str(getattr(result, "final_reply_text", "") or "").strip()
+            if not reply:
+                texts = [str(t).strip() for t in (getattr(result, "reply_texts", None) or [])]
+                reply = next((t for t in texts if t), "")
+            if getattr(result, "error", ""):
+                err = f"{result.error_code or 'upstream'}: {result.error}"
+                if any(k in err.lower() for k in ("login", "登录", "未登录", "ログイン", "anonymous")):
+                    login_ok = False
+                    status = "logged_out"
+                else:
+                    # 上游拒绝/网络问题：软失败，不判风控
+                    status = "error"
+                reason = err[:200]
+            if reply:
+                replied = True
+                if login_ok:
+                    status = "ok"
+            elif not reason:
+                reason = f"{timeout_sec} 秒内没有回复"
+    except Exception as exc:
+        reason = str(exc).replace("\n", " ")[:200] or exc.__class__.__name__
+    finally:
+        if session is not None:
+            session.close()
+
+    ok = bool(login_ok and replied)
+    if ok:
+        status = "ok"
+        reason = reason or "replied"
+    return {
+        "ok": ok,
+        "status": status,
+        "login_ok": bool(login_ok),
+        "replied": bool(replied),
+        "reason": reason,
+        "reply": reply[:200],
+        "elapsed": round(time.time() - started, 2),
+    }
+
+
 def generate_pure_video(
     *,
     account: str,
@@ -738,11 +943,22 @@ def generate_pure_video(
             poll=poll, remove_watermark=remove_watermark, proxy=proxy or "",
         )
     else:
-        result = dola.get_video_result(
-            session, ctx, conversation_id,
-            timeout=timeout, interval=poll_interval,
-            remove_watermark=remove_watermark, proxy=proxy or "",
+        # 拍板的 5 分钟规则：短时长任务同样先等「第一次回执」，没等到就判【异常】，
+        # 而不是干等到 15 分钟总超时。
+        _await_first_ack(
+            dola=dola, session=session, ctx=ctx, account=account,
+            conversation_id=conversation_id,
+            ack_deadline=time.time() + NO_ACK_SECONDS,
+            poll_interval=poll_interval, credits=credits, on_poll=on_poll,
         )
+        # 心跳：get_video_result 内部轮询不会回调进度，这里替它刷 last_poll_at，
+        # 免得看门狗把正常等待判成「卡住」而重新派发（重投 = 白扣一次额度）。
+        with _progress_heartbeat(on_poll):
+            result = dola.get_video_result(
+                session, ctx, conversation_id,
+                timeout=timeout, interval=poll_interval,
+                remove_watermark=remove_watermark, proxy=proxy or "",
+            )
     credits.note(result.get("texts"))
     credits.note(result.get("failure_reasons"))
     status = result.get("status")
@@ -750,9 +966,22 @@ def generate_pure_video(
         reasons = result.get("failure_reasons") or []
         texts = result.get("texts") or []
         detail = " | ".join(str(x) for x in (reasons + texts))[:300]
+        # 派发后一句回执都没有（连额度播报、状态都没有）→ 按拍板判【异常】，提示重试
+        if not reasons and not texts:
+            raise AbnormalNoAckError(
+                f"{ABNORMAL_RETRY_HINT}（{NO_ACK_SECONDS} 秒内上游没有任何回执，status={status}）")
         if any(str(x).lower() in ("login", "未登录", "ログイン") for x in reasons + texts):
             raise PureLoginExpired(f"{account} 纯 API 轮询发现登录失效: {detail}")
-        if int(duration) >= 30 and _credit_short(detail) and config.ALLOW_30S_PAIR:
+        # 上游对 30 秒请求有两条拒绝路径：额度不足（报价 6 点）和「单条最多 15 秒，
+        # 要不要拆两段」的追问。两者在 ALLOW_30S_PAIR 打开时都用本地两段兜底，
+        # 而不是直接失败（否则画布那边的 30 秒任务只能靠换号碰运气）。
+        duration_refused = bool(
+            status == getattr(dola, "DURATION_SPLIT_STATUS", "duration_split")
+            or getattr(dola, "looks_like_duration_confirm", lambda _t: False)(detail)
+            or getattr(dola, "looks_like_duration_capped", lambda _t: False)(detail)
+        )
+        if int(duration) >= 30 and config.ALLOW_30S_PAIR and (
+                _credit_short(detail) or duration_refused):
             # 额度/限流类失败：只有在显式开启两段兜底时，才用「两条独立的 30 秒请求各被上游
             # 压成 15 秒」再本地拼接；默认不拼接，交给调用方换号重试拿原生 30 秒。
             try:
@@ -785,6 +1014,12 @@ def generate_pure_video(
                     f"{account} 出片未成功 status={status}: {detail} —— {SPLIT_CREDIT_HINT}"
                     f"；低成本两段兜底也未成功：{fallback_exc}"
                 ) from fallback_exc
+        if duration_refused and not config.ALLOW_30S_PAIR:
+            raise PureApiError(
+                f"{account} 上游要求 30 秒拆两段（status={status}）：{detail} —— "
+                "当前按「30 秒不拼接」策略换号重试；要直接用 2×15 秒本地拼接，"
+                "把 DOLA_ALLOW_30S_PAIR 设为 1"
+            )
         raise PureApiError(f"{account} 出片未成功 status={status}: {detail}")
 
     download_url = result.get("download_url") or result.get("source_url") or ""
@@ -837,6 +1072,15 @@ def generate_pure_video(
                 "first_segment_duration": actual,
                 **credits.fields(),
             }
+    elif int(duration) not in config.NATIVE_DURATIONS:
+        # 任意时长（非原生档位）：上游没有「两段拼成 20 秒」这种兜底，
+        # 所以只复核实际时长 —— 短了直接失败换号，避免把 15 秒片当 20 秒交付。
+        actual = _media_duration(Path(saved))
+        if clip_is_short(actual, int(duration)):
+            raise ShortClipError(
+                f"{account} 上游本次只给了 {actual:.1f} 秒成片（目标 {int(duration)} 秒），"
+                "非原生时长无拼接兜底，直接换号重试"
+            )
 
     return {
         "local_path": str(saved),

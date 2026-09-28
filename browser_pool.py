@@ -17,8 +17,13 @@ from video_worker_ui import (
     AccountLimitedError, CreditInsufficientError, LoginExpiredError, RiskControlError,
     generate_video, resume_video,
 )
-from pure_api_gen import ShortClipError, ensure_web_playable, generate_pure_video, probe_login
+from pure_api_gen import (
+    AbnormalNoAckError, ShortClipError, ensure_web_playable, generate_pure_video,
+    hello_probe, probe_login,
+)
 import config
+import cred_store
+import failure_text
 import proxy_store
 from pool import AccountConfig as _PoolAccountConfig, AccountPool as _PoolEngine
 
@@ -28,6 +33,63 @@ DAILY_LIMIT = config.DAILY_LIMIT
 COOLDOWN_SEC = 1800  # 风控冷却 30 分钟
 FAIL_COOLDOWN_SEC = 120   # 任一任务试号失败后的共享冷却：并发任务在此窗口内不再选同一账号
 WAIT_FREE_ACCOUNT_SEC = 15  # 候选账号全被其他任务占用时，最长等待重扫时间
+GROUP_WAIT_STEP = 5       # 目标额度组暂时无号时的重扫步长（秒）
+FAIL_STREAK_TO_ABNORMAL = 3   # 同号连续失败几次后进【异常】组（到期自动恢复）
+
+# ===== 账号分组（2026-09-23 大迭代）=====
+# 满额 = 剩余 == 每日上限（能出 1 条 2.0 / 2 条 2.5）；
+# 半额 = 2 ≤ 剩余 < 上限（只够 1 条 2.5）；
+# 冷却 = 剩余 ≤ 1（0 或 1 点一律如此，1 点是 2.0 用剩的碎片）→ 不参与派发，额度日 23:00 重置后自动回满额。
+GROUP_FULL = "满额"
+GROUP_HALF = "半额"
+GROUP_COOLING = "冷却"
+GROUP_BUSY = "生成中"
+GROUP_RISK = "风控"
+GROUP_PENDING = "待激活"
+GROUP_ABNORMAL = "异常"
+# 【有效】= 【正常】：能参与派发的四个组（含正在出片与当日冷却）
+ACTIVE_GROUPS = (GROUP_FULL, GROUP_HALF, GROUP_COOLING, GROUP_BUSY)
+GROUP_ORDER = (GROUP_FULL, GROUP_HALF, GROUP_COOLING, GROUP_BUSY,
+               GROUP_RISK, GROUP_PENDING, GROUP_ABNORMAL)
+
+
+def group_of(a: dict, now: float, *, busy: bool = False,
+             processing_accounts: set | None = None) -> tuple[str, str]:
+    """账号所属分组 + 原因。优先级：风控 > 待激活 > 异常 > 生成中 > 冷却 > 半额 > 满额。
+
+    纯函数，便于单测；`busy` 是内存锁，`processing_accounts` 是任务库里正在跑该号的集合
+    （服务重启后内存锁会丢，靠任务库兜底）。
+    """
+    # 风控 = 你好探测不通过（被登出/没回复）或已被标记风控；永久停留，人工恢复才出组。
+    # login_ok == 0（验证过的账号掉登录）也按「被登出」处理，进风控而不是悄悄失效。
+    if a.get("risk_control") or a.get("login_ok") == 0:
+        return GROUP_RISK, str(a.get("risk_reason") or "登录态失效")
+    if a.get("login_ok") is None:
+        return GROUP_PENDING, "尚未完成首次激活探测"
+    if float(a.get("abnormal_until") or 0) > now:
+        return GROUP_ABNORMAL, str(a.get("abnormal_reason") or "生成过程异常")
+    if busy or (processing_accounts and a.get("name") in processing_accounts):
+        return GROUP_BUSY, "正在生成"
+    remaining = int(a.get("remaining") or 0)
+    # 上限以该号自己的上限为准（面板 dict 里带 limit），拿不到才退回全局配置
+    limit = int(a.get("limit") or config.DAILY_LIMIT or DAILY_LIMIT)
+    # 上游自己报「今日次数用完 / 积分不足」的号同样不能出片，一并算进冷却组
+    # （不新增「限流」概念，只在原因里写清楚）
+    if a.get("rate_limited"):
+        return GROUP_COOLING, str(a.get("limit_reason") or "上游报今日次数已用完")
+    if a.get("quota_blocked"):
+        # quota_reason 有时只是来源标记（upstream/local），不是给人看的解释
+        reason = str(a.get("quota_reason") or "")
+        if reason and reason not in ("upstream", "local"):
+            return GROUP_COOLING, reason
+        balance = a.get("credit_balance")
+        detail = f"（今日剩余 {balance}）" if balance is not None else ""
+        return GROUP_COOLING, f"上游报额度不足{detail}"
+    if remaining <= 1:
+        return GROUP_COOLING, f"剩余 {remaining} 点（额度日 23:00 重置）"
+    if remaining < limit:
+        return GROUP_HALF, f"剩余 {remaining} 点，只够 seedance-2.5"
+    return GROUP_FULL, f"剩余 {remaining} 点"
 WAIT_FREE_ACCOUNT_STEP = 2  # 等待重扫间隔（秒）
 
 # 上游「访问频繁」类瞬时限流：只冷却一小段时间，不能按「失败」锁到次日重置。
@@ -52,6 +114,10 @@ QUOTA_SHORT_MARKERS = (
 # 内容/版权拒稿：与账号无关，换号也过不了，不能把号标记成失败或额度不足。
 CONTENT_REFUSAL_MARKERS = (
     "版权限制", "涉及版权", "请更换输入内容", "内容违规", "违反社区",
+    # 审核类拒稿的其余上游话术（2026-09-23 补：以前「肖像保护」没进这个表，
+    # 被判成 other 后会把好号标成失败，且拒稿原文没人记录）。
+    "肖像保护", "未认证人脸", "人脸暂不支持", "内容审核", "审核不通过",
+    "不合规", "涉嫌侵权", "未授权使用",
     "copyright", "policy violation",
 )
 # 上游只给了短视频（例如 30 秒的请求只回 15 秒）：按「不拼接」策略换号重试，
@@ -118,6 +184,10 @@ class AllAccountsQuotaBlockedError(RuntimeError):
     """所有已开启调度的账号都已知积分不足。"""
 
 
+class AllAccountsGroupEmptyError(RuntimeError):
+    """目标额度组（如 seedance-2.0 需要的【满额】组）暂时没有可用账号，排队超时。"""
+
+
 class _UnlimitedSemaphore:
     """max_concurrency <= 0 时顶替 asyncio.Semaphore：不限制并发。"""
 
@@ -139,7 +209,14 @@ class BrowserPool:
                           if max_concurrency > 0 else _UnlimitedSemaphore())
         self._locks: dict[str, asyncio.Lock] = {}
         self._fail_until: dict[str, float] = {}
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._fail_streak: dict[str, int] = {}   # 连续失败计数（内存，成功即清零）
+        self._probe_cache: dict[str, tuple[float, dict]] = {}   # 你好探测结果缓存
+        # isolation_level=None（自动提交）：号池的 sqlite 连接是**多线程共用**的
+        # （出片回调 on_balance、探测都在线程池里跑），sqlite3 模块的隐式事务会让
+        # 两个线程的 BEGIN/COMMIT 互相踩，冒出 `cannot commit - no transaction is active`
+        # 把任务判失败（2026-09-23 在并发用例里复现）。自动提交下每条语句各自原子，
+        # 代码里原有的 commit() 变成无害的 no-op。
+        self._conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS usage (account TEXT, day TEXT, used INTEGER, "
@@ -194,12 +271,25 @@ class BrowserPool:
             ("source", "TEXT DEFAULT ''"),
             ("risk_control", "INTEGER DEFAULT 0"),
             ("risk_reason", "TEXT DEFAULT ''"),
+            # ---- 2026-09-23 分组大迭代新增 ----
+            ("risk_since", "REAL DEFAULT 0"),          # 进风控组的时间（永久，人工恢复）
+            ("abnormal_until", "REAL DEFAULT 0"),      # 异常组（5 分钟无回执）到期时间
+            ("abnormal_reason", "TEXT DEFAULT ''"),
+            ("activated_at", "REAL DEFAULT 0"),        # 首次激活探测通过的时间
+            ("probe_ok_at", "REAL DEFAULT 0"),         # 最近一次「你好」探测通过时间
+            ("probe_result", "TEXT DEFAULT ''"),       # 最近一次探测结论（面板/排障用）
         ):
             try:
                 self._conn.execute(f"ALTER TABLE accounts_meta ADD COLUMN {column} {definition}")
                 self._conn.commit()
             except sqlite3.OperationalError:
                 pass
+        # 一次性回填：老号当年验证通过的时点当作「激活时间」，免得它们被误判成【待激活】
+        self._conn.execute(
+            "UPDATE accounts_meta SET activated_at=COALESCE(NULLIF(login_checked_at, 0), created_at) "
+            "WHERE login_ok=1 AND COALESCE(activated_at, 0)=0"
+        )
+        self._conn.commit()
         self._engine: _PoolEngine | None = None
 
     # ===== 账号发现/元数据 =====
@@ -293,14 +383,53 @@ class BrowserPool:
         self._claim(account, charge)
         return charge
 
-    def _duration_cost(self, model: str, duration: int) -> int:
-        """按用户确认的模型-时长矩阵返回单次出片消耗的点数。"""
+    def _duration_cost(self, model: str, duration: int = 0) -> int:
+        """单次出片消耗的点数：只看模型，不看时长（对齐 dola-pool-cookie）。
+
+        旧实现对白名单里查不到的 (模型, 时长) 组合默认返回 1 点，属于**少扣**：
+        一旦放开任意时长，每个未登记时长都会被按 1 点记账，一个号一天能跑 4 条。
+        duration 参数保留，仅为兼容既有调用方签名。
+        """
         m = (model or "").lower().replace("_", "-")
         if "2.5" in m or "2-5" in m:
             m = "seedance-2.5"
         else:
+            # 认不出的模型一律按 2.0 计（= 最贵的 3 点）：宁可少派，也不要拿号去白撞额度。
             m = "seedance-2.0"
-        return config.MODEL_DURATION_COSTS.get(m, {}).get(duration, 1)
+        return config.MODEL_COSTS.get(m, config.DEFAULT_CREDIT_COST)
+
+    # ---- 模型 → 候选额度组（2026-09-23 P2）----
+    # 不派发的组：冷却（额度 ≤1）、风控（永久）、待激活（未探测）、异常（出片异常）
+    BLOCKED_GROUPS = (GROUP_COOLING, GROUP_RISK, GROUP_PENDING, GROUP_ABNORMAL)
+
+    @staticmethod
+    def _quota_group(account_row: dict) -> str:
+        """只按额度的分组（满额/半额/冷却），不含风控/生成中这类状态。
+
+        面板上的 group 是"状态组"（风控/生成中优先），派发时需要的是"额度组"，
+        两者分开算，免得一个正在出片的满额号被当成半额。
+        """
+        remaining = int(account_row.get("remaining") or 0)
+        limit = int(account_row.get("limit") or config.DAILY_LIMIT or DAILY_LIMIT)
+        if remaining <= 1:
+            return GROUP_COOLING
+        if remaining < limit:
+            return GROUP_HALF
+        return GROUP_FULL
+
+    def _allowed_quota_groups(self, model: str) -> tuple[str, ...]:
+        """seedance-2.0（3 点）只吃满额；seedance-2.5（2 点）先半额、后满额。"""
+        if self._duration_cost(model) >= 3:
+            return (GROUP_FULL,)
+        return (GROUP_HALF, GROUP_FULL)
+
+    def _ordered_candidates(self, allowed: tuple[str, ...]) -> list:
+        """按额度组优先级排序候选（2.5 先半额再满额），组内保持既有顺序（钉住 > weight > 名称）。"""
+        rows = self._sorted_accounts()
+        if len(allowed) < 2:
+            return rows
+        rank = {group: index for index, group in enumerate(allowed)}
+        return sorted(rows, key=lambda a: rank.get(self._quota_group(a), len(allowed)))
 
     def _next_limit_reset(self) -> float:
         """下一次每日额度刷新时间（默认日本时间次日 00:00）。"""
@@ -314,14 +443,26 @@ class BrowserPool:
 
         风控冷却（cooldown_until）和登录态（login_ok）不动：
         前者是上游处罚窗口，后者要靠验证功能恢复。
+
+        只重置实际存在的账号（accounts/<name> 目录）：这条 UPDATE 早先没有 WHERE，
+        rowcount 会把已删除账号残留的元数据行一起算进来，面板就会出现
+        「已重置 N 个账号」而实际账号数远没那么多（N = accounts_meta 的总行数）。
         """
+        names = list(self.accounts)
+        if not names:
+            self._fail_until.clear()
+            return 0
+        placeholders = ",".join("?" for _ in names)
         cur = self._conn.execute(
             "UPDATE accounts_meta SET rate_limited_until=0, limit_reason='', "
-            "quota_blocked_until=0, quota_reason='', failed_at=0, failed_reason='', "
-            "credit_balance=NULL, credit_checked_at=0"
+            "quota_blocked_until=0, quota_reason='', "
+            "credit_balance=NULL, credit_checked_at=0 "
+            f"WHERE name IN ({placeholders})",
+            names,
         )
         self._conn.commit()
         self._fail_until.clear()
+        self._fail_streak.clear()
         return cur.rowcount
 
     def _clear_expired_rate_limits(self):
@@ -355,35 +496,47 @@ class BrowserPool:
         self._conn.commit()
 
     def _mark_failed(self, account: str, reason: str = ""):
-        """叠加“失败”状态（持久记录，不清到全池重置不罢休）。
-        只用于底层没有自动恢复标记的失败（普通生成失败等），
-        每日上限/积分不足/风控/登录失效仍走各自底层状态，避免误锁。"""
+        """【已废弃】旧的「叠加失败」概念（2.1.0 P3 删除）。
+
+        它会把好号锁到「全池重置」为止，与新分组模型冲突；现在连续失败改走
+        `_note_fail_streak()` → 异常组（到期自动恢复），不再有「失败(待全池重置)」状态。
+        保留这个空壳只为兼容外部调用，不再写库。
+        """
+        return
+
+    def _mark_abnormal(self, account: str, reason: str,
+                       seconds: float | None = None) -> None:
+        """把账号放进【异常】组：暂停派发，到期自动恢复（0 秒 = 立刻可恢复）。"""
+        ttl = config.ABNORMAL_COOLDOWN_SEC if seconds is None else float(seconds)
         self._conn.execute(
-            "UPDATE accounts_meta SET failed_at=?, failed_reason=? WHERE name=?",
-            (time.time(), (reason or "生成失败")[:300], account),
+            "UPDATE accounts_meta SET abnormal_until=?, abnormal_reason=? WHERE name=?",
+            (time.time() + ttl, (reason or "生成过程异常")[:300], account),
         )
         self._conn.commit()
+
+    def _note_fail_streak(self, account: str, reason: str) -> int:
+        """连续失败计数：同号连续失败 3 次才进【异常】组，避免一次抖动就把号停掉。"""
+        streak = self._fail_streak.get(account, 0) + 1
+        self._fail_streak[account] = streak
+        if streak >= FAIL_STREAK_TO_ABNORMAL:
+            print(f"[pool] {account} 连续失败 {streak} 次 → 进【异常】组"
+                  f"（{config.ABNORMAL_COOLDOWN_SEC // 60} 分钟后自动恢复）", flush=True)
+            self._mark_abnormal(account, reason)
+        return streak
 
     def _note_upstream_failure(self, account: str, message: str, attempt: int = 0) -> str:
         """按上游失败文案落状态，返回归类：transient / daily / quota / other。
 
-        - transient：出口 IP/上游瞬时限流（如 710022002「当前服务访问频繁」）→ 短冷却，**不写 failed**；
+        - transient：出口 IP/上游瞬时限流（如 710022002「当前服务访问频繁」）→ 只换号重试，
+          「限流」概念已按用户要求删除，不冷却、不标状态；
         - daily：当日次数用完 → 标记到额度刷新；
         - quota：本单额度不够（如 30 秒需 3 点只剩 2 点）→ 标记到额度刷新；
-        - other：普通生成失败 → 叠加失败标记（下次全池/每日重置时清）。
+        - other：普通生成失败 → 只换号重试；同号连续失败 3 次才进【异常】组（到期自动恢复）。
         """
         kind = classify_upstream_failure(message)
         if kind == "transient":
-            print(
-                f"[pool] {account} 上游瞬时限流，冷却 {TRANSIENT_COOLDOWN_SEC // 60} 分钟后可再试: "
-                f"{message[:160]}",
-                flush=True,
-            )
-            self._conn.execute(
-                "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
-                (time.time() + TRANSIENT_COOLDOWN_SEC, account),
-            )
-            self._conn.commit()
+            print(f"[pool] {account} 上游拒绝本次提交（访问频繁），换号重试: {message[:160]}",
+                  flush=True)
         elif kind == "daily":
             print(f"[pool] {account} 当日次数已用完，标记到额度刷新: {message[:160]}", flush=True)
             self._mark_daily_limit(account, message)
@@ -393,11 +546,16 @@ class BrowserPool:
         elif kind == "content":
             # 版权/内容拒稿：同一条提示词换号也过不了，不能把号标记成失败或额度不足。
             print(f"[pool] {account} 内容/版权拒稿（与账号无关，不标记账号）: {message[:160]}", flush=True)
+            # 拒稿原文同时落到账号备注：面板上能直接看到上游原话（肖像保护/内容审核/侵权…），
+            # 不用再去翻日志或截断的任务报错。
+            label = failure_text.label_for(message) or "内容/版权"
+            self.append_note(account, failure_text.account_note_line(label, message))
+            print(f"[pool] {account} 拒稿原文已写入账号备注", flush=True)
         elif kind == "short":
             print(f"[pool] {account} 只出了短视频（不拼接，不标记账号）: {message[:160]}", flush=True)
         else:
             print(f"[pool] {account} 生成失败（第 {attempt} 次），换号重试: {message[:200]}", flush=True)
-            self._mark_failed(account, message)
+            self._note_fail_streak(account, message)
         return kind
 
     def _clear_all_failed(self) -> int:
@@ -409,20 +567,19 @@ class BrowserPool:
         return cur.rowcount
 
     def _overlay_unlockable(self, cost: int = 1) -> bool:
-        """清掉全部叠加失败标记后，是否至少解锁一个底层健康且满足本次点数的账号。"""
-        for a in self.list_accounts():
-            if not a["failed"]:
-                continue
-            if (a["scheduling"] and not a["cooling"] and not a["rate_limited"]
-                    and not a["quota_blocked"] and a["login_ok"] != 0
-                    and a["used_today"] < DAILY_LIMIT
-                    and (a["credit_balance"] is None or a["credit_balance"] >= 2)
-                    and a["remaining"] >= cost):
-                return True
+        """【已废弃】2.1.0 P3：叠加失败与「全池重置」概念一并删除，恒返回 False。"""
         return False
 
-    def list_accounts(self) -> list:
-        """面板视图：meta + 配额 + 限流状态 + 是否忙合并。"""
+    def _clear_all_failed(self) -> int:
+        """【已废弃】2.1.0 P3：不再有叠加失败标记，恒返回 0。"""
+        return 0
+
+    def list_accounts(self, *, processing_accounts: set | None = None) -> list:
+        """面板视图：meta + 配额 + 分组 + 是否忙合并。
+
+        processing_accounts：任务库里 status='processing' 的账号集合（server 侧传入），
+        用于服务重启后仍能正确显示【生成中】（内存锁会丢，任务库不会）。
+        """
         self._clear_expired_rate_limits()
         now = time.time()
         out = []
@@ -463,7 +620,16 @@ class BrowserPool:
                 "limit": DAILY_LIMIT,
                 "remaining": max(0, DAILY_LIMIT - used),
                 "busy": bool(lock and lock.locked()),
+                "risk_since": m["risk_since"] if m else 0,
+                "abnormal_until": m["abnormal_until"] if m else 0,
+                "abnormal_reason": m["abnormal_reason"] if m else "",
+                "activated_at": m["activated_at"] if m else 0,
+                "probe_ok_at": m["probe_ok_at"] if m else 0,
+                "probe_result": m["probe_result"] if m else "",
             })
+        for a in out:
+            a["group"], a["group_reason"] = group_of(
+                a, now, busy=a["busy"], processing_accounts=processing_accounts)
         return out
 
     def _derive_status(self, m, now: float) -> str:
@@ -479,8 +645,6 @@ class BrowserPool:
             return "expired"
         if not m["scheduling"]:
             return "standby"
-        if m["failed_at"] and m["failed_at"] > 0:
-            return "cooldown"
         return "healthy"
 
     def set_scheduling(self, name: str, on: bool):
@@ -494,31 +658,211 @@ class BrowserPool:
         self._conn.commit()
 
     def set_login_status(self, name: str, ok: bool):
+        # 先确保 accounts_meta 有行：否则这条 UPDATE 会静默影响 0 行，
+        # 账号永远停在「未验证/待激活」——加号流程之外（新号第一次验证）踩过这个坑。
+        self._ensure_meta(name)
         self._conn.execute(
-            "UPDATE accounts_meta SET login_ok=?, login_checked_at=? WHERE name=?",
-            (1 if ok else 0, time.time(), name),
+            "UPDATE accounts_meta SET login_ok=?, login_checked_at=?, "
+            "activated_at=COALESCE(NULLIF(activated_at,0), ?) WHERE name=?",
+            (1 if ok else 0, time.time(), time.time() if ok else 0, name),
         )
         self._conn.commit()
 
     def _set_risk(self, name: str, reason: str = "") -> None:
         """标记该账号被风控（登录态失效/生成即被踢），供账号管理面板显示「风控」。"""
+        self._ensure_meta(name)
         self._conn.execute(
-            "UPDATE accounts_meta SET risk_control=1, risk_reason=? WHERE name=?",
-            (str(reason)[:200], name),
+            "UPDATE accounts_meta SET risk_control=1, risk_reason=?, risk_since=? WHERE name=?",
+            (str(reason)[:200], time.time(), name),
         )
         self._conn.commit()
 
     def _clear_risk(self, name: str) -> None:
         self._conn.execute(
-            "UPDATE accounts_meta SET risk_control=0, risk_reason='' WHERE name=?",
+            "UPDATE accounts_meta SET risk_control=0, risk_reason='', risk_since=0 WHERE name=?",
             (name,),
         )
         self._conn.commit()
+
+    # ---- 「你好」风控探测（2026-09-23 P4）----
+    def _probe_network(self, name: str, force: bool) -> dict:
+        """只做网络探测，**不碰数据库**（会被丢进线程池执行）。
+
+        带缓存（`DOLA_HELLO_PROBE_CACHE_SECONDS`，默认 300 秒），避免每个任务都多花
+        3 秒、还和出片抢同一条上游提交通道；`force=True` 用于面板手动探测。
+        非纯 API 账号（浏览器登录号）跳过探测，返回 ok=True 并注明原因。
+        """
+        now = time.time()
+        ttl = config.HELLO_PROBE_CACHE_SECONDS
+        cached = self._probe_cache.get(name)
+        if cached and not force and ttl > 0 and now - cached[0] < ttl:
+            return {**cached[1], "cached": True, "probed": False}
+
+        state = self._pure_state(name)
+        if state is None:
+            result = {"ok": True, "status": "skipped", "login_ok": True, "replied": True,
+                      "cached": False, "probed": False,
+                      "reason": "非纯 API 账号（浏览器登录），跳过你好探测",
+                      "reply": "", "elapsed": 0.0}
+        else:
+            try:
+                result = hello_probe(
+                    state, proxy=self._proxy_url_for(name),
+                    prompt=config.HELLO_PROBE_PROMPT,
+                    timeout_sec=config.HELLO_PROBE_TIMEOUT)
+            except Exception as exc:  # 探测本身炸了也算不通过（宁可保守）
+                result = {"ok": False, "status": "error", "login_ok": False, "replied": False,
+                          "cached": False, "probed": True,
+                          "reason": f"探测异常: {str(exc)[:180]}", "reply": "", "elapsed": 0.0}
+            result.setdefault("cached", False)
+            result.setdefault("probed", True)
+        return result
+
+    def _persist_probe(self, name: str, result: dict, *, apply_risk: bool = True) -> dict:
+        """探测结论落库（只在事件循环线程里调用，SQLite 连接不跨线程写）。
+
+        apply_risk=False：只记结论不判风控。批量探测的**第一次**用这个，
+        重试仍失败才 apply_risk=True —— 单次「没回复」很可能是上游抖动，
+        一次就锁号会把好号误封（线上实测踩过）。
+        """
+        self._probe_cache[name] = (time.time(), result)
+        self._ensure_meta(name)
+        remark = str(result.get("reason") or "")[:200]
+        if result.get("ok"):
+            was_risk = bool(self._meta(name) and self._meta(name)["risk_control"])
+            print(f"[pool] {name} 你好探测通过（{result.get('elapsed')}s，"
+                  f"回复 {len(str(result.get('reply') or ''))} 字）"
+                  + ("；该号仍在【风控】组（按规则要人工恢复才会重新派发）" if was_risk else ""),
+                  flush=True)
+            self._conn.execute(
+                "UPDATE accounts_meta SET probe_ok_at=?, probe_result=?, login_ok=1, "
+                "login_checked_at=?, activated_at=COALESCE(NULLIF(activated_at,0), ?) "
+                "WHERE name=?",
+                (time.time(), remark, time.time(), time.time(), name))
+            self._conn.commit()
+        else:
+            self._conn.execute(
+                "UPDATE accounts_meta SET probe_ok_at=0, probe_result=? WHERE name=?",
+                (remark, name))
+            self._conn.commit()
+            # 只有"硬信号"才判风控：被登出（x-tt-agw-login != 1）或 一句回复都没有。
+            # 软失败（网络不通 / 上游 710022002 拒绝）**不能**判风控 ——
+            # 2026-09-23 线上实测：健康号也会被上游拒绝一次，按软失败判风控会把好号永久锁死。
+            if apply_risk and result.get("status") in ("logged_out", "no_reply"):
+                self._set_risk(name, f"你好探测：{remark}")
+            else:
+                print(f"[pool] {name} 你好探测未完成（{remark}）→ 本次跳过该号，不判风控",
+                      flush=True)
+        return result
+
+    def apply_probe_risk(self, name: str, result: dict) -> None:
+        """按探测结论把号判进【风控】组。
+
+        批量探测用：第一次探测先不落风控（避免上游抖动误封），但「被登出」是强信号，
+        批量流程会立刻调用这里把它判掉。
+        """
+        remark = str((result or {}).get("reason") or "探测未通过")[:200]
+        self._set_risk(name, f"你好探测：{remark}")
+
+    def probe_hello(self, name: str, *, force: bool = False,
+                    apply_risk: bool = True) -> dict:
+        """同步探测（网络 + 落库）。测试与同步调用方用；异步路径见 probe_hello_async。"""
+        return self._persist_probe(name, self._probe_network(name, force),
+                                   apply_risk=apply_risk)
+
+    async def probe_hello_async(self, name: str, *, force: bool = False,
+                                apply_risk: bool = True) -> dict:
+        """派发门用的异步探测：网络在线程池，落库回到事件循环线程。"""
+        result = await asyncio.to_thread(self._probe_network, name, force)
+        return self._persist_probe(name, result, apply_risk=apply_risk)
+
+    def recover_account(self, name: str, kind: str = "risk") -> dict:
+        """人工恢复：把号从【风控】或【异常】组放回正常流程。
+
+        风控恢复会同时把登录态清空（回到【待激活】），因为「被登出」是事实，
+        得靠下一次探测/验证重新确认登录，不能靠按一下按钮就假定它又能出片。
+        """
+        self._ensure_meta(name)
+        if kind == "abnormal":
+            self._conn.execute(
+                "UPDATE accounts_meta SET abnormal_until=0, abnormal_reason='' WHERE name=?",
+                (name,))
+            self._conn.commit()
+        else:
+            self._conn.execute(
+                "UPDATE accounts_meta SET risk_control=0, risk_reason='', risk_since=0, "
+                "login_ok=NULL, probe_ok_at=0 WHERE name=?",
+                (name,))
+            self._conn.commit()
+        self._probe_cache.pop(name, None)
+        self._fail_streak.pop(name, None)
+        self._fail_until.pop(name, None)
+        return {"ok": True, "name": name, "kind": kind}
 
     def set_note(self, name: str, note: str):
         self._conn.execute(
             "UPDATE accounts_meta SET note=? WHERE name=?", (note, name))
         self._conn.commit()
+
+    def append_note(self, name: str, line: str, limit: int = 500) -> str:
+        """把一行说明追加到账号备注末尾（保留人工写的备注，超长只留最新内容）。
+
+        账号备注是人工字段，所以只在审核类拒稿时追加（见 _note_upstream_failure），
+        用换行分隔，超长时从头部截断，保证面板里看到的最新一条始终完整。
+        """
+        if not line:
+            return ""
+        row = self._conn.execute(
+            "SELECT note FROM accounts_meta WHERE name=?", (name,)).fetchone()
+        old = (row["note"] if row and row["note"] else "").strip()
+        note = f"{old}\n{line}" if old else line
+        if len(note) > limit:
+            note = note[-limit:]
+        self.set_note(name, note)
+        return note
+
+    def rename_account(self, name: str, new_name: str) -> dict:
+        """给账号改名：profile 目录 + 所有以账号名为主键的记录一起搬。
+
+        账号名同时是 accounts_meta / account_proxy / proxy_sessions / usage 的主键，
+        也是 accounts/<name> 目录名和加密凭据的 key，所以要整组搬迁；只改一处会让代理绑定、
+        今日额度、cookie_state 全部对不上号。
+        """
+        name = (name or "").strip()
+        new_name = (new_name or "").strip()
+        if not new_name:
+            raise ValueError("新账号名不能为空")
+        if any(ch in new_name for ch in "/\\") or new_name.startswith("."):
+            raise ValueError("账号名不能包含路径分隔符，也不能以点开头")
+        if name not in self.accounts:
+            raise FileNotFoundError(f"账号不存在: {name}")
+        if new_name == name:
+            return {"renamed": False, "name": name}
+        if new_name in self.accounts or self._meta(new_name):
+            raise ValueError(f"账号名已存在: {new_name}")
+        lock = self._locks.get(name)
+        if lock and lock.locked():
+            raise RuntimeError("账号正在出片，不能改名")
+        src = self.accounts_dir / name
+        dst = self.accounts_dir / new_name
+        src.rename(dst)
+        try:
+            self._conn.execute("UPDATE accounts_meta SET name=? WHERE name=?",
+                               (new_name, name))
+            self._conn.execute("UPDATE usage SET account=? WHERE account=?",
+                               (new_name, name))
+            self._conn.commit()
+            proxy_store.rename_account(name, new_name)
+        except Exception:
+            dst.rename(src)  # 元数据搬迁失败就把目录挪回去，避免半搬状态
+            raise
+        cred_store.rename(name, new_name)
+        if name in self._locks:
+            self._locks[new_name] = self._locks.pop(name)
+        if name in self._fail_until:
+            self._fail_until[new_name] = self._fail_until.pop(name)
+        self._sync_engine()
+        return {"renamed": True, "name": new_name, "previous": name}
 
     def delete_account(self, name: str):
         lock = self._locks.get(name)
@@ -527,44 +871,62 @@ class BrowserPool:
         d = self.accounts_dir / name
         if d.exists():
             shutil.rmtree(d)
+        # 代理绑定 / 出口会话 / 今日额度都要一起清掉：否则同名新号（尤其是自动命名的 acc1）
+        # 会继承旧状态 —— 表现为导入/出片时莫名套上一个旧代理（socks5 带鉴权时浏览器直接起不来），
+        # 或者今天的额度一开始就被算掉。
+        proxy_store.forget_account(name)
         self._conn.execute("DELETE FROM accounts_meta WHERE name=?", (name,))
+        self._conn.execute("DELETE FROM usage WHERE account=?", (name,))
         self._conn.commit()
 
     async def verify_account(self, name: str) -> bool:
-        """验证登录态并写回缓存。号忙抛 RuntimeError。
+        """验证登录态并写回缓存。号忙抛 RuntimeError。"""
+        ok, _reason = await self.verify_account_detail(name)
+        return ok
+
+    async def verify_account_detail(self, name: str) -> tuple[bool, str]:
+        """验证登录态并写回缓存，同时返回失败原因（成功时为空串）。号忙抛 RuntimeError。
 
         cookie 账号走纯 API 探活（不开浏览器，避免 profile 被并发占用）；
         login 账号走浏览器 check_login_state。
+
+        失败原因会落库到 failed_reason：原先纯 API 探活的原因只在函数内返回、被上层丢掉，
+        面板只显示「失效」而说不出为什么（缺依赖 / 代理不通 / 上游拒绝长一个样）。
         """
         if name not in self.accounts:
             raise FileNotFoundError(f"profile 不存在: {name}")
         lock = self._locks.setdefault(name, asyncio.Lock())
         if lock.locked():
             raise RuntimeError("账号正在出片，稍后再验证")
+        reason = ""
         pure_state = self._pure_state(name)
         if pure_state is not None and self._is_cookie_source(name):
-            ok, _msg = await asyncio.to_thread(
+            ok, msg = await asyncio.to_thread(
                 probe_login, pure_state, proxy=self._proxy_url_for(name),
             )
+            if not ok:
+                reason = str(msg or "")[:200]
+                print(f"[verify] {name} pure_probe -> ok=False reason={reason}", flush=True)
         else:
             from browser import check_login_state, chat_liveness_probe
             ok = await check_login_state(name)
             if ok and config.VERIFY_CHAT_PROBE:
-                ok, reason = await chat_liveness_probe(name)
-                print(f"[verify] {name} chat_probe -> ok={ok} reason={reason}", flush=True)
+                ok, chat_reason = await chat_liveness_probe(name)
+                print(f"[verify] {name} chat_probe -> ok={ok} reason={chat_reason}", flush=True)
                 if not ok:
+                    reason = f"chat_probe:{chat_reason}"[:200]
                     self._conn.execute(
-                        "UPDATE accounts_meta SET login_ok=0, failed_at=?, "
-                        "failed_reason=? WHERE name=?",
-                        (time.time(), f"chat_probe:{reason}", name),
+                        "UPDATE accounts_meta SET failed_at=? WHERE name=?",
+                        (time.time(), name),
                     )
                     self._conn.commit()
         self._conn.execute(
-            "UPDATE accounts_meta SET login_ok=?, login_checked_at=? WHERE name=?",
-            (1 if ok else 0, time.time(), name),
+            "UPDATE accounts_meta SET login_ok=?, login_checked_at=?, failed_reason=? "
+            "WHERE name=?",
+            (1 if ok else 0, time.time(), reason, name),
         )
         self._conn.commit()
-        return ok
+        return bool(ok), reason
 
     # ===== 调度 =====
 
@@ -594,7 +956,6 @@ class BrowserPool:
     def _schedulable(self, a: dict) -> bool:
         return (a["scheduling"] and not a["cooling"] and not a["rate_limited"]
                 and not a["quota_blocked"] and a["login_ok"] != 0
-                and not a["failed"]
                 and a["used_today"] < DAILY_LIMIT
                 and (a["credit_balance"] is None or a["credit_balance"] >= 2))
 
@@ -685,8 +1046,14 @@ class BrowserPool:
     # ===== 选号引擎（移植自 api-pool 的 AccountPool）=====
 
     def _proxy_url_for(self, name: str) -> str:
-        """账号实际使用的代理 URL（动态代理会自动带上独立的 sticky session）。"""
-        return proxy_store.proxy_url_for(name)
+        """账号实际使用的代理 URL（动态代理会自动带上独立的 sticky session）。
+
+        这条路径只喂 requests（探测登录态 / 纯 API 出片 / 参考图上传），所以用 socks5h：
+        把域名交给代理远端解析。socks5:// 会在本机解析 Akamai 域名并挑到代理连不上的地址，
+        直接导致参考图上传失败（NewConnectionError）。浏览器路径不走这里，
+        见 browser.proxy_kwargs_for() → 它用的仍是 socks5://。
+        """
+        return proxy_store.requests_proxy_url(name)
 
     def rotate_account_ip(self, name: str, reason: str = "",
                           force: bool = False) -> dict:
@@ -752,6 +1119,14 @@ class BrowserPool:
         meta = self._meta(name)
         return bool(meta and meta["source"] == "cookie")
 
+    def is_pure_account(self, name: str) -> bool:
+        """这个号能不能走纯 API（cookie 来源 + 有 cookie_state.json）。
+
+        服务重启后 `_resume_task` 用它决定走纯 API 重新受理，而不是调浏览器 resume
+        （本机没有可用的 Chromium，调了只会报 driver 错误）。
+        """
+        return self._pure_state(name) is not None and self._is_cookie_source(name)
+
     async def _generate_effective(self, account, prompt, ratio, duration, model, *,
                                   on_conversation_id, on_poll, on_balance,
                                   reference_image_paths):
@@ -778,13 +1153,18 @@ class BrowserPool:
                 account, prompt, ratio, duration, model=model,
                 on_conversation_id=on_conversation_id, on_poll=on_poll,
                 on_balance=on_balance, reference_image_paths=reference_image_paths)
-        return self._web_playable(result)
+        return await self._web_playable(result)
 
-    def _web_playable(self, result: dict) -> dict:
-        """上游成片是 HEVC，转成 H.264 后浏览器（画布 <video>）才能直接预览。"""
+    async def _web_playable(self, result: dict) -> dict:
+        """上游成片是 HEVC，转成 H.264 后浏览器（画布 <video>）才能直接预览。
+
+        转码是同步 subprocess（libx264 全量重编码，几秒到几十秒）。老实现直接在
+        事件循环上跑，高并发时每完成一条视频就把整个进程卡住几秒 —— 轮询、
+        管理接口、/health 全停，健康看门狗甚至会判死重启。必须放线程池。
+        """
         local = (result or {}).get("local_path")
         if local and Path(local).exists():
-            result["local_path"] = str(ensure_web_playable(local))
+            result["local_path"] = str(await asyncio.to_thread(ensure_web_playable, local))
         return result
 
     async def test_generate(self, account: str, prompt: str, ratio: str | None = None,
@@ -1024,7 +1404,7 @@ class BrowserPool:
                 def on_balance(balance, source=""):
                     self._set_credit_balance(account, balance, source)
                 try:
-                    result = self._web_playable(await resume_video(
+                    result = await self._web_playable(await resume_video(
                         account, conversation_id, timeout,
                         on_poll=on_poll, on_balance=on_balance,
                         duration=duration, ratio=ratio))
@@ -1053,24 +1433,27 @@ class BrowserPool:
                              deadline: float | None = None) -> dict:
         """挑一个可调度且空闲的号出片；失败自动换号重试（最多 max_attempts 次）。
 
-        - 额度不足/每日上限/风控/积分不足/通用失败（未真正出片、Dola 报错等）
-          → 换下一个号以同样参数继续（风控号进冷却、上限号封顶；
-          普通失败/额度报错等无底层恢复的失败额外叠加持久“失败”标记）。
-        - 叠加“失败”标记不清到全池重置：后续任务直接跳过这些号；
-          当某任务扫遍号池一个候选都找不到、且清掉叠加层后能解锁底层健康账号时，
-          触发一次全池重置（只清叠加层）并重跑一轮；仍失败即停止，不循环。
+        - 按模型分流：seedance-2.0（3 点）只从【满额】组取号；seedance-2.5（2 点）
+          先取【半额】、半额空了再用【满额】兜底；冷却/风控/待激活/异常 一律不派发。
+        - 2.0 撞上「满额暂时用完」→ 排队等待（DOLA_V20_WAIT_SECONDS），超时才报错。
+        - 失败换号继续（额度不足→冷却、每日上限→冷却、内容拒稿→只记备注、
+          普通失败→连续 3 次进【异常】组）；2.1.0 P3 起不再有「叠加失败/全池重置」。
         - TimeoutError（已拿到 conversation_id 后轮询超时）→ 不换号直接失败：
           Dola 端可能仍在生成，换号重提会重复扣额度/重复出片。
+        - max_attempts <= 0 表示不限次数：在 deadline（任务总时限）之前一轮轮换号重试，
+          到点仍未出片才判失败。
         """
         async with self.semaphore:
             self._sync_engine()
             cost = self._duration_cost(model, duration)
+            allowed_groups = self._allowed_quota_groups(model)
             last_err = None
             attempt = 0
             tried: set[str] = set()
             tried_order: list[str] = []
             wait_deadline = 0.0
-            pool_reset_used = False
+            group_deadline = 0.0
+            group_wait = False
             # max_attempts <= 0：不限次数，只要没到 deadline 就一轮轮换号重试。
             unlimited = max_attempts <= 0
 
@@ -1083,10 +1466,18 @@ class BrowserPool:
             while attempts_left() and time_left():
                 picked = False
                 waiting_possible = False
-                for a in self._sorted_accounts():
-                    if (not self._schedulable(a) or a["name"] in tried
-                            or a["remaining"] < cost
-                            or self._recently_failed(a["name"])):
+                group_wait = False
+                for a in self._ordered_candidates(allowed_groups):
+                    if a["name"] in tried or self._recently_failed(a["name"]):
+                        continue
+                    # 冷却/风控/待激活/异常一律不派发
+                    if a.get("group") in self.BLOCKED_GROUPS:
+                        continue
+                    # 额度组门槛：2.0 只吃满额；2.5 半额优先、满额兜底
+                    if self._quota_group(a) not in allowed_groups:
+                        group_wait = True
+                        continue
+                    if not self._schedulable(a) or a["remaining"] < cost:
                         continue
                     if config.ISOLATE_SHARED_EGRESS and self._egress_blocked(a["name"]):
                         continue
@@ -1099,8 +1490,25 @@ class BrowserPool:
                     async with lock:
                         if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                             continue  # 等待期间状态变化
+                        # 派发前先发一句「你好」：被登出/没回复 → 该号进【风控】组，换下一个号。
+                        probe = await self.probe_hello_async(account)
+                        if not probe.get("ok"):
+                            print(f"[pool] {account} 你好探测未通过（{probe.get('reason')}）"
+                                  f"（{probe.get('status')}）→ 本次跳过该号"
+                                  + ("，已进【风控】组" if probe.get("status") in ("logged_out", "no_reply")
+                                     else "（软失败，不判风控）"), flush=True)
+                            tried.add(account)
+                            tried_order.append(account)
+                            self._mark_attempt_failed(account)
+                            continue
+                        # 探测和出片是同一条上游提交通道：真探过的话留出间隔再提交，
+                        # 否则容易被上游判「访问频繁」(710022002)。
+                        gap = config.HELLO_PROBE_SUBMIT_GAP_SECONDS
+                        if gap > 0 and probe.get("probed"):
+                            await asyncio.sleep(gap)
                         picked = True
                         wait_deadline = 0.0
+                        group_deadline = 0.0
                         attempt += 1
                         if on_account_try:
                             on_account_try(account, attempt)
@@ -1118,6 +1526,7 @@ class BrowserPool:
                                 "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
                                 (time.time(), account))
                             self._conn.commit()
+                            self._fail_streak.pop(account, None)   # 出片成功 → 连续失败清零
                             return result
                         except CreditInsufficientError as e:
                             print(f"[pool] {account} 生成前积分不足，跳过: {e}", flush=True)
@@ -1128,13 +1537,19 @@ class BrowserPool:
                             # 也不把号标成失败（短视频是上游行为，不是这个号的错）。
                             print(f"[pool] {account} 只出了短视频，不拼接，换号重试: {e}", flush=True)
                             last_err = e
+                        except AbnormalNoAckError as e:
+                            # 派发后 5 分钟一句回执都没有：这是账号侧异常 → 进【异常】组，换号重试
+                            print(f"[pool] {account} 派发后无任何回执 → 进【异常】组，换号: {e}", flush=True)
+                            self._mark_abnormal(account, str(e))
+                            last_err = e
                         except AccountLimitedError as e:
                             print(f"[pool] {account} 达到每日上限，立即换号: {e}", flush=True)
                             self._mark_daily_limit(account, str(e))
                             last_err = e
                         except CreditError as e:
                             print(f"[pool] {account} 额度不足，换号: {e}", flush=True)
-                            self._mark_failed(account, f"额度不足: {e}")
+                            # 额度不足 = 本次不可用，按额度口径落到冷却组（额度刷新时恢复）
+                            self._mark_quota_blocked(account, f"额度不足: {e}")
                             last_err = e
                         except RiskControlError as e:
                             print(f"[pool] {account} 风控，冷却 30 分钟，换号: {e}", flush=True)
@@ -1162,7 +1577,8 @@ class BrowserPool:
                             last_err = e
                         except FileNotFoundError as e:
                             print(f"[pool] {account} profile 缺失，跳过: {e}", flush=True)
-                            self._mark_failed(account, f"profile 缺失: {e}")
+                            # profile 缺失不能一直重试：进【异常】组，到期自动恢复
+                            self._mark_abnormal(account, f"profile 缺失: {e}")
                             last_err = e
                         except Exception as e:
                             message = str(e)
@@ -1181,19 +1597,21 @@ class BrowserPool:
                         if time.time() < wait_deadline:
                             await asyncio.sleep(WAIT_FREE_ACCOUNT_STEP)
                             continue
-                    # 全池无候选：如果只是叠加“失败”标记把所有底层健康号挡住，
-                    # 触发一次全池重置（只清叠加层，不清登录/上限/风控等底层状态）再重跑一轮。
-                    if not pool_reset_used and self._overlay_unlockable(cost):
-                        cleared = self._clear_all_failed()
-                        # 全池重置是显式重试整轮：同时清掉并发防抖的内存冷却，
-                        # 否则刚失败的号仍会被 _recently_failed 挡 120 秒。
-                        self._fail_until.clear()
-                        print(f"[pool] 触发全池失败重置，清除 {cleared} 个叠加标记后重试", flush=True)
-                        pool_reset_used = True
-                        attempt = 0
-                        tried.clear()
-                        wait_deadline = 0.0
-                        continue
+                    # seedance-2.0 要 3 点，只能用满额号：满额暂时用完时排队等，
+                    # 而不是立刻判失败（2.5 会把满额号降到半额，过一会儿才有号空出来）。
+                    if group_wait:
+                        waited = int(config.V20_WAIT_SECONDS // 60)
+                        if (config.V20_WAIT_SECONDS > 0
+                                and not (self.all_accounts_limited
+                                         or self.all_accounts_quota_blocked)):
+                            if group_deadline == 0:
+                                group_deadline = time.time() + config.V20_WAIT_SECONDS
+                                print(f"[pool] {model} 暂无符合额度要求的账号，先排队等待"
+                                     f"（上限 {waited} 分钟）", flush=True)
+                            if time.time() < group_deadline:
+                                await asyncio.sleep(GROUP_WAIT_STEP)
+                                continue
+                    # 2.1.0 P3：叠加失败 / 全池重置 概念删除，这里不再有"清标记重跑一轮"。
                     # 有时限且还没到点：这一轮号都试过了，等失败冷却结束后从头再来一轮。
                     # 全池都已达上限/积分不足时没有等待意义，直接走下方的 429 报错。
                     if (deadline is not None and unlimited and time_left() and tried_order
@@ -1211,11 +1629,22 @@ class BrowserPool:
                 raise AllAccountsLimitedError(
                     f"429: 所有已开启调度的账号均已达到 Dola 每日视频上限: {last_err or '无号'}"
                 )
+            if group_wait:
+                # 池子没到「全池上限/积分不足」，但符合本次模型额度要求的号一个都没有
+                waited = int(config.V20_WAIT_SECONDS // 60)
+                need = (f"【{GROUP_FULL}】账号（每条 {cost} 点）" if cost >= 3
+                        else f"剩余 ≥ {cost} 点的账号（每条 {cost} 点）")
+                raise AllAccountsGroupEmptyError(
+                    f"{f'排队 {waited} 分钟仍' if waited and config.V20_WAIT_SECONDS > 0 else ''}"
+                    f"没有可用的{need}，{model} 暂时无法开工，请稍后重试"
+                )
             if last_err is not None:
                 chain = "、".join(tried_order) if tried_order else str(last_err)
                 timed_out = deadline is not None and time.time() >= deadline
                 prefix = "超过任务时限仍未生成成功，" if timed_out else ""
                 raise RuntimeError(
-                    f"{prefix}连续 {len(tried_order)} 次生成均失败（依次尝试账号: {chain}）: {str(last_err)[:300]}"
+                    # 不在这里截断：上游拒稿原文（审核/肖像/侵权）本身可能上百字，
+                    # 截成 300 字会把原因切掉。长度上限由 server 落库时统一处理。
+                    f"{prefix}连续 {attempt} 次生成均失败（依次尝试账号: {chain}）: {str(last_err)[:1500]}"
                 )
             raise RuntimeError(f"号池无可用账号（调度关闭/冷却/额度用完）: {last_err or '无号'}")
