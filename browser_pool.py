@@ -24,6 +24,7 @@ from pure_api_gen import (
 import config
 import cred_store
 import failure_text
+print = failure_text.print_safe
 import proxy_store
 from pool import AccountConfig as _PoolAccountConfig, AccountPool as _PoolEngine
 

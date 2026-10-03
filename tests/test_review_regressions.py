@@ -34,7 +34,7 @@ async function requestPreflight(p){sent=p;return {status:'allow'};}
 @pytest.mark.parametrize('kind',['single','batch'])
 def test_pending_receipt_recovery_precedes_any_ai_refresh(kind):
     func='doSubmitGenerate' if kind=='single' else 'submitVideoBatch'
-    node("""let aiCalls=0,recovered=false;let pendingRequestId='accepted',pendingSnapshot='same',currentPreflight=null,batchPreflight=null,currentBatchId='',currentActiveTaskId='',studioPollTimer=null;
+    node("""let aiCalls=0,recovered=false,analysisTaskId='';function renderDraftSource(){}let pendingRequestId='accepted',pendingSnapshot='same',currentPreflight=null,batchPreflight=null,currentBatchId='',currentActiveTaskId='',studioPollTimer=null;
 const fields={'#btn_submit_gen':{},'#gen_prompt':{value:'cat'},'#gen_model':{value:'seedance-2.5'},'#gen_duration':{value:'15'},'#gen_ratio':{value:'16:9'},'#gen_copies':{value:'1'}};
 function q(s){return fields[s]||{};}function isBatchGeneration(){return false;}
 const referenceHashPromise=Promise.resolve();function generationSnapshot(){return 'same';}
@@ -90,3 +90,89 @@ async def test_ai_receives_exact_editor_text_for_anchor_occurrences(ai_http):
     await ai_provider.preflight_check_prompt(raw)
     sent=json.loads(ai_http['requests'][0]['messages'][-1]['content'])
     assert sent['prompt_data']==raw
+
+
+def test_pure_observation_window_starts_before_submission_ack(monkeypatch):
+    import pure_api_gen as pure
+    from types import SimpleNamespace
+    clock=[100.0];captured={}
+    monkeypatch.setattr(pure,'time',SimpleNamespace(time=lambda:clock[0]))
+    def submit(*a,**k):
+        captured['submitted_at']=clock[0];clock[0]+=60
+        return SimpleNamespace(error='',conversation_id='same')
+    fake=SimpleNamespace(setup_session=lambda **k:(None,None,{}),warmup_login_session=lambda *a:None,dola_api_post_json=lambda *a,**k:None,submit_chat_completion=submit)
+    monkeypatch.setattr(pure,'_dola',lambda:fake);monkeypatch.setattr(pure,'install',lambda:None);monkeypatch.setattr(pure,'_load_state',lambda _:None)
+    monkeypatch.setattr(pure,'_finish_pure_video',lambda **k:k)
+    r=pure.generate_pure_video(account='a',prompt='cat',ratio='16:9',duration=15,model='seedance-2.5',cookie_state_path='unused',timeout=1800)
+    assert r['deadline']==captured['submitted_at']+1800
+
+
+@pytest.mark.asyncio
+async def test_browser_observation_window_includes_ack_wait(monkeypatch):
+    # Legacy tests replace sys.modules['video_worker_ui']; execute the actual
+    # function source against platform boundaries rather than inheriting their stub.
+    import ast, re, types
+    from types import SimpleNamespace
+    path=Path(__file__).resolve().parents[1]/'video_worker_ui.py'
+    definition=next(n for n in ast.parse(path.read_text()).body if isinstance(n,ast.AsyncFunctionDef) and n.name=='generate_video')
+    ui=types.ModuleType('_deadline_browser_source')
+    ui.__dict__.update(asyncio=asyncio,config=server.config,re=re,VIDEO_BTN='fixture',cookie_value=lambda *a:'')
+    exec(compile(ast.Module(body=[definition],type_ignores=[]),str(path),'exec'),ui.__dict__)
+    clock=[100.0];captured={}
+    async def noop(*a,**k):pass
+    class Element:
+        first=None
+        def __init__(self):self.first=self
+        count=lambda self:asyncio.sleep(0,result=1)
+        is_visible=lambda self:asyncio.sleep(0,result=True)
+        click=noop
+    class Page:
+        url='https://www.dola.com/chat/123'
+        goto=click=noop
+        get_by_text=lambda *a,**k:Element()
+        query_selector=lambda *a,**k:asyncio.sleep(0,result=Element())
+        async def wait_for_timeout(self,ms):clock[0]+=ms/1000
+    async def press(*a,**k):captured['submitted_at']=clock[0];clock[0]+=60
+    page=Page();page.keyboard=SimpleNamespace(type=noop,press=press)
+    context=SimpleNamespace(pages=[page],cookies=lambda *a:asyncio.sleep(0,result=[]),close=noop)
+    class Platform:
+        async def __aenter__(self):return None
+        async def __aexit__(self,*a):pass
+    monkeypatch.setattr(ui,'time',SimpleNamespace(time=lambda:clock[0]),raising=False)
+    monkeypatch.setattr(ui,'async_playwright',Platform,raising=False)
+    monkeypatch.setattr(ui,'launch_account_context',lambda *a,**k:asyncio.sleep(0,result=context),raising=False)
+    for name in ['dismiss_popups','ensure_login_stable','_preflight_balance']:monkeypatch.setattr(ui,name,noop,raising=False)
+    monkeypatch.setattr(ui,'find_captcha_frame',lambda _:None,raising=False)
+    monkeypatch.setattr(ui,'is_logged_out',lambda _:asyncio.sleep(0,result=False),raising=False)
+    async def poll(*args):captured['remaining']=args[4];return {}
+    monkeypatch.setattr(ui,'poll_conversation',poll,raising=False)
+    await ui.generate_video('a','cat',duration=15,timeout=1800,on_conversation_id=lambda a,c,d:captured.update(deadline=d))
+    assert captured['deadline']==captured['submitted_at']+1800
+    assert captured['remaining']==captured['deadline']-clock[0]
+
+
+def test_reusing_prompt_enters_single_creator_instead_of_old_folder_batch():
+    node("""let analysisTaskId='old',rewriteHistory=[];function batchInputsChanged(){}const fields={'#gen_mode':{value:'folder'},'#gen_copies':{value:'2'},'#gen_prompt':{},'#gen_model':{},'#gen_duration':{},'#gen_ratio':{}};
+function q(s){return fields[s];}async function api(){return {prompt:'Chosen prompt',model:'seedance-2.5',duration:15,ratio:'16:9'};}
+function onModelChange(){}function onPromptInput(){}function switchTab(){}
+"""+js_function('useTaskPrompt')+"\nuseTaskPrompt('selected').then(()=>{if(fields['#gen_mode'].value!=='single'||fields['#gen_copies'].value!=='1')throw Error('Old batch inputs still control generation');});")
+
+
+def test_shared_batch_analysis_preserves_selected_image_roles():
+    node("""let sent,adminKey='fixture';const referenceHashPromise=Promise.resolve();let selectedImages=[],referenceRoles=['character'],analysisTaskId='';
+selectedImages=[new Blob(['image'])];function q(s){return {value:s==='#gen_duration'?'15':s==='#gen_ratio'?'16:9':'seedance-2.5'};}
+function isBatchGeneration(){return true;}function showLogin(){}
+async function fetch(url,args){sent=JSON.parse(args.body.get('analysis'));return {ok:true,status:200,json:async()=>({status:'allow'})};}
+"""+js_function('requestPreflight')+"\nrequestPreflight('cat').then(()=>{if(sent.reference_roles[0]!=='character')throw Error('Selected batch role was ignored');});")
+
+
+def test_safe_stdout_print_redacts_joined_credentials(capsys):
+    import failure_text
+    failure_text.print_safe('request sessionid=', 'PRIVATE', 'Cookie: c_user=COOKIE', flush=True)
+    text=capsys.readouterr().out
+    assert 'PRIVATE' not in text and 'COOKIE' not in text and 'request' in text
+
+
+def test_server_stdout_uses_redaction(capsys):
+    getattr(server,'print',print)('operation failed sessionid=PRIVATE')
+    assert 'PRIVATE' not in capsys.readouterr().out

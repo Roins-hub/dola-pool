@@ -1,3 +1,4 @@
+import math
 from urllib.parse import urlparse
 """dola-pool OpenAI 兼容视频服务（FastAPI）+ 管理面板后端。
 
@@ -43,6 +44,7 @@ if config.TRANSPORT_MODE == "relay":
     import cf_hook
 import cred_store
 import failure_text
+print = failure_text.print_safe
 failure_text.install_log_redaction()
 import proxy_store
 from add_account import add_account_flow
@@ -1203,7 +1205,7 @@ async def create_video_vinted_alias(request: Request,
     return await create_video(request, authorization)
 
 
-async def _submit_task(client, model, prompt, ratio, duration, reference_images, task_id=None, input_fingerprint=None):
+async def _submit_task(client, model, prompt, ratio, duration, reference_images, task_id=None, input_fingerprint=None, source_task_id=None):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
     resolved = _resolve_model_for_duration(model, duration)
     if resolved is None:
@@ -1270,6 +1272,7 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
             daily_limit=client["daily_limit"],
             concurrency_limit=client["concurrency_limit"],
             max_pending=config.MAX_PENDING_TASKS,
+            source_task_id=source_task_id,
         )
     except TaskQuotaExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
@@ -2304,10 +2307,13 @@ async def admin_account_proxy_set(name: str, body: AccountProxyBind,
 
 @app.get("/api/admin/diagnostics/events")
 async def admin_diagnostic_events(task_id: str = "", account: str = "", level: str = "",
-                                  limit: int = 100, x_admin_key: str | None = Header(default=None)):
+                                  limit: int = 100, x_admin_key: str | None = Header(default=None),
+                                  after: float | None = None, before: float | None = None, kind: str = ""):
     _admin_auth(x_admin_key)
     if level not in ('', 'info', 'error'):
         raise HTTPException(422, "Mức nhật ký không hợp lệ")
+    if kind not in ('', 'failure', 'connection', 'state', 'dola') or any(v is not None and (not math.isfinite(v) or v < 0) for v in (after, before)) or (after is not None and before is not None and after > before):
+        raise HTTPException(422, 'Khoảng thời gian hoặc loại sự kiện không hợp lệ')
     rows = [store.get(task_id)] if task_id else store.recent_tasks(200)
     events = []
     for row in rows:
@@ -2327,7 +2333,8 @@ async def admin_diagnostic_events(task_id: str = "", account: str = "", level: s
             events.append({**base, 'time': update.get('at') or row['created_at'], 'kind': 'dola',
                            'level': 'error' if update.get('connection') == 'interrupted' else 'info',
                            'message_vi': update['message_vi'], 'details': update['details']})
-    events = [e for e in events if not level or e['level'] == level]
+    events = [e for e in events if (not level or e['level'] == level) and (not kind or e['kind'] == kind)
+              and (after is None or (e['time'] or 0) >= after) and (before is None or (e['time'] or 0) <= before)]
     events.sort(key=lambda e: e['time'] or 0, reverse=True)
     return {'events': events[:min(max(limit, 1), 200)],
             'scope_vi': 'Trạng thái và thông báo đã lưu của 200 tác vụ gần nhất; lọc mã tác vụ để xem tác vụ cũ.'}
@@ -2407,6 +2414,20 @@ def _preview_account_import(account_pool, text: str) -> dict:
     from add_fb_account import parse_fb_input
     rows, seen = [], set()
     existing_fb = {j.get("facebook_uid") for j in JOBS.values() if j.get("status") == "running"} | {r["facebook_uid"] for r in account_pool._conn.execute("SELECT facebook_uid FROM accounts_meta") if r["facebook_uid"]}
+    # ponytail: scan saved cookie JSON on preview; persisted UID already covers new imports.
+    for name in account_pool.accounts:
+        for filename in ('state.json', 'cookie_state.json'):
+            path = account_pool.accounts_dir / name / filename
+            try:
+                if path.stat().st_size > 1_000_000:
+                    continue
+                state = json.loads(path.read_text())
+                cookies = state.get('cookies', []) if isinstance(state, dict) else []
+                for cookie in cookies if isinstance(cookies, list) else []:
+                    if isinstance(cookie, dict) and cookie.get('name') == 'c_user' and 'facebook.com' in str(cookie.get('domain', '')) and str(cookie.get('value', '')).isdigit():
+                        existing_fb.add(str(cookie['value']))
+            except (OSError, ValueError):
+                pass
     for number, line in enumerate(text.splitlines(), 1):
         line = line.strip()
         if not line or line.startswith("#"):
@@ -2896,7 +2917,7 @@ def _task_display(row: dict) -> dict:
             values = u.get(key) or []
             safe[key] = [failure_text.sanitize_details(x) for x in values[:10]] if isinstance(values, list) else []
         safe_updates.append(safe)
-    return {"error": failure_text.sanitize_details(row.get("error") or ""),
+    return {"source_task_id": row.get("source_task_id"), "error": failure_text.sanitize_details(row.get("error") or ""),
             "upstream_updates": json.dumps(safe_updates, ensure_ascii=False),
             "failure_display": failure_text.present(row.get("error") or "",
                 code=row.get("failure_code") or "", category=row.get("failure_group") or ""),
@@ -3460,11 +3481,16 @@ async def _accept_create_video(request: Request, x_admin_key: str | None = None)
         if existing.get("input_fingerprint") and existing["input_fingerprint"] != input_fp:
             raise HTTPException(409, "Ảnh hoặc cấu hình đã đổi; cần mã yêu cầu mới")
         return TaskResponse(**{k: existing.get(k) for k in ("id", "status", "model", "prompt", "video_url", "error")})
+    source_task_id = str(form.get('source_task_id') or '')
+    if source_task_id:
+        source = store.get(source_task_id)
+        if not source or source['status'] != 'failed':
+            raise HTTPException(422, 'Chỉ liên kết bản sửa với tác vụ đã xác nhận thất bại')
     reference_context, frozen_refs = await _reference_context(refs, roles)
     context = _video_context(model, duration, ratio, reference_context)
     await _ensure_video_preflight(session_id, prompt, preflight_token, confirm_review, context)
     return await _submit_task(admin_client, resolved, prompt, ratio, duration, frozen_refs,
-                              task_id=task_id, input_fingerprint=input_fp)
+                              task_id=task_id, input_fingerprint=input_fp, source_task_id=source_task_id)
 
 
 # 面板单文件前端（放最后，保证上面的路由优先）
@@ -3478,6 +3504,8 @@ class BatchPrompt(BaseModel):
 
 
 class VideoBatch(BaseModel):
+    source_task_id: str | None = Field(default=None, max_length=200)
+    name: str = Field(default="", max_length=100)
     request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     prompts: list[BatchPrompt] = Field(min_length=1, max_length=50)
     copies: int = Field(default=1, ge=1, le=10)
@@ -3537,7 +3565,7 @@ async def admin_download_batch(batch_id: str, x_admin_key: str | None = Header(d
     if store.batch_fingerprint(batch_id) is None:
         raise HTTPException(404, "Không tìm thấy mẻ")
     path = await asyncio.to_thread(_build_batch_zip, store.batch_tasks(batch_id))
-    return FileResponse(path, filename='dola-videos.zip', media_type='application/zip',
+    return FileResponse(path, filename=_batch_download_name(batch_id), media_type='application/zip',
                         background=BackgroundTask(Path(path).unlink, missing_ok=True))
 
 
@@ -3611,12 +3639,17 @@ def _copy_video_export(task_id):
         Path(temporary).unlink(missing_ok=True)
 
 
+def _batch_download_name(batch_id):
+    label = re.sub(r'[^\w-]+', '_', store.batch_name(batch_id)).strip('_')[:80]
+    return (label or 'dola-videos') + '.zip'
+
+
 @app.get("/api/admin/videos/batches/{batch_id}")
 async def admin_get_batch(batch_id: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     if store.batch_fingerprint(batch_id) is None:
         raise HTTPException(404,"Không tìm thấy mẻ")
-    return {"batch_id":batch_id,"tasks":[{**row,**_task_display(row),"target_duration":_target_duration(row),
+    return {"batch_id":batch_id,"name":store.batch_name(batch_id),"download_name":_batch_download_name(batch_id),"tasks":[{**row,**_task_display(row),"target_duration":_target_duration(row),
         "file_exists":_task_file_exists(row)} for row in store.batch_tasks(batch_id)]}
 
 
@@ -3662,7 +3695,7 @@ async def _accept_create_batch(request: Request, x_admin_key: str | None = None)
     legacy_fp = hashlib.sha256(json.dumps({"prompts":[p.prompt.strip() for p in batch.prompts],
         "copies":batch.copies,"model":model,"duration":batch.duration,"ratio":batch.ratio,
         "references":refs},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
-    if (saved_fingerprint == legacy_fp and all(p.reference_indices is None and not p.reference_roles for p in batch.prompts)
+    if (saved_fingerprint == legacy_fp and all(p.reference_indices is None and all(role == 'other' for role in p.reference_roles) for p in batch.prompts)
             and all(ref.startswith('data:') for ref in refs)):
         return {"batch_id":batch_id,"tasks":[{"id":r["id"],"status":r["status"]} for r in store.batch_tasks(batch_id)]}
     # Download/freeze each uploaded reference once; hash actual bytes before a receipt comparison.
@@ -3680,6 +3713,10 @@ async def _accept_create_batch(request: Request, x_admin_key: str | None = None)
         if saved_fingerprint != fingerprint:
             raise HTTPException(409, "Mã mẻ đã được dùng cho nội dung khác")
         return {"batch_id":batch_id,"tasks":[{"id":r["id"],"status":r["status"]} for r in store.batch_tasks(batch_id)]}
+    if batch.source_task_id:
+        source = store.get(batch.source_task_id)
+        if not source or source['status'] != 'failed':
+            raise HTTPException(422, 'Chỉ liên kết bản sửa với tác vụ đã xác nhận thất bại')
     session_id = hashlib.sha256((x_admin_key or "default").encode()).hexdigest()[:24]
     for prompt, context in zip(batch.prompts, contexts):
         await _ensure_video_preflight(session_id, prompt.prompt.strip(), prompt.preflight_token,
@@ -3703,9 +3740,9 @@ async def _accept_create_batch(request: Request, x_admin_key: str | None = None)
                 jobs.append({"id":"video_"+hashlib.sha256(f"{batch_id}:{len(jobs)}".encode()).hexdigest()[:32],
                     "model":model,"prompt":prompt.prompt.strip(),"duration":batch.duration,"ratio":batch.ratio,
                     "reference_images":json.dumps(images,ensure_ascii=False),"api_key_hash":client["api_key_hash"],
-                    "api_key_name":client["api_key_name"],"client_concurrency_limit":0})
+                    "api_key_name":client["api_key_name"],"client_concurrency_limit":0,"source_task_id":batch.source_task_id})
         try:
-            rows,created = store.create_batch(batch_id,fingerprint,jobs,max_pending=config.MAX_PENDING_TASKS)
+            rows,created = store.create_batch(batch_id,fingerprint,jobs,max_pending=config.MAX_PENDING_TASKS,name=batch.name.strip())
         except ValueError as exc:
             raise HTTPException(409,str(exc)) from exc
         except PendingTaskLimitExceeded as exc:

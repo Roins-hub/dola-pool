@@ -26,6 +26,8 @@ from patchright.async_api import async_playwright
 from gap import find_gap_x
 
 import config
+import failure_text
+print = failure_text.print_safe
 import proxy_store
 from browser import cookie_value, launch_account_context
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
@@ -837,6 +839,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 await box.evaluate("(el) => el.focus()")
             await page.keyboard.type(prompt, delay=100)
             await page.wait_for_timeout(600)
+            submitted_at = time.time()
             await page.keyboard.press("Enter")
             print(f"[{account}] UI 已发送: {prompt[:40]}", flush=True)
 
@@ -879,11 +882,11 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 raise TimeoutError("30s 未拿到 conversation_id")
             print(f"[{account}] conversation_id={conv_id}，轮询出片...", flush=True)
 
-            deadline = time.time() + timeout
+            deadline = submitted_at + timeout
             if on_conversation_id:
                 on_conversation_id(account, conv_id, deadline)
             return await poll_conversation(
-                account, page, context, conv_id, timeout, on_poll, on_balance,
+                account, page, context, conv_id, max(0, deadline - time.time()), on_poll, on_balance,
                 duration, ratio)
         finally:
             await context.close()

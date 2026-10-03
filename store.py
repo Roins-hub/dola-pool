@@ -66,6 +66,8 @@ class TaskStore:
             # 旧库兼容：逐列补齐任务恢复、客户用量和耗时统计字段。
             self._conn.execute("CREATE TABLE IF NOT EXISTS studio_options (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             self._conn.execute("CREATE TABLE IF NOT EXISTS video_batches (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, created_at REAL)")
+            if 'name' not in {r[1] for r in self._conn.execute('PRAGMA table_info(video_batches)')}:
+                self._conn.execute("ALTER TABLE video_batches ADD COLUMN name TEXT DEFAULT ''")
             for column, definition in (
                 ("account", "TEXT"),
                 ("conversation_id", "TEXT"),
@@ -92,6 +94,7 @@ class TaskStore:
                 ("submission_started_at", "REAL"),
                 ("continuation_task_id", "TEXT"),
                 ("parent_task_id", "TEXT"),
+                ("source_task_id", "TEXT"),
                 ("accounting_done", "INTEGER DEFAULT 0"),
                 ("upstream_updates", "TEXT"),
                 ("batch_id", "TEXT"),
@@ -211,6 +214,7 @@ class TaskStore:
         daily_limit=0,
         concurrency_limit=0,
         max_pending=0,
+        source_task_id=None,
     ):
         now = time.time()
         clamped = self._clamp_fields({
@@ -244,8 +248,8 @@ class TaskStore:
                 "INSERT INTO tasks ("
                 "id,model,prompt,ratio,duration,status,account,created_at,updated_at,"
                 "conversation_id,deadline_at,last_poll_at,failure_code,reference_images,"
-                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit"
-                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?)",
+                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,source_task_id"
+                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?)",
                 (
                     task_id,
                     clamped["model"],
@@ -261,6 +265,7 @@ class TaskStore:
                     None,
                     None,
                     max(0, int(concurrency_limit or 0)),
+                    source_task_id,
                 ),
             )
             self._conn.commit()
@@ -294,7 +299,12 @@ class TaskStore:
             row = self._conn.execute("SELECT fingerprint FROM video_batches WHERE id=?", (batch_id,)).fetchone()
             return row[0] if row else None
 
-    def create_batch(self, batch_id, fingerprint, jobs, max_pending=0):
+    def batch_name(self, batch_id):
+        with _LOCK:
+            row = self._conn.execute("SELECT name FROM video_batches WHERE id=?", (batch_id,)).fetchone()
+            return (row[0] or '') if row else ''
+
+    def create_batch(self, batch_id, fingerprint, jobs, max_pending=0, name=''):
         """Persist the entire batch before any worker can submit to Dola."""
         with _LOCK:
             existing = self._conn.execute("SELECT * FROM tasks WHERE batch_id=? ORDER BY batch_index", (batch_id,)).fetchall()
@@ -313,7 +323,7 @@ class TaskStore:
                      "created_at": now, "updated_at": now} for i,job in enumerate(jobs)]
             columns = list(rows[0])
             with self._conn:
-                self._conn.execute("INSERT INTO video_batches VALUES (?,?,?)", (batch_id,fingerprint,now))
+                self._conn.execute("INSERT INTO video_batches(id,fingerprint,created_at,name) VALUES (?,?,?,?)", (batch_id,fingerprint,now,name))
                 self._conn.executemany("INSERT INTO tasks ("+",".join(columns)+") VALUES ("+",".join("?" for _ in columns)+")",
                                        [[row[c] for c in columns] for row in rows])
             return rows, True

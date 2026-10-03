@@ -394,6 +394,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
       <details><summary>Nhật ký và chẩn đoán kết nối</summary>
         <div class="queue-toolbar"><label>Mã tác vụ <input id="diagTask"></label><label>Tài khoản <input id="diagAccount"></label>
         <label>Mức <select id="diagLevel"><option value="">Tất cả</option><option value="info">Thông tin</option><option value="error">Lỗi</option></select></label>
+        <label>Từ <input id="diagAfter" type="datetime-local"></label><label>Đến <input id="diagBefore" type="datetime-local"></label><label>Loại <select id="diagKind"><option value="">Tất cả</option><option value="state">Trạng thái</option><option value="dola">Phản hồi Dola</option><option value="connection">Kết nối</option><option value="failure">Lỗi tạo video</option></select></label>
         <button class="btn" onclick="loadDiagnostics()">Lấy thông tin</button></div><div id="diagnosticEvents" role="status"></div>
       </details>
     </div>
@@ -455,8 +456,10 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
         <label for="gen_txt_file">Nạp file TXT (UTF-8, tối đa 1 MB)</label><input id="gen_txt_file" type="file" accept=".txt,text/plain" onchange="importPromptTxt(this)">
         <p class="tiny">Bỏ qua dòng trống, giữ các dòng trùng để tạo các video riêng. Tối đa 50 video mỗi mẻ. Ảnh và lựa chọn bên trên áp dụng cho toàn mẻ. Để viết lại một prompt, chuyển về Một prompt.</p>
       </div>
+      <div id="gen_batch_name_box" style="display:none"><label for="gen_batch_name">Tên mẻ (tùy chọn)</label><input id="gen_batch_name" maxlength="100" oninput="saveStudioDraft()" placeholder="Ví dụ: Cảnh mèo buổi sáng"><p class="tiny">Tên dùng cho mẻ mới và file ZIP; đổi tên không gửi lại mẻ đã nhận.</p></div>
       <p id="gen_batch_summary" class="tiny"></p>
       <div id="gen_batch_check" role="status"></div>
+      <p id="gen_source_note" class="tiny" style="display:none"></p>
       <div id="gen_single_editor">
       <div style="margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -1610,11 +1613,12 @@ async function openOutputDirectory(){try{await api('/api/admin/studio-output/ope
 async function downloadBatchZip(){if(!currentBatchId)return;const btn=q('#myBatchZip');btn.disabled=true;try{
   const response=await fetch('/api/admin/videos/batches/'+encodeURIComponent(currentBatchId)+'/download',{headers:{'x-admin-key':adminKey}});
   if(response.status===401)showLogin();if(!response.ok)throw new Error('Không tải được ZIP. Hãy đăng nhập và thử lại.');
-  const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download='dola-videos.zip';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+  const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download=currentBatchDownloadName||'dola-videos.zip';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
 }catch(e){q('#myBatchSummary').textContent=e.message;}finally{btn.disabled=false;}}
 async function loadDiagnostics(){
   const out=q('#diagnosticEvents');out.textContent='Đang lấy trạng thái đã lưu…';
-  const params=new URLSearchParams({task_id:q('#diagTask').value.trim(),account:q('#diagAccount').value.trim(),level:q('#diagLevel').value,limit:'200'});
+  const params=new URLSearchParams({task_id:q('#diagTask').value.trim(),account:q('#diagAccount').value.trim(),level:q('#diagLevel').value,kind:q('#diagKind').value,limit:'200'});
+  for(const [id,key] of [['diagAfter','after'],['diagBefore','before']])if(q('#'+id).value)params.set(key,String(new Date(q('#'+id).value).getTime()/1000));
   try{const [events,route]=await Promise.all([api('/api/admin/diagnostics/events?'+params),api('/api/admin/route')]);
     out.innerHTML='<p>'+esc(route.route_vi)+'</p><p class="tiny">'+esc(events.scope_vi)+'</p>'+events.events.map(e=>`<article class="analysis-issue"><p>${esc(fmt(e.time))} · ${esc(e.task_id)} · ${esc(e.account)} · ${esc(e.message_vi)}</p>${e.details?'<details><summary>Chi tiết kỹ thuật</summary><pre>'+esc(e.details)+'</pre></details>':''}</article>`).join('');
   }catch(e){out.textContent='Không lấy được nhật ký: '+e.message;}
@@ -1993,7 +1997,7 @@ function changeReferenceRole(index,value){referenceRoles[index]=value;invalidate
 async function requestPreflight(prompt,indices=null){
   await referenceHashPromise;
   const inputImages=indices===null?selectedImages:indices.map(i=>selectedImages[i]);
-  const roles=indices===null?selectedImages.map((_,i)=>isBatchGeneration()?'other':referenceRoles[i]||'other'):indices.map(i=>referenceRoles[i]||'other');
+  const roles=indices===null?selectedImages.map((_,i)=>referenceRoles[i]||'other'):indices.map(i=>referenceRoles[i]||'other');
   const fd=new FormData();fd.append('analysis',JSON.stringify({prompt,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,reference_roles:roles,...(analysisTaskId?{upstream_task_id:analysisTaskId}:{})}));
   for(const image of inputImages)fd.append('images',image);
   const response=await fetch('/api/admin/prompts/preflight',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await response.json();
@@ -2028,6 +2032,9 @@ function applySelectedSuggestions(){
 
 let rewriteHistory=[], rewriteVersions=[], draftOriginal='', rewriteBase='', pendingRequestId='', pendingSnapshot='';
 const DRAFT_KEY='dola-studio-draft-v1';
+function renderDraftSource(){const el=q('#gen_source_note');el.style.display=analysisTaskId?'block':'none';el.innerHTML=analysisTaskId?'Bản nháp sửa từ video '+esc(analysisTaskId)+' · <button class="btn" onclick="clearDraftSource()">Bỏ liên kết</button>':'';}
+function clearDraftSource(){analysisTaskId='';invalidateAnalysis();renderDraftSource();saveStudioDraft();}
+
 function studioMessage(text,details=''){const el=q('#gen_action_msg');el.textContent=text;if(details){const d=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent='Chi tiết kỹ thuật';pre.textContent=details;d.append(summary,pre);el.append(d);}}
 function saveStudioDraft(){
   try{localStorage.setItem(DRAFT_KEY,JSON.stringify({prompt:q('#gen_prompt').value,original:draftOriginal,
@@ -2035,7 +2042,7 @@ function saveStudioDraft(){
     suggestion:q('#gen_rewrite_draft').value,before:q('#gen_rewrite_before').value,
     requestId:pendingRequestId,requestSnapshot:pendingSnapshot,suggestionVisible:q('#gen_rewrite_box').style.display!=='none',
     model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,taskId:currentActiveTaskId,
-    folderGroups,referenceRoles,mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,batchId:currentBatchId}));}
+    analysisTaskId,batchName:q('#gen_batch_name').value,folderGroups,referenceRoles,mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,batchId:currentBatchId}));}
   catch(e){studioMessage('Không lưu được bản nháp trên trình duyệt; hãy sao chép prompt trước khi đóng trang.');}
 }
 async function imageDraftStore(files){
@@ -2051,7 +2058,7 @@ async function restoreStudioDraft(){
     q('#gen_rewrite_draft').value=d.suggestion||'';q('#gen_rewrite_before').value=d.before||'';rewriteBase=d.before||'';
     if(d.suggestionVisible)show('gen_rewrite_box');if(d.model)q('#gen_model').value=d.model;
     onModelChange();if(d.duration)q('#gen_duration').value=d.duration;if(d.ratio)q('#gen_ratio').value=d.ratio;
-    q('#gen_mode').value=d.mode||'single';q('#gen_copies').value=d.copies||'1';q('#gen_batch_prompts').value=d.batchPrompts||'';currentBatchId=d.batchId||'';renderBatchInputs();
+    analysisTaskId=d.analysisTaskId||'';renderDraftSource();q('#gen_batch_name').value=d.batchName||'';q('#gen_mode').value=d.mode||'single';q('#gen_copies').value=d.copies||'1';q('#gen_batch_prompts').value=d.batchPrompts||'';currentBatchId=d.batchId||'';renderBatchInputs();
     q('#prompt_char_count').textContent=q('#gen_prompt').value.length;
     folderGroups=d.folderGroups||[];renderFolderPreview();referenceRoles=d.referenceRoles||[];const files=await imageDraftStore();if(files&&!selectedImages.length){selectedImages=files;renderImagePreviews();refreshReferenceHashes();await referenceHashPromise;}
     renderBatchInputs();
@@ -2061,7 +2068,7 @@ async function restoreStudioDraft(){
 function onPromptInput(){
   promptVersion++;rewriteVersion++;preflightVersion++;
   q('#prompt_char_count').textContent=q('#gen_prompt').value.length;
-  analysisTaskId='';invalidateAnalysis();studioMessage('');hide('gen_rewrite_box');q('#gen_rewrite_draft').value='';
+  invalidateAnalysis();renderDraftSource();studioMessage('');hide('gen_rewrite_box');q('#gen_rewrite_draft').value='';
   batchPreflight=null;renderBatchInputs();saveStudioDraft();
 }
 function renderRewriteHistory(){q('#gen_original').value=draftOriginal;
@@ -2190,11 +2197,12 @@ function renderPreflightBanner(res){
   }
 }
 
-let batchPreflight=null,currentBatchId='';
+let batchPreflight=null,currentBatchId='',currentBatchDownloadName='';
 function isBatchGeneration(){return ['list','folder'].includes(q('#gen_mode').value)||Number(q('#gen_copies').value)!==1;}
 function batchPromptList(){return q('#gen_mode').value==='folder'?folderGroups.map(g=>g.prompt):q('#gen_mode').value==='list'?q('#gen_batch_prompts').value.replace(/^\uFEFF/,'').split(/\r?\n/).map(p=>p.trim()).filter(Boolean):[q('#gen_prompt').value.trim()].filter(Boolean);}
 function renderBatchInputs(){
   const list=q('#gen_mode').value==='list',folder=q('#gen_mode').value==='folder';q('#gen_folder_editor').style.display=folder?'block':'none';q('#gen_batch_editor').style.display=list?'block':'none';q('#gen_single_editor').style.display=(list||folder)?'none':'block';
+  q('#gen_batch_name_box').style.display=isBatchGeneration()?'block':'none';
   const total=batchPromptList().length*Number(q('#gen_copies').value);
   q('#gen_batch_summary').textContent=isBatchGeneration()?batchPromptList().length+' prompt × '+q('#gen_copies').value+' bản = '+total+' video. Mỗi video có thể dùng điểm Dola.':'';
 }
@@ -2262,7 +2270,7 @@ async function checkBatchPrompts(){
     const cacheKey=JSON.stringify([prompt,group?.reference_indices||null]);let result=checked.get(cacheKey);
     if(!result){result=await requestPreflight(prompt,group?.reference_indices??null);checked.set(cacheKey,result);}
     if(snapshot!==generationSnapshot())return false;
-    entries.push({prompt,...result,...(group?{reference_indices:group.reference_indices,reference_roles:group.reference_indices.map(i=>referenceRoles[i]||'other'),group:group.name}:{})});q('#gen_batch_check').textContent='Đã kiểm tra '+(i+1)+'/'+prompts.length+' prompt; chưa gửi video…';
+    entries.push({prompt,...result,reference_roles:selectedImages.map((_,n)=>referenceRoles[n]||'other'),...(group?{reference_indices:group.reference_indices,reference_roles:group.reference_indices.map(i=>referenceRoles[i]||'other'),group:group.name}:{})});q('#gen_batch_check').textContent='Đã kiểm tra '+(i+1)+'/'+prompts.length+' prompt; chưa gửi video…';
   }
   if(snapshot!==generationSnapshot())return false;
   batchPreflight={snapshot,entries};const blocked=entries.some(e=>e.status==='block'),review=entries.some(e=>e.status==='review');
@@ -2279,7 +2287,7 @@ async function submitVideoBatch(){
   await referenceHashPromise;const snapshot=generationSnapshot();
   try{
     const receipt=await recoverPendingReceipt('batch',snapshot);
-    if(receipt){currentBatchId=receipt.batch_id;pendingRequestId='';pendingSnapshot='';saveStudioDraft();if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');switchTab('videos');studioMessage('Đã tìm lại mẻ đã nhận; không gửi thêm video.');return;}
+    if(receipt){currentBatchId=receipt.batch_id;pendingRequestId='';pendingSnapshot='';analysisTaskId='';renderDraftSource();saveStudioDraft();if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');switchTab('videos');studioMessage('Đã tìm lại mẻ đã nhận; không gửi thêm video.');return;}
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã đổi; hãy kiểm tra lại.');
     if(!batchPreflight||batchPreflight.snapshot!==snapshot||batchPreflight.entries.some(e=>e.expires_at*1000<Date.now()))if(!await checkBatchPrompts())return;
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại mẻ.');
@@ -2288,11 +2296,11 @@ async function submitVideoBatch(){
     const copies=Number(q('#gen_copies').value),total=batchPreflight.entries.length*copies;
     if(!confirm('Tạo '+total+' video? Mỗi video có thể dùng thêm điểm Dola. Các video là những kết quả riêng, không tự ghép.'))return;
     if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
-    const fd=new FormData();fd.append('batch',JSON.stringify({request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
-      prompts:batchPreflight.entries.map(e=>({prompt:e.prompt,preflight_token:e.token,confirm_review:review,...(e.reference_indices?{reference_indices:e.reference_indices,reference_roles:e.reference_roles,group:e.group}:{})}))}));for(const image of selectedImages)fd.append('images',image);
+    const fd=new FormData();fd.append('batch',JSON.stringify({source_task_id:analysisTaskId||null,name:q('#gen_batch_name').value,request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
+      prompts:batchPreflight.entries.map(e=>({prompt:e.prompt,preflight_token:e.token,confirm_review:review,reference_roles:e.reference_roles||[],...(e.reference_indices?{reference_indices:e.reference_indices,reference_roles:e.reference_roles,group:e.group}:{})}))}));for(const image of selectedImages)fd.append('images',image);
     btn.textContent='Đang gửi mẻ…';const resp=await fetch('/api/admin/videos/batches',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await resp.json();
     if(!resp.ok){const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không nhận được mẻ'));error.details=data.failure_display?.details;error.status=resp.status;throw error;}
-    currentBatchId=data.batch_id;if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');pendingRequestId='';pendingSnapshot='';saveStudioDraft();switchTab('videos');
+    currentBatchId=data.batch_id;if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');pendingRequestId='';pendingSnapshot='';analysisTaskId='';renderDraftSource();saveStudioDraft();switchTab('videos');
     studioMessage('Đã nhận mẻ gồm '+data.tasks.length+' video. Bạn có thể đóng trang; hàng đợi được lưu ở backend.');
   }catch(e){
     if(e.status===409){pendingRequestId='';pendingSnapshot='';saveStudioDraft();studioMessage(e.message+'. Bấm lại và xác nhận nếu bạn muốn tạo một mẻ mới.');}
@@ -2309,7 +2317,7 @@ async function doSubmitGenerate(){
   btn.disabled=true;await referenceHashPromise;const snapshot=generationSnapshot();
   try{
     const receipt=await recoverPendingReceipt('single',snapshot);
-    if(receipt){pendingRequestId='';pendingSnapshot='';currentBatchId='';trackStudioJob(receipt.id);studioMessage('Đã tìm lại video đã nhận; không gửi thêm yêu cầu.');return;}
+    if(receipt){pendingRequestId='';pendingSnapshot='';currentBatchId='';analysisTaskId='';renderDraftSource();trackStudioJob(receipt.id);studioMessage('Đã tìm lại video đã nhận; không gửi thêm yêu cầu.');return;}
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã đổi; hãy kiểm tra lại.');
     if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
     if(!currentPreflight||currentPreflight.prompt!==prompt||currentPreflight.snapshot!==snapshot||currentPreflight.expires_at*1000<Date.now())await doPreflightCheck();
@@ -2320,11 +2328,11 @@ async function doSubmitGenerate(){
     if(reviewed&&!q('#gen_confirm_review')?.checked)return studioMessage('Xem lý do phía trên, xác nhận rồi bấm Tạo video.');
     btn.textContent='Đang gửi…';const fd=new FormData();fd.append('prompt',prompt);
     fd.append('model',q('#gen_model').value);fd.append('duration',q('#gen_duration').value);fd.append('ratio',q('#gen_ratio').value);
-    fd.append('reference_roles',JSON.stringify(selectedImages.map((_,i)=>referenceRoles[i]||'other')));fd.append('request_id',pendingRequestId);fd.append('preflight_token',currentPreflight.token||'');if(reviewed)fd.append('confirm_review','true');
+    fd.append('reference_roles',JSON.stringify(selectedImages.map((_,i)=>referenceRoles[i]||'other')));fd.append('request_id',pendingRequestId);if(analysisTaskId)fd.append('source_task_id',analysisTaskId);fd.append('preflight_token',currentPreflight.token||'');if(reviewed)fd.append('confirm_review','true');
     for(const image of selectedImages)fd.append('images',image);
     const resp=await fetch('/api/admin/videos/generations',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});
     const data=await resp.json();if(resp.status===401)showLogin();if(!resp.ok){currentPreflight=null;const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu'));error.details=data.failure_display?.details;error.confirmed=true;throw error;}
-    pendingRequestId='';pendingSnapshot='';currentBatchId='';trackStudioJob(data.id);studioMessage('Đã gửi. Bạn có thể đóng trang và xem lại trong Video của tôi.');
+    pendingRequestId='';pendingSnapshot='';currentBatchId='';analysisTaskId='';renderDraftSource();trackStudioJob(data.id);studioMessage('Đã gửi. Bạn có thể đóng trang và xem lại trong Video của tôi.');
   }catch(e){studioMessage(e.confirmed?'Chưa gửi video: '+e.message:'Chưa xác định trạng thái gửi: '+e.message+'. Kiểm tra Video của tôi; gửi lại cùng bản nháp sẽ dùng cùng mã yêu cầu.',e.details);}
   finally{btn.disabled=false;btn.textContent='Tạo video';}
 }
@@ -2375,6 +2383,7 @@ function taskMarkup(t){
   const target=t.target_duration||t.duration;
   let html=`<div class="job-heading"><strong>${esc(taskLabel(t))}</strong><span class="tiny">${esc(t.model||'')} · Mong muốn ${esc(target||'')} giây</span></div>`;
   if(t.batch_id)html+=`<p class="tiny">Mẻ ${esc(t.batch_id.slice(-8))} · Video ${esc(t.batch_index)}</p>`;
+  if(t.source_task_id)html+='<p class="tiny">Bản sửa từ video '+esc(t.source_task_id)+'</p>';
   html+=jobProgressMarkup(t);
   if(t.video_url&&t.file_exists!==false){html+=`<video controls preload="metadata" src="${esc(t.video_url)}" class="studio-video"></video><p class="tiny">Thời lượng thực: ${Number(t.video_duration||0).toFixed(1)} giây${t.video_width?' · '+t.video_width+'×'+t.video_height:''}. Video Dola trả về; không cam kết 1080p native.</p><a class="btn btn-p" href="${esc(t.video_url)}" download>Tải video</a>`;
     if(t.video_duration&&t.video_duration<target*0.9)html+=`<p>Dola trả video ngắn hơn yêu cầu. Bạn có thể dùng bản này hoặc tạo thêm đoạn rồi ghép.</p><button class="btn" onclick="continueVideo('${esc(t.id)}')">${t.continuation_task_id?'Xem đoạn tiếp':'Tạo tiếp và ghép'}</button>`;
@@ -2397,8 +2406,8 @@ async function continueVideo(id){
   try{const result=await api('/api/admin/tasks/'+encodeURIComponent(id)+'/continue',{method:'POST',body:{confirm_cost:true}});switchTab('generate');trackStudioJob(result.id);}
   catch(e){if(e.message.includes('review')&&confirm('Nội dung cần xem xét. Bạn xác nhận tiếp tục tạo đoạn bổ sung?')){const result=await api('/api/admin/tasks/'+encodeURIComponent(id)+'/continue',{method:'POST',body:{confirm_cost:true,confirm_review:true}});switchTab('generate');trackStudioJob(result.id);}else alert(e.message);}
 }
-async function analyzeFailedTask(id){await useTaskPrompt(id);analysisTaskId=id;await doPreflightCheck();}
-async function useTaskPrompt(id){const t=await api('/api/admin/tasks/'+encodeURIComponent(id));q('#gen_mode').value='single';q('#gen_copies').value='1';batchInputsChanged();rewriteHistory.push(q('#gen_prompt').value);q('#gen_prompt').value=t.prompt||'';if(t.model)q('#gen_model').value=t.model;onModelChange();if(t.duration)q('#gen_duration').value=t.duration;if(t.ratio&&t.ratio!=='default')q('#gen_ratio').value=t.ratio;onPromptInput();switchTab('generate');}
+async function analyzeFailedTask(id){await useTaskPrompt(id);analysisTaskId=id;renderDraftSource();saveStudioDraft();await doPreflightCheck();}
+async function useTaskPrompt(id){analysisTaskId='';const t=await api('/api/admin/tasks/'+encodeURIComponent(id));q('#gen_mode').value='single';q('#gen_copies').value='1';batchInputsChanged();rewriteHistory.push(q('#gen_prompt').value);q('#gen_prompt').value=t.prompt||'';if(t.model)q('#gen_model').value=t.model;onModelChange();if(t.duration)q('#gen_duration').value=t.duration;if(t.ratio&&t.ratio!=='default')q('#gen_ratio').value=t.ratio;onPromptInput();switchTab('generate');}
 let queueView='table',studioQueueTasks=[],studioQueueVersion=0,myVideoView='grid',mySelectedId='';
 function filteredTasks(tasks,value){return tasks.filter(t=>value==='all'||(value==='running'?['queued','processing'].includes(t.status):t.status===value));}
 function queueMarkup(tasks,target,mode='table'){
@@ -2425,7 +2434,8 @@ async function loadMyVideos(){
     const container=q('#myVideoJobs'),tasks=filteredTasks(r.tasks||[],q('#myVideoFilter').value),ids=new Set(tasks.map(t=>t.id));q('#myVideoTable').innerHTML=queueMarkup(tasks,'my');const selected=tasks.find(t=>t.id===mySelectedId);if(selected)renderJobInto(q('#mySelectedPreview'),selected);
     if(container.firstElementChild?.tagName==='P')container.innerHTML='';
     const members=currentBatchId?(r.tasks||[]).filter(t=>t.batch_id===currentBatchId):[];
-    if(currentBatchId)q('#myBatchSummary').textContent='Mẻ đang theo dõi: '+members.length+' video · '+members.filter(t=>t.status==='completed').length+' hoàn tất · '+members.filter(t=>['queued','processing'].includes(t.status)).length+' đang chờ/tạo · '+members.filter(t=>t.status==='unknown').length+' chưa rõ kết quả · '+members.filter(t=>t.status==='failed').length+' thất bại';
+    if(currentBatchId)currentBatchDownloadName=r.download_name||'dola-videos.zip';
+    if(currentBatchId)q('#myBatchSummary').textContent=(r.name?'Mẻ '+r.name+': ':'Mẻ đang theo dõi: ')+members.length+' video · '+members.filter(t=>t.status==='completed').length+' hoàn tất · '+members.filter(t=>['queued','processing'].includes(t.status)).length+' đang chờ/tạo · '+members.filter(t=>t.status==='unknown').length+' chưa rõ kết quả · '+members.filter(t=>t.status==='failed').length+' thất bại';
     for(const el of container.querySelectorAll('[data-task-id]'))if(!ids.has(el.dataset.taskId))el.remove();
     if(!tasks.length){container.innerHTML='<p>Chưa có video. Bắt đầu với ý tưởng đầu tiên của bạn.</p>';return;}
     for(const t of tasks){let el=Array.from(container.children).find(el=>el.dataset.taskId===t.id);

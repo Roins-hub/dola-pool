@@ -18,7 +18,7 @@ Studio lấy trạng thái backend mỗi 3 giây khi theo dõi hoặc ở Video 
 
 ## Kết quả chưa rõ và video ngắn
 
-- Mặc định theo dõi 1.800 giây từ lúc nhận conversation. Không tự gửi lại khi polling lỗi, hết thời gian chờ hoặc mất xác nhận gửi.
+- Mặc định theo dõi 1.800 giây từ lúc gửi yêu cầu (bao gồm thời gian chờ conversation). Không tự gửi lại khi polling lỗi, hết thời gian chờ hoặc mất xác nhận gửi.
 - Trạng thái `unknown` có nghĩa kết quả chưa rõ, không phải thất bại upstream. **Kiểm tra lại kết quả** tiếp tục conversation/tài khoản đã lưu với một cửa sổ theo dõi mới.
 - Nếu chưa có conversation, tool giữ thông tin gửi nhưng không tự tạo lại. Cần kiểm tra tài khoản Dola để xác định kết quả trước khi tạo yêu cầu mới.
 - Video thiếu thời lượng vẫn được lưu và cho tải. **Tạo tiếp và ghép** cần xác nhận dùng thêm điểm; không bảo đảm cảnh liền mạch. Nhấn lại mở cùng đoạn tiếp, không tạo thêm một job khác. Chỉ ghép các đoạn Dola đã trả về; không tự tạo bù.
@@ -74,10 +74,12 @@ Nhật ký nâng cao lấy trạng thái và phản hồi đã lưu, lọc theo 
 
 ## Nghiệm thu redesign 03/10/2026
 
-Regression 403 kiểm tra đã qua; browser giữ scheduler, worker, SQLite và FFmpeg thật, gồm lỗi polling, kết quả sau 450 giây bằng clock fixture, process mới, gửi chưa rõ kết quả, folder có ảnh riêng và ZIP. Đây là kiểm tra bằng mock giao thức Dola, chưa phải tạo video Dola live.
+Regression 415 kiểm tra đã qua; browser giữ scheduler, worker, SQLite và FFmpeg thật, gồm lỗi polling, kết quả sau 450 giây bằng clock fixture, process mới, gửi chưa rõ kết quả, folder có ảnh riêng và ZIP. Đây là kiểm tra bằng mock giao thức Dola, chưa phải tạo video Dola live.
 
 Kết nối AI hiện có được đánh giá riêng bằng 8 mẫu Việt/Anh. Mẫu đơn giản được allow, thiếu tham chiếu/nhiều cảnh vượt thời lượng được review; rewrite giữ hành động và cấu trúc hai cảnh trong mẫu. Mẫu tiếng Anh vẫn thêm chi tiết nhỏ, nên cần duyệt đề xuất. Không lấy kiểm tra schema hoặc mock làm bằng chứng AI luôn đúng hay Dola sẽ chấp nhận.
 
 Không thêm thư viện hay framework mới. Các chức năng tạo ảnh/asset, âm thanh, tự mua tài khoản và rotating proxy provider mới cần tích hợp riêng; giao diện không có control giả cho những phần này.
 
 Nếu POST đã được nhận nhưng mất response, Studio tìm biên nhận theo tài khoản đăng nhập/mã yêu cầu trước khi gọi lại AI, kể cả sau reload hoặc token hết hạn. GET `/api/admin/video-receipts/{request_id}?kind=single|batch` chỉ đọc; chưa có biên nhận trả null. Prompt phân tích và gửi một video giữ cùng nguyên văn để neo gợi ý không lệch vì khoảng trắng.
+
+Vai trò ảnh người dùng chọn được dùng cả khi tạo mẻ với ảnh chung. Log chuẩn và stdout của các thành phần chính cùng che URL/session/cookie/key; dữ liệu lịch sử gốc chỉ hiển thị ở chi tiết đã che secrets.

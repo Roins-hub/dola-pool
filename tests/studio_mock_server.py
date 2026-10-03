@@ -36,6 +36,7 @@ def event(kind, **data):
 def submit(*args, **kwargs):
  cid='conversation-'+str(sum(1 for line in (root/'events.jsonl').read_text().splitlines() if json.loads(line)['kind']=='submit')+1) if (root/'events.jsonl').exists() else 'conversation-1'
  event('submit',conversation_id=cid,prompt=kwargs['prompt'],images=len(kwargs.get('images') or []),image_digests=[item['fixture_digest'] for item in kwargs.get('images') or []])
+ if kwargs['prompt']=='REFUSAL_FIXTURE':return SimpleNamespace(error='内容违规，请更换输入内容',error_code='content_policy',conversation_id='')
  if kwargs['prompt']=='AMBIGUOUS_SUBMIT':raise TimeoutError('Fixture lost submission response')
  return SimpleNamespace(error='',error_code='',conversation_id=cid)
 def inspect(session,ctx,cid):
@@ -76,7 +77,7 @@ browser_pool.hello_probe=lambda *a,**k:{'ok':True,'status':'ok'}
 async def ai_transport(request):
  data=json.loads(request.content)
  system=data['messages'][0]['content'];user=data['messages'][-1]['content']
- event('ai',rewrite='đạo diễn' in system.lower())
+ event('ai',rewrite='đạo diễn' in system.lower(),source_refusal='content_policy' in user,reference_roles=[] if 'đạo diễn' in system.lower() else [r['role'] for r in json.loads(user).get('context_data',{}).get('references',[])])
  if 'đạo diễn' in system.lower():
   result='Một chú mèo trên cửa sổ, máy quay tiến nhẹ, giữ ánh sáng ban đầu.'
  elif 'BLOCK_ME' in user:result=json.dumps({'status':'block','reason':'Nội dung cần chỉnh sửa','suggestions':'Thử mô tả khác'})

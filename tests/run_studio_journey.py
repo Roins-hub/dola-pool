@@ -234,6 +234,7 @@ async def browser_journey():
   await page.wait_for_function("document.querySelectorAll('#myVideoJobs .video-job').length===4")
   await page.wait_for_function("document.querySelector('#myBatchSummary').textContent.includes('4 hoàn tất')")
   assert len(events('submit'))==before+4
+  assert any(e['reference_roles']==['character'] for e in events('ai'))
   assert all(e['images']==1 for e in events('submit')[-4:])
   await page.screenshot(path=str(OUT/'batch-desktop.png'),full_page=True)
   await page.reload();await page.wait_for_selector('#tab-generate',state='visible')
@@ -287,6 +288,7 @@ async def browser_journey():
   await page.locator('#gen_copies').fill('1')
   await page.locator('#gen_mode').select_option('folder')
   await page.locator('#gen_duration').select_option('15')
+  await page.locator('#gen_batch_name').fill('Demo thư mục')
   await page.locator('#gen_folder_picker').set_input_files(str(directory))
   await page.wait_for_selector('#gen_folder_preview article')
   assert await page.locator('#gen_folder_preview article').count()==2
@@ -317,16 +319,40 @@ async def browser_journey():
   assert await page.locator('#gen_mode').input_value()=='folder'
   assert await page.locator('#gen_folder_preview article').count()==2
   assert '2 video' in await page.locator('#gen_batch_summary').inner_text()
+  assert await page.locator('#gen_batch_name').input_value()=='Demo thư mục'
   await page.get_by_role('button',name='▤ Video của tôi',exact=True).click()
   await page.wait_for_function("document.querySelector('#myBatchSummary').textContent.includes('2 hoàn tất')")
   async with page.expect_download() as download:
    await page.get_by_role('button',name='Tải ZIP kết quả',exact=True).click()
-  zip_path=OUT/'folder-results.zip';await (await download.value).save_as(zip_path)
+  received=await download.value;assert received.suggested_filename=='Demo_thư_mục.zip'
+  zip_path=OUT/'folder-results.zip';await received.save_as(zip_path)
   with zipfile.ZipFile(zip_path) as archive:
    manifest=json.loads(archive.read('ket-qua.json'));assert len(manifest['included'])==2 and not manifest['skipped']
    assert all('/' not in n and '..' not in n for n in archive.namelist())
    media=archive.extract(manifest['included'][0]['file'],OUT)
   subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=codec_name','-of','csv=p=0',media],check=True,stdout=subprocess.DEVNULL)
+  # Confirmed refusal -> analyze -> edit -> reload -> explicit new generation.
+  # Reusing a prompt must leave folder mode, and the new result keeps provenance.
+  refusal_before=len(events('submit'));refused_id=create('REFUSAL_FIXTURE',duration=15,request_id='confirmed-refusal')
+  await asyncio.to_thread(wait_row,refused_id,'failed')
+  await page.locator('#myBatchClear').click();await page.locator('#myVideoFilter').select_option('failed')
+  await page.locator('#tab-videos').get_by_role('button',name='Bảng',exact=True).click()
+  await page.wait_for_selector('#myVideoTable button');await page.locator('#myVideoTable button').first.click()
+  await page.locator('#mySelectedPreview').get_by_role('button',name='Phân tích và sửa prompt',exact=True).click()
+  await page.wait_for_selector('#gen_source_note',state='visible')
+  await page.wait_for_function("document.querySelector('#gen_action_msg').textContent==='' ")
+  assert await page.locator('#gen_mode').input_value()=='single'
+  assert len(events('submit'))==refusal_before+1
+  assert events('ai')[-1]['source_refusal']
+  await page.locator('#gen_prompt').fill('Mèo nhìn cửa sổ — bản sửa đã duyệt')
+  await page.reload();await page.wait_for_selector('#tab-generate',state='visible')
+  assert refused_id in await page.locator('#gen_source_note').inner_text()
+  async with page.expect_response(lambda r:'/api/admin/videos/generations' in r.url and r.request.method=='POST') as repaired_response:
+   await page.locator('#btn_submit_gen').click()
+  repaired_id=(await (await repaired_response.value).json())['id']
+  await page.wait_for_selector('#gen_job_content video')
+  assert row(repaired_id)['source_task_id']==refused_id
+  assert len(events('submit'))==refusal_before+2
   await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
   await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'studio-mobile.png'),full_page=True)
   assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'Mobile horizontal overflow'
@@ -402,7 +428,7 @@ try:
  assert len(events('submit'))==count_before_restart+2
  asyncio.run(browser_journey())
  (OUT/'result.json').write_text(json.dumps({'passed':True,'process_pids':[pid1,pid2],
-  'lost_post_receipt_before_ai_single_batch':True,'boundary_whitespace_anchor':True,'restart_submission_count':1,'continuation_submission_count':2,'manual_check_no_resubmit':True,'idempotent_request_retry':True,'reference_image_reload':True,'rewrite_iterations':2,'stale_rewrite_discarded':True,'upstream_progress_browser':True,'txt_batch_four_jobs':True,'batch_process_restart_no_duplicate':True,
+  'refusal_edit_reload_linked_new_video':True,'reuse_prompt_leaves_folder_mode':True,'named_batch_restore_zip':True,'lost_post_receipt_before_ai_single_batch':True,'boundary_whitespace_anchor':True,'restart_submission_count':1,'continuation_submission_count':2,'manual_check_no_resubmit':True,'idempotent_request_retry':True,'reference_image_reload':True,'rewrite_iterations':2,'stale_rewrite_discarded':True,'upstream_progress_browser':True,'txt_batch_four_jobs':True,'batch_process_restart_no_duplicate':True,
   'after_300s_single_conversation':True,'polling_error_recovered_same_conversation':True,'ambiguous_send_restart_no_resubmit':True,
   'folder_two_groups_own_images_restart':True,'folder_zip_playable':True,'export_copy_preserves_original':True,'inventory_disable_keeps_active_job':True,'confirmed_http_rejection_keeps_draft':True,
   'rich_ai_selective_edit':True,'context_stale_discarded':True,'vietnamese_progress':True,'queue_table_preview':True,

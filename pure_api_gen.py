@@ -19,6 +19,7 @@ from typing import Any, Callable
 
 import config
 import failure_text
+print = failure_text.print_safe
 from pure_signer import install
 
 log = logging.getLogger("dola.pure_api")
@@ -864,6 +865,7 @@ def generate_pure_video(
             state_file=state_file, region=region, pc_version=pc_version)
     submit_prompt = (dola.enrich_multi_image_prompt(prompt, len(uploaded_images))
                      if uploaded_images else prompt)
+    submitted_at = time.time()
     try:
         submit = dola.submit_chat_completion(
             session, ctx, headers,
@@ -881,7 +883,7 @@ def generate_pure_video(
         raise PendingResultError("Dola chưa trả conversation_id; không tự gửi lại")
 
     conversation_id = submit.conversation_id
-    deadline = time.time() + timeout
+    deadline = submitted_at + timeout
     if on_conversation_id:
         try:
             on_conversation_id(account, conversation_id, deadline)

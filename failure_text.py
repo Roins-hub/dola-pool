@@ -311,3 +311,11 @@ def present_account_group(group: str, reason: str) -> dict:
     raw = str(reason or '')
     return {'message_vi': raw if raw and not re.search(r'[\u3400-\u9fff]', raw) else messages.get(group, 'Cần kiểm tra trạng thái tài khoản.'),
             'details': sanitize_details(raw)}
+
+
+def print_safe(*values, **kwargs):
+    """Redact joined stdout diagnostics as well as logging records."""
+    import builtins
+    separator = kwargs.pop('sep', ' ')
+    separator = ' ' if separator is None else separator
+    builtins.print(sanitize_details(separator.join(map(str, values))), **kwargs)
