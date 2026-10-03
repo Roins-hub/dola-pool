@@ -162,6 +162,15 @@ async def browser_journey():
     const timer=studioPollTimer;release({id:'old',status:'completed'});await pending;const ok=studioPollTimer===timer;
     clearInterval(studioPollTimer);studioPollTimer=null;api=real;document.body.dataset.pollRace=String(ok);})();`;document.head.appendChild(script);}''')
   await page.wait_for_function("document.body.dataset.pollRace==='true'")
+  # A confirmed HTTP rejection is distinct from an unknown network send.
+  await page.route('**/api/admin/videos/generations',lambda route: asyncio.create_task(route.fulfill(status=422,content_type='application/json',body=json.dumps({'detail':'Token kiểm tra đã hết hạn'}))))
+  await page.locator('#gen_prompt').fill('Prompt giữ nguyên khi bị từ chối')
+  await page.locator('#btn_submit_gen').click()
+  await page.wait_for_function("document.querySelector('#gen_action_msg').textContent.startsWith('Chưa gửi video:')")
+  assert await page.locator('#gen_prompt').input_value()=='Prompt giữ nguyên khi bị từ chối'
+  assert errors.count('Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)')==1
+  errors.remove('Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)')
+  await page.unroute('**/api/admin/videos/generations')
   # TXT import, blocked batch, review gate and four separate persisted jobs.
   await page.locator('#gen_mode').select_option('list')
   await page.locator('#gen_batch_prompts').fill('cat\nBLOCK_ME')
@@ -200,6 +209,13 @@ async def browser_journey():
   await page.get_by_role('button',name='⚙ Cài đặt',exact=True).click();await page.wait_for_selector('#tab-accounts',state='visible');await page.wait_for_selector('#accountsTable table')
   assert not await page.get_by_text('Quản lý API Key',exact=True).count()
   await page.screenshot(path=str(OUT/'settings-desktop.png'),full_page=True)
+  await page.get_by_role('button',name='Nâng cao: proxy',exact=True).click()
+  await page.locator('#tab-proxies details summary').click()
+  await page.get_by_role('button',name='Lấy thông tin',exact=True).click()
+  await page.wait_for_function("document.querySelector('#diagnosticEvents').textContent.includes('Relay cho kết nối Dola')")
+  assert await page.locator('#diagnosticEvents article').count()>0
+  assert 'fake-mock' not in await page.locator('#diagnosticEvents').inner_text()
+
   await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
   await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'studio-mobile.png'),full_page=True)
   assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'Mobile horizontal overflow'

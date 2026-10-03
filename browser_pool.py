@@ -1009,7 +1009,7 @@ class BrowserPool:
 
     def _schedulable(self, a: dict) -> bool:
         return (a.get("pool_enabled", True) and a["scheduling"] and not a["cooling"] and not a["rate_limited"]
-                and not a["quota_blocked"] and a["login_ok"] != 0
+                and not str(a.get("effective_egress", "")).startswith("unavailable:") and not a["quota_blocked"] and a["login_ok"] != 0
                 and a["used_today"] < DAILY_LIMIT
                 and (a["credit_balance"] is None or a["credit_balance"] >= 2))
 
@@ -1286,14 +1286,17 @@ class BrowserPool:
         """从 accounts + proxy_store + accounts_meta 重建/刷新共享选号引擎。"""
         now = time.time()
         cfg_list = []
+        rows = {a['name']: a for a in self.list_accounts()}
         for name in self.accounts:
+            row = rows[name]
+            route_available = not row['effective_egress'].startswith('unavailable:')
             cfg_list.append(_PoolAccountConfig(
                 id=name,
                 state_file=Path(self.accounts_dir) / name / "state.json",
                 profile_dir=str(Path(self.accounts_dir) / name),
-                proxy=self._proxy_url_for(name),
-                egress_key=self._egress_for(name),
-                enabled=True,
+                proxy=self._proxy_url_for(name) if route_available else "",
+                egress_key=row["effective_egress"],
+                enabled=row["pool_enabled"] and row["scheduling"] and route_available,
                 weight=self._meta_weight(name),
             ))
         engine = _PoolEngine(

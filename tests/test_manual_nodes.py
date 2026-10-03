@@ -109,10 +109,11 @@ def test_each_account_gets_its_own_node():
     assert proxy_store.proxy_url_for("ck10") != u1       # 换 IP = 换节点
 
 
-def test_dead_pool_falls_back_to_default_proxy(monkeypatch):
+def test_dead_pool_never_changes_configured_route(monkeypatch):
     monkeypatch.setattr(config, "PROXY", "http://default:8888")
     p = _mk_paste()
     proxy_store.set_account_proxy("ck12", p["id"])
     for n in proxy_store.list_nodes(p["id"]):
         proxy_store.mark_node_dead(n["id"])
-    assert proxy_store.proxy_url_for("ck12") == "http://default:8888"
+    with pytest.raises(ValueError, match="Proxy"):
+        proxy_store.proxy_url_for("ck12")

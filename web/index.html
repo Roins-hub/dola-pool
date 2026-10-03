@@ -390,6 +390,11 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
         <span id="defaultProxyShow" style="font-family:monospace"></span>。
       </div>
       <div id="proxiesTable"></div>
+      <details><summary>Nhật ký và chẩn đoán kết nối</summary>
+        <div class="queue-toolbar"><label>Mã tác vụ <input id="diagTask"></label><label>Tài khoản <input id="diagAccount"></label>
+        <label>Mức <select id="diagLevel"><option value="">Tất cả</option><option value="info">Thông tin</option><option value="error">Lỗi</option></select></label>
+        <button class="btn" onclick="loadDiagnostics()">Lấy thông tin</button></div><div id="diagnosticEvents" role="status"></div>
+      </details>
     </div>
   </section>
   <section id="tab-dash">
@@ -1593,6 +1598,13 @@ async function rotateProxy(id){
   }catch(e){return alert(e.message);}
   loadProxies();loadAccounts();
 }
+async function loadDiagnostics(){
+  const out=q('#diagnosticEvents');out.textContent='Đang lấy trạng thái đã lưu…';
+  const params=new URLSearchParams({task_id:q('#diagTask').value.trim(),account:q('#diagAccount').value.trim(),level:q('#diagLevel').value,limit:'200'});
+  try{const [events,route]=await Promise.all([api('/api/admin/diagnostics/events?'+params),api('/api/admin/route')]);
+    out.innerHTML='<p>'+esc(route.route_vi)+'</p><p class="tiny">'+esc(events.scope_vi)+'</p>'+events.events.map(e=>`<article class="analysis-issue"><p>${esc(fmt(e.time))} · ${esc(e.task_id)} · ${esc(e.account)} · ${esc(e.message_vi)}</p>${e.details?'<details><summary>Chi tiết kỹ thuật</summary><pre>'+esc(e.details)+'</pre></details>':''}</article>`).join('');
+  }catch(e){out.textContent='Không lấy được nhật ký: '+e.message;}
+}
 async function rotateIp(name){
   try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/rotate-ip',{method:'POST'});}
   catch(e){return alert(e.message);}
@@ -1968,6 +1980,7 @@ async function requestPreflight(prompt){
   const fd=new FormData();fd.append('analysis',JSON.stringify({prompt,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,reference_roles:selectedImages.map((_,i)=>isBatchGeneration()?'other':referenceRoles[i]||'other'),...(analysisTaskId?{upstream_task_id:analysisTaskId}:{})}));
   for(const image of selectedImages)fd.append('images',image);
   const response=await fetch('/api/admin/prompts/preflight',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await response.json();
+  if(response.status===401)showLogin();
   if(!response.ok){const error=new Error(typeof data.detail==='string'?data.detail:'Không phân tích được prompt');error.status=response.status;throw error;}
   return data;
 }
@@ -2230,9 +2243,9 @@ async function doSubmitGenerate(){
     fd.append('reference_roles',JSON.stringify(selectedImages.map((_,i)=>referenceRoles[i]||'other')));fd.append('request_id',pendingRequestId);fd.append('preflight_token',currentPreflight.token||'');if(reviewed)fd.append('confirm_review','true');
     for(const image of selectedImages)fd.append('images',image);
     const resp=await fetch('/api/admin/videos/generations',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});
-    const data=await resp.json();if(!resp.ok){currentPreflight=null;throw new Error(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu');}
+    const data=await resp.json();if(resp.status===401)showLogin();if(!resp.ok){currentPreflight=null;const error=new Error(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu');error.confirmed=true;throw error;}
     pendingRequestId='';pendingSnapshot='';currentBatchId='';trackStudioJob(data.id);studioMessage('Đã gửi. Bạn có thể đóng trang và xem lại trong Video của tôi.');
-  }catch(e){studioMessage('Chưa xác định trạng thái gửi: '+e.message+'. Kiểm tra Video của tôi; gửi lại cùng bản nháp sẽ dùng cùng mã yêu cầu.');}
+  }catch(e){studioMessage(e.confirmed?'Chưa gửi video: '+e.message:'Chưa xác định trạng thái gửi: '+e.message+'. Kiểm tra Video của tôi; gửi lại cùng bản nháp sẽ dùng cùng mã yêu cầu.');}
   finally{btn.disabled=false;btn.textContent='Tạo video';}
 }
 function trackStudioJob(taskId){

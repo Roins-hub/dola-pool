@@ -2275,10 +2275,44 @@ async def admin_account_proxy_set(name: str, body: AccountProxyBind,
     return {"ok": True}
 
 
+@app.get("/api/admin/diagnostics/events")
+async def admin_diagnostic_events(task_id: str = "", account: str = "", level: str = "",
+                                  limit: int = 100, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if level not in ('', 'info', 'error'):
+        raise HTTPException(422, "Mức nhật ký không hợp lệ")
+    rows = [store.get(task_id)] if task_id else store.recent_tasks(200)
+    events = []
+    for row in rows:
+        if not row or (account and row.get('account') != account):
+            continue
+        base = {'task_id': row['id'], 'account': row.get('account') or ''}
+        if row.get('error'):
+            display = failure_text.present(row['error'], code=row.get('failure_code') or '', category=row.get('failure_group') or '')
+            events.append({**base, 'time': row.get('finished_at') or row.get('updated_at') or row['created_at'],
+                           'kind': 'failure' if row['status'] == 'failed' else 'connection', 'level': 'error',
+                           'message_vi': display['message_vi'], 'details': display['details']})
+        events.append({**base, 'time': row.get('updated_at') or row['created_at'], 'kind': 'state', 'level': 'info',
+                       'message_vi': {'queued': 'Chờ tài khoản', 'processing': 'Đang tạo', 'completed': 'Hoàn tất',
+                                      'failed': 'Tạo video thất bại', 'unknown': 'Chưa lấy được kết quả — có thể Dola vẫn đang tạo'}.get(row['status'], 'Trạng thái đã cập nhật'),
+                       'details': ''})
+        for update in _task_display(row)['upstream_display']:
+            events.append({**base, 'time': update.get('at') or row['created_at'], 'kind': 'dola',
+                           'level': 'error' if update.get('connection') == 'interrupted' else 'info',
+                           'message_vi': update['message_vi'], 'details': update['details']})
+    events = [e for e in events if not level or e['level'] == level]
+    events.sort(key=lambda e: e['time'] or 0, reverse=True)
+    return {'events': events[:min(max(limit, 1), 200)],
+            'scope_vi': 'Trạng thái và thông báo đã lưu của 200 tác vụ gần nhất; lọc mã tác vụ để xem tác vụ cũ.'}
+
+
 @app.get("/api/admin/route")
 async def admin_route(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return pool.preview_route()
+    return {**pool.preview_route(), 'transport': config.TRANSPORT_MODE,
+            'account_proxy_used': config.TRANSPORT_MODE != 'relay',
+            'route_vi': 'Relay cho kết nối Dola; Proxy tài khoản không dùng cho yêu cầu Dola.' if config.TRANSPORT_MODE == 'relay'
+                        else 'Kết nối trực tiếp hoặc Proxy đã gán theo tài khoản.'}
 
 
 @app.post("/api/admin/accounts/{name}/prefer")

@@ -290,14 +290,14 @@ def test_fetch_without_url_reports_clearly(tmp_path):
     assert r["ok"] is False and "未配置提取链接" in r["error"]
 
 
-def test_extract_falls_back_to_default_proxy_when_empty(tmp_path, monkeypatch):
-    """提取接口拿不到节点时，回落到默认代理，而不是把号挂空。"""
+def test_extract_empty_never_uses_another_route(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "PROXY", "http://default.example.com:3128")
     pid = _mk_extract()["id"]
     _stub_extract(monkeypatch, "提取失败/没有可用节点")
     proxy_store.set_account_proxy("acc1", pid)
-    assert proxy_store.egress_key_for("acc1") == "http://default.example.com:3128"
-    assert proxy_store.proxy_url_for("acc1") == "http://default.example.com:3128"
+    assert proxy_store.egress_key_for("acc1") == "unavailable:acc1"
+    with pytest.raises(ValueError, match="Proxy"):
+        proxy_store.proxy_url_for("acc1")
 
 
 def test_node_marked_dead_when_egress_unhealthy(tmp_path, monkeypatch):

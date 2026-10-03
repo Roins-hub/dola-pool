@@ -558,7 +558,9 @@ def proxy_url_for(account: str, *, rotate: bool = False) -> str:
     mode = info.get("mode") or "static"
     if mode == "extract":
         node = _ensure_node(account, info, rotate=rotate)
-        return _url_from_node(node) if node else (config.PROXY or "")
+        if not node:
+            raise ValueError("Proxy đã gán không có node khả dụng; hãy kiểm tra lại cấu hình Proxy")
+        return _url_from_node(node)
     if mode != "dynamic":
         return _url_from_record(info)
     session = _ensure_session(account, info, rotate=rotate)
@@ -598,7 +600,7 @@ def egress_key_for(account: str) -> str:
     if mode == "extract":
         node = _ensure_node(account, info)
         if not node:
-            return _egress_of_url(config.PROXY or "")
+            return f"unavailable:{account}"
         # 每个节点是独立出口，按节点 id 区分
         return f"{_egress_of_url(_url_from_node(node))}#node{node['id']}"
     base = _egress_of_url(_url_from_record(info, username=""))
@@ -738,7 +740,8 @@ def probe_exit_ip(proxy_url: str, timeout: int = 15) -> dict:
             "isp": data.get("isp", ""),
         }
     except Exception as exc:  # noqa: BLE001 - 探测失败原因要原样回报给面板
-        return {"ok": False, "ip": "", "error": str(exc)[:200]}
+        return {"ok": False, "ip": "", "error": "Không kết nối được Proxy; kiểm tra cấu hình hoặc thử lại.",
+                "details": __import__("failure_text").sanitize_details(str(exc))[:800]}
 
 
 def probe_proxy_record(proxy_id: str, session: str | None = None) -> dict:
