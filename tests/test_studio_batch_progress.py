@@ -12,6 +12,13 @@ from pure_api_gen import upstream_poll_update
 
 @pytest.fixture
 def studio(tmp_path,monkeypatch):
+ import ai_provider
+ import httpx
+ client_class=httpx.AsyncClient
+ monkeypatch.setattr(ai_provider,'get_active_provider_config',lambda:{'provider':'openai','api_key':'fixture','model':'fixture','base_url':'https://ai.invalid/v1'})
+ def ai_reply(request):
+     return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps({'status':'allow','reason':'','suggestions':''})}}]})
+ monkeypatch.setattr(ai_provider.httpx,'AsyncClient',lambda *args,**kwargs:client_class(transport=httpx.MockTransport(ai_reply)))
  store=TaskStore(str(tmp_path/'tasks.db'));monkeypatch.setattr(server,'store',store)
  monkeypatch.setattr(server,'_admin_auth',lambda _:None)
  monkeypatch.setattr(server,'ADMIN_SESSIONS',{'test':{'username':'owner'}})

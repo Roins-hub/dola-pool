@@ -1,5 +1,6 @@
 """Real provider/parser/cache/API contract, with only AI HTTP replaced."""
 import copy
+import asyncio
 import json
 import httpx
 import pytest
@@ -18,7 +19,8 @@ RICH={'status':'allow','reason':'','suggestions':'Làm rõ góc máy',
 @pytest.fixture
 def ai_http(monkeypatch):
     state={'response':copy.deepcopy(RICH),'requests':[]}
-    def handler(request):
+    async def handler(request):
+        await asyncio.sleep(state.get("delay",0))
         state['requests'].append(json.loads(request.content))
         return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps(state['response'])}}]})
     cls=httpx.AsyncClient

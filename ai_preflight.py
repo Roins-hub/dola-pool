@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import copy
+from prompt_rules import RULES_VERSION
 import re
 import time
 import uuid
@@ -14,6 +17,45 @@ PREFLIGHT_EXPIRY_SECONDS = 900.0
 
 # Lưu trữ cache preflight trong bộ nhớ: {token: Record}
 _PREFLIGHT_TOKENS: dict[str, dict[str, Any]] = {}
+
+
+def context_fingerprint(context: dict) -> str:
+    return hashlib.sha256(json.dumps(context, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+
+
+def validate_issue_anchors(prompt: str, issues: list[dict]) -> list[dict]:
+    checked = copy.deepcopy(issues)
+    ranges = []
+    for issue in checked:
+        issue.update(applicable=False, anchor_error="")
+        quote = issue.get("quote") or ""
+        if not quote or not issue.get("replacement"):
+            issue["anchor_error"] = "Nhận xét không có đoạn thay thế trực tiếp."
+            continue
+        positions = []
+        start = 0
+        while True:
+            pos = prompt.find(quote, start)
+            if pos < 0:
+                break
+            positions.append(pos)
+            start = pos + 1
+        occurrence = issue.get("occurrence")
+        if not positions or (len(positions) > 1 and occurrence is None):
+            issue["anchor_error"] = "Đoạn trích không tồn tại hoặc xuất hiện nhiều lần; cần chọn vị trí."
+            continue
+        index = (occurrence or 1) - 1
+        if not isinstance(index, int) or index < 0 or index >= len(positions):
+            issue["anchor_error"] = "Vị trí đoạn trích không hợp lệ."
+            continue
+        issue.update(applicable=True, occurrence=index + 1)
+        ranges.append((positions[index], positions[index] + len(quote), issue))
+    for i, (start, end, issue) in enumerate(ranges):
+        for other_start, other_end, other in ranges[i + 1:]:
+            if start < other_end and other_start < end:
+                issue.update(applicable=False, anchor_error="Các gợi ý chồng lấn; hãy sửa trực tiếp.")
+                other.update(applicable=False, anchor_error="Các gợi ý chồng lấn; hãy sửa trực tiếp.")
+    return checked
 
 
 def normalize_prompt(text: str) -> str:
@@ -39,6 +81,7 @@ def record_preflight_result(
     prompt: str,
     result: dict[str, Any],
     custom_fingerprint: Optional[str] = None,
+    *, context: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Lưu kết quả preflight và phát hành verification token gắn với session + prompt + config."""
     _purge_expired()
@@ -48,8 +91,14 @@ def record_preflight_result(
     cfg_fp = custom_fingerprint if custom_fingerprint is not None else compute_config_fingerprint()
 
     analysis = {key: result[key] for key in ("quality_summary", "issues", "rules_version", "sources", "context_fingerprint") if key in result}
+    if "issues" in analysis:
+        analysis["issues"] = validate_issue_anchors(prompt, analysis["issues"])
     record = {
         **analysis,
+        "exact_prompt_hash": hashlib.sha256(prompt.encode()).hexdigest(),
+        "context": copy.deepcopy(context),
+        "context_fingerprint": context_fingerprint(context) if context is not None else None,
+        "rules_version": RULES_VERSION,
         "token": token,
         "session_id": session_id,
         "prompt_hash": p_hash,
@@ -77,6 +126,7 @@ def validate_preflight_gate(
     token: Optional[str] = None,
     confirm_review: bool = False,
     custom_fingerprint: Optional[str] = None,
+    *, context: Optional[dict] = None, rules_version: Optional[str] = None,
 ) -> tuple[bool, str, Optional[str]]:
     """Xác thực gate preflight ở backend trước khi tạo video.
 
@@ -139,6 +189,13 @@ def validate_preflight_gate(
             None,
         )
 
+    if rec.get("rules_version") != (rules_version or RULES_VERSION):
+        return False, "Quy tắc kiểm tra đã đổi; hãy kiểm tra lại prompt.", None
+    if rec.get("context") is not None:
+        if context is None or rec.get("context_fingerprint") != context_fingerprint(context):
+            return False, "Cấu hình video hoặc ảnh đã đổi; hãy kiểm tra lại prompt.", None
+        if rec.get("exact_prompt_hash") != hashlib.sha256(prompt.encode()).hexdigest():
+            return False, "Nguyên văn prompt đã đổi; hãy kiểm tra lại trước khi áp dụng gợi ý.", None
     status = rec.get("status")
     if status == "block":
         reason = rec.get("reason") or "Nội dung vi phạm chính sách kiểm duyệt"

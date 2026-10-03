@@ -31,7 +31,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 import config
 if config.TRANSPORT_MODE == "relay":
@@ -57,6 +57,7 @@ from ai_provider import (
 from ai_preflight import (
     record_preflight_result,
     validate_preflight_gate,
+    _PREFLIGHT_TOKENS, context_fingerprint,
 )
 from cookie_login import import_cookie_account, import_cookie_accounts_from_text
 from credential_import import allocate_credentials, parse_account_text
@@ -1170,7 +1171,7 @@ async def create_video_vinted_alias(request: Request,
     return await create_video(request, authorization)
 
 
-async def _submit_task(client, model, prompt, ratio, duration, reference_images, task_id=None):
+async def _submit_task(client, model, prompt, ratio, duration, reference_images, task_id=None, input_fingerprint=None):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
     resolved = _resolve_model_for_duration(model, duration)
     if resolved is None:
@@ -1242,6 +1243,8 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
         raise HTTPException(429, str(exc)) from exc
     except PendingTaskLimitExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
+    if input_fingerprint:
+        store.update(task_id, input_fingerprint=input_fingerprint)
     asyncio.create_task(_run_task(
         task_id, model, prompt, ratio, duration, reference_images, client
     ))
@@ -1593,7 +1596,13 @@ class PromptRewriteRequest(BaseModel):
 
 
 class PromptPreflightRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(min_length=1, max_length=config.MAX_PROMPT_CHARS)
+    model: str | None = None
+    duration: int | None = None
+    ratio: str | None = None
+    reference_roles: list[str] = Field(default_factory=list, max_length=config.REFERENCE_IMAGE_MAX_COUNT)
+    reference_images: list[str] = Field(default_factory=list, max_length=config.REFERENCE_IMAGE_MAX_COUNT)
+    upstream_task_id: str | None = None
 
 
 class KeyCreate(BaseModel):
@@ -3038,22 +3047,100 @@ def _validate_image_content(data: bytes, filename: str) -> None:
         raise HTTPException(422, f"Tệp ảnh {filename} bị lỗi hoặc không thể giải mã: {exc}")
 
 
-@app.post("/api/admin/prompts/preflight")
-async def admin_prompt_preflight(body: PromptPreflightRequest, x_admin_key: str | None = Header(default=None)):
-    _admin_auth(x_admin_key)
-    session_id = hashlib.sha256((x_admin_key or "default").encode("utf-8")).hexdigest()[:24]
-    if not (body.prompt or "").strip():
-        raise HTTPException(422, "Prompt không được để trống")
+async def _reference_context(refs: list[str], roles: list[str]) -> tuple[list[dict], list[str]]:
+    if len(roles) > len(refs) or any(role not in ("character", "scene", "style", "other") for role in roles):
+        raise HTTPException(422, "Vai trò ảnh tham chiếu không hợp lệ")
+    root = None
     try:
-        result = await preflight_check_prompt(body.prompt)
-        record = record_preflight_result(session_id, body.prompt, result)
+        root, paths = await download_reference_images(refs, "check_" + uuid.uuid4().hex[:12])
+        context, frozen = [], []
+        total = 0
+        for index, path in enumerate(paths):
+            data = Path(path).read_bytes()
+            total += len(data)
+            if total > config.REFERENCE_TOTAL_MAX_BYTES:
+                raise ValueError("Tổng dung lượng ảnh quá lớn")
+            _validate_image_content(data, Path(path).name)
+            context.append({"sha256": hashlib.sha256(data).hexdigest(), "role": roles[index] if index < len(roles) else "other"})
+            frozen.append(_data_url_from_upload(Path(path).name, data))
+        return context, frozen
+    except ValueError as exc:
+        raise HTTPException(422, failure_text.sanitize_details(str(exc))) from exc
+    finally:
+        if root:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+def _video_context(model, duration, ratio, references):
+    resolved = _resolve_model_for_duration(model, duration)
+    if not resolved:
+        raise HTTPException(422, "Model không hỗ trợ thời lượng đã chọn")
+    return {"model": resolved, "duration": duration, "ratio": ratio, "references": references}
+
+
+async def _ensure_video_preflight(session_id, prompt, token, confirm_review, context):
+    record = _PREFLIGHT_TOKENS.get(token or "")
+    ok, message, status = validate_preflight_gate(session_id, prompt, token, confirm_review,
+                                                 context=context if record and record.get("context") is not None else None)
+    if not ok:
+        raise HTTPException(422, message)
+    if record.get("context") is not None:
+        return record
+    try:
+        result = await preflight_check_prompt(prompt, context=context)
+    except AiProviderNotConfiguredError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except AiProviderCallError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    checked = record_preflight_result(session_id, prompt, result, context=context)
+    if checked["status"] == "review":
+        raise HTTPException(409, {"message": "Cấu hình thực cần xem xét trước khi gửi", "preflight": checked})
+    if checked["status"] == "block":
+        raise HTTPException(422, {"message": "Nội dung cần chỉnh sửa; chưa gửi video", "preflight": checked})
+    return checked
+
+
+@app.post("/api/admin/prompts/preflight")
+async def admin_prompt_preflight(body: Request, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    refs = []
+    try:
+        if not isinstance(body, PromptPreflightRequest):
+            if "multipart/form-data" in body.headers.get("content-type", ""):
+                form = await body.form()
+                data = PromptPreflightRequest.model_validate_json(str(form.get("analysis") or "{}"))
+                refs = await _admin_reference_images(form)
+            else:
+                data = PromptPreflightRequest.model_validate(await body.json())
+        else:
+            data = body
+        refs = refs or data.reference_images
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(422, "Dữ liệu kiểm tra prompt không hợp lệ") from exc
+    session_id = hashlib.sha256((x_admin_key or "default").encode()).hexdigest()[:24]
+    if not data.prompt.strip():
+        raise HTTPException(422, "Prompt không được để trống")
+    context = None
+    if data.model is not None or data.duration is not None or data.ratio is not None or refs:
+        reference_context, _ = await _reference_context(refs, data.reference_roles)
+        context = _video_context(data.model or "seedance-2.5", data.duration or 30,
+                                 _resolve_ratio(None, data.ratio or "16:9"), reference_context)
+    error = None
+    if data.upstream_task_id:
+        row = store.get(data.upstream_task_id)
+        if not row or row.get("status") != "failed":
+            raise HTTPException(409, "Chỉ phân tích lỗi của tác vụ đã xác nhận thất bại")
+        error = failure_text.sanitize_details(row.get("error") or "")
+    try:
+        kwargs = {"context": context, "upstream_error": error} if context is not None or error else {}
+        result = await preflight_check_prompt(data.prompt, **kwargs)
+        record = record_preflight_result(session_id, data.prompt, result, context=context)
         return {"ok": True, **record}
     except AiProviderNotConfiguredError as exc:
-        raise HTTPException(400, str(exc))
+        raise HTTPException(400, str(exc)) from exc
     except AiProviderCallError as exc:
-        raise HTTPException(502, str(exc))
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
+        raise HTTPException(502, str(exc)) from exc
+
 
 
 async def _admin_reference_images(form):
@@ -3078,8 +3165,25 @@ async def _admin_reference_images(form):
     return refs
 
 
+# ponytail: 32 fixed lock stripes bound memory; use per-request locks if unrelated acceptance contention matters.
+_STUDIO_ACCEPT_LOCKS = [asyncio.Lock() for _ in range(32)]
+
+
+def _acceptance_lock(identity: str):
+    index = int(hashlib.sha256(identity.encode()).hexdigest()[:8], 16) % len(_STUDIO_ACCEPT_LOCKS)
+    return _STUDIO_ACCEPT_LOCKS[index]
+
+
 @app.post("/api/admin/videos/generations", response_model=TaskResponse)
 async def admin_create_video(request: Request, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    form = await request.form()
+    identity = f"single:{x_admin_key}:{form.get('request_id') or ''}"
+    async with _acceptance_lock(identity):
+        return await _accept_create_video(request, x_admin_key)
+
+
+async def _accept_create_video(request: Request, x_admin_key: str | None = None):
     _admin_auth(x_admin_key)
     session_id = hashlib.sha256((x_admin_key or "default").encode("utf-8")).hexdigest()[:24]
 
@@ -3114,16 +3218,6 @@ async def admin_create_video(request: Request, x_admin_key: str | None = Header(
     cr_val = form.get("confirm_review")
     confirm_review = str(cr_val).lower() in ("true", "1", "yes")
 
-    # Xác thực qua cổng Preflight Gate bắt buộc ở Backend
-    ok, err_msg, status = validate_preflight_gate(
-        session_id=session_id,
-        prompt=prompt,
-        token=preflight_token,
-        confirm_review=confirm_review,
-    )
-    if not ok:
-        raise HTTPException(422, err_msg)
-
     refs = await _admin_reference_images(form)
 
     admin_client = {
@@ -3141,7 +3235,28 @@ async def admin_create_video(request: Request, x_admin_key: str | None = Header(
             raise HTTPException(422, "Mã yêu cầu không hợp lệ")
         username = ADMIN_SESSIONS[x_admin_key]["username"]
         task_id = "video_" + hashlib.sha256(f"studio:{username}:{request_id}".encode()).hexdigest()[:32]
-    return await _submit_task(admin_client, model, prompt, ratio, duration, refs, task_id=task_id)
+    resolved = _resolve_model_for_duration(model, duration)
+    if not resolved:
+        raise HTTPException(422, "Model không hỗ trợ thời lượng đã chọn")
+    try:
+        roles = json.loads(str(form.get("reference_roles") or "[]"))
+    except ValueError as exc:
+        raise HTTPException(422, "Vai trò ảnh tham chiếu không hợp lệ") from exc
+    if not isinstance(roles, list) or len(roles) > len(refs) or any(role not in ("character", "scene", "style", "other") for role in roles):
+        raise HTTPException(422, "Vai trò ảnh tham chiếu không hợp lệ")
+    input_fp = context_fingerprint({"prompt": prompt, "model": resolved, "duration": duration,
+                                    "ratio": ratio, "references": refs, "roles": roles})
+    if task_id and (existing := store.get(task_id)):
+        if (existing["prompt"], existing["model"], existing["duration"], existing["ratio"]) != (prompt, resolved, duration, ratio or "default"):
+            raise HTTPException(409, "Mã yêu cầu đã dùng cho bản nháp khác")
+        if existing.get("input_fingerprint") and existing["input_fingerprint"] != input_fp:
+            raise HTTPException(409, "Ảnh hoặc cấu hình đã đổi; cần mã yêu cầu mới")
+        return TaskResponse(**{k: existing.get(k) for k in ("id", "status", "model", "prompt", "video_url", "error")})
+    reference_context, frozen_refs = await _reference_context(refs, roles)
+    context = _video_context(model, duration, ratio, reference_context)
+    await _ensure_video_preflight(session_id, prompt, preflight_token, confirm_review, context)
+    return await _submit_task(admin_client, resolved, prompt, ratio, duration, frozen_refs,
+                              task_id=task_id, input_fingerprint=input_fp)
 
 
 # 面板单文件前端（放最后，保证上面的路由优先）
@@ -3173,6 +3288,18 @@ async def admin_get_batch(batch_id: str, x_admin_key: str | None = Header(defaul
 async def admin_create_batch(request: Request, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     form = await request.form()
+    try:
+        batch_data = json.loads(str(form.get("batch") or "{}"))
+        request_id = batch_data.get("request_id", "") if isinstance(batch_data, dict) else ""
+    except ValueError:
+        request_id = ""
+    async with _acceptance_lock(f"batch:{x_admin_key}:{request_id}"):
+        return await _accept_create_batch(request, x_admin_key)
+
+
+async def _accept_create_batch(request: Request, x_admin_key: str | None = None):
+    _admin_auth(x_admin_key)
+    form = await request.form()
     raw = str(form.get("batch") or "")
     if len(raw) > 1_100_000:
         raise HTTPException(422, "Danh sách prompt quá lớn")
@@ -3199,11 +3326,12 @@ async def admin_create_batch(request: Request, x_admin_key: str | None = Header(
             raise HTTPException(409, "Mã mẻ đã được dùng cho nội dung khác")
         return {"batch_id":batch_id,"tasks":[{"id":r["id"],"status":r["status"]} for r in existing]}
     session_id = hashlib.sha256((x_admin_key or "default").encode()).hexdigest()[:24]
+    reference_context, frozen_refs = await _reference_context(refs, [])
+    context = _video_context(model, batch.duration, batch.ratio, reference_context)
     for i,prompt in enumerate(batch.prompts):
-        ok,error,_ = validate_preflight_gate(session_id=session_id,prompt=prompt.prompt.strip(),
-            token=prompt.preflight_token,confirm_review=prompt.confirm_review)
-        if not ok:
-            raise HTTPException(422, f"Prompt {i+1}: {error}")
+        await _ensure_video_preflight(session_id, prompt.prompt.strip(), prompt.preflight_token,
+                                       prompt.confirm_review, context)
+    refs = frozen_refs
     if not pool.accounts:
         raise HTTPException(503, "Chưa có tài khoản Dola")
     if not pool.available and (pool.all_accounts_limited or pool.all_accounts_quota_blocked):

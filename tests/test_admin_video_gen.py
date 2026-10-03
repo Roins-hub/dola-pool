@@ -14,6 +14,13 @@ import ai_settings
 
 @pytest.fixture
 def test_app(tmp_path, monkeypatch):
+    import ai_provider
+    import httpx
+    client_class=httpx.AsyncClient
+    monkeypatch.setattr(ai_provider,'get_active_provider_config',lambda:{'provider':'openai','api_key':'fixture','model':'fixture','base_url':'https://ai.invalid/v1'})
+    def ai_reply(request):
+        return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps({'status':'allow','reason':'','suggestions':''})}}]})
+    monkeypatch.setattr(ai_provider.httpx,'AsyncClient',lambda *args,**kwargs:client_class(transport=httpx.MockTransport(ai_reply)))
     # Dùng database và thư mục tạm
     encfile = tmp_path / "ai_settings.enc"
     keyfile = tmp_path / "ai_settings.key"

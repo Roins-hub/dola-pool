@@ -10,10 +10,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-import hashlib
 from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 from prompt_rules import RULES_VERSION, rules_for_context
+from ai_preflight import context_fingerprint, validate_issue_anchors
 from typing import Any, Optional
 import httpx
 
@@ -351,5 +351,6 @@ async def preflight_check_prompt(
         if not issue['quote']:
             issue['replacement'] = ''
     result.update(rules_version=RULES_VERSION, sources=rules,
-                  context_fingerprint=hashlib.sha256(json.dumps(context, sort_keys=True, ensure_ascii=False).encode()).hexdigest())
+                  context_fingerprint=context_fingerprint(context))
+    result["issues"] = validate_issue_anchors(text, result["issues"])
     return result

@@ -96,6 +96,7 @@ class TaskStore:
                 ("batch_id", "TEXT"),
                 ("batch_index", "INTEGER"),
                 ("batch_fingerprint", "TEXT"),
+                ("input_fingerprint", "TEXT"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
