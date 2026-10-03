@@ -71,3 +71,13 @@ Chọn **Thư mục TXT + ảnh**: mỗi nhóm chứa đúng một TXT UTF-8; to
 Kho tài khoản được bật/tắt độc lập với trạng thái đăng nhập và hạn mức. Tắt kho chặn nhận video mới, không dừng conversation đã gửi. Nếu tất cả kho/tài khoản bị tắt, video mới giữ trạng thái Chờ tài khoản. Nhập Google/Facebook hàng loạt có kiểm tra từng dòng và loại trùng trước đăng nhập; tiến độ hiển thị từ job đăng nhập thật, không gửi Hello khi chỉ xem danh sách.
 
 Nhật ký nâng cao lấy trạng thái và phản hồi đã lưu, lọc theo tác vụ/tài khoản/mức. Đây không phải toàn bộ stdout của process. Tuyến Relay được ghi riêng, không được diễn giải thành Proxy tài khoản đang hoạt động. Proxy đã gán bị hết node báo lỗi, không tự đổi sang tuyến mặc định.
+
+## Nghiệm thu redesign 03/10/2026
+
+Regression 403 kiểm tra đã qua; browser giữ scheduler, worker, SQLite và FFmpeg thật, gồm lỗi polling, kết quả sau 450 giây bằng clock fixture, process mới, gửi chưa rõ kết quả, folder có ảnh riêng và ZIP. Đây là kiểm tra bằng mock giao thức Dola, chưa phải tạo video Dola live.
+
+Kết nối AI hiện có được đánh giá riêng bằng 8 mẫu Việt/Anh. Mẫu đơn giản được allow, thiếu tham chiếu/nhiều cảnh vượt thời lượng được review; rewrite giữ hành động và cấu trúc hai cảnh trong mẫu. Mẫu tiếng Anh vẫn thêm chi tiết nhỏ, nên cần duyệt đề xuất. Không lấy kiểm tra schema hoặc mock làm bằng chứng AI luôn đúng hay Dola sẽ chấp nhận.
+
+Không thêm thư viện hay framework mới. Các chức năng tạo ảnh/asset, âm thanh, tự mua tài khoản và rotating proxy provider mới cần tích hợp riêng; giao diện không có control giả cho những phần này.
+
+Nếu POST đã được nhận nhưng mất response, Studio tìm biên nhận theo tài khoản đăng nhập/mã yêu cầu trước khi gọi lại AI, kể cả sau reload hoặc token hết hạn. GET `/api/admin/video-receipts/{request_id}?kind=single|batch` chỉ đọc; chưa có biên nhận trả null. Prompt phân tích và gửi một video giữ cùng nguyên văn để neo gợi ý không lệch vì khoảng trắng.

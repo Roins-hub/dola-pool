@@ -58,6 +58,8 @@ async def browser_journey():
   browser=await p.chromium.launch(headless=True)
   context=await browser.new_context(viewport={'width':1440,'height':1000})
   page=await context.new_page()
+  bad_responses=[]
+  context.on('response',lambda r:bad_responses.append({'url':r.url,'status':r.status}) if r.status>=400 and r.status!=401 else None)
   errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
   page.on('console',lambda m:errors.append(m.text) if m.type=='error' and '401' not in m.text else None)
   await page.goto(BASE);await page.locator('#loginUser').fill('admin');await page.locator('#loginPassword').fill('admin123');await page.locator('#loginPassword').press('Enter')
@@ -114,6 +116,14 @@ async def browser_journey():
   await page.get_by_role('button',name='Áp dụng prompt này',exact=True).click()
   await page.get_by_role('button',name='Hoàn tác',exact=True).click()
   assert await page.locator('#gen_prompt').input_value()=='DELETE_REPEAT 🐈 Mèo chạy. Mèo chạy.'
+  # Boundary whitespace must not shift a repeated quote to the first occurrence.
+  raw=' mèo chạy; mèo chạy WHITESPACE_ANCHOR '
+  await page.locator('#gen_prompt').fill(raw)
+  await page.locator('#btn_preflight').click();await page.wait_for_selector('#gen_analysis input[data-issue-id="space"]')
+  await page.locator('#gen_analysis input[data-issue-id="space"]').check()
+  await page.get_by_role('button',name='Tạo bản đề xuất từ lựa chọn',exact=True).click()
+  assert await page.locator('#gen_rewrite_draft').input_value()==' mèo chạy; mèo bước WHITESPACE_ANCHOR '
+  assert await page.locator('#gen_prompt').input_value()==raw
   # Review requires user confirmation.
   await page.locator('#gen_prompt').fill('REVIEW_ME hành động giả tưởng')
   await page.locator('#btn_submit_gen').click();await page.wait_for_selector('#gen_confirm_review')
@@ -170,10 +180,10 @@ async def browser_journey():
   await page.get_by_label('Vai trò ảnh reference.png').select_option('character')
   assert await page.locator('#gen_preflight_alert').inner_text()==''
   # Old job response cannot stop a newer job polling timer.
-  await page.evaluate('''()=>{const script=document.createElement('script');script.textContent=`(async ()=>{const real=api;let release;api=()=>new Promise(r=>release=r);
+  await page.evaluate('''()=>{const script=document.createElement('script');script.textContent=`(async ()=>{const real=api,previousTask=currentActiveTaskId,previousTimer=studioPollTimer;let release;api=()=>new Promise(r=>release=r);
     currentActiveTaskId='old';const pending=pollStudioJob('old');currentActiveTaskId='new';studioPollTimer=setInterval(()=>{},10000);
     const timer=studioPollTimer;release({id:'old',status:'completed'});await pending;const ok=studioPollTimer===timer;
-    clearInterval(studioPollTimer);studioPollTimer=null;api=real;document.body.dataset.pollRace=String(ok);})();`;document.head.appendChild(script);}''')
+    clearInterval(studioPollTimer);studioPollTimer=previousTimer;currentActiveTaskId=previousTask;api=real;document.body.dataset.pollRace=String(ok);})();`;document.head.appendChild(script);}''')
   await page.wait_for_function("document.body.dataset.pollRace==='true'")
   # A confirmed HTTP rejection is distinct from an unknown network send.
   await page.route('**/api/admin/videos/generations',lambda route: asyncio.create_task(route.fulfill(status=422,content_type='application/json',body=json.dumps({'detail':'Token kiểm tra đã hết hạn'}))))
@@ -184,6 +194,26 @@ async def browser_journey():
   assert errors.count('Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)')==1
   errors.remove('Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)')
   await page.unroute('**/api/admin/videos/generations')
+  # The server accepts the POST but its JSON response is lost. Reload drops tokens;
+  # receipt recovery must work even when AI is unavailable, with no extra submission.
+  async def lose_accepted_response(route):
+   response=await route.fetch();assert response.ok
+   await route.fulfill(status=200,content_type='application/json',body='{')
+  async def unavailable_ai(route):
+   raise AssertionError('Receipt recovery called AI')
+  await page.route('**/api/admin/videos/generations',lose_accepted_response)
+  await page.locator('#gen_prompt').fill('Single lost receipt')
+  received_before=len(events('submit'));ai_before=len(events('ai'))
+  await page.locator('#btn_submit_gen').click()
+  await page.wait_for_function("document.querySelector('#gen_action_msg').textContent.startsWith('Chưa xác định trạng thái gửi:')")
+  await page.unroute('**/api/admin/videos/generations')
+  await page.reload();await page.wait_for_selector('#tab-generate',state='visible')
+  await page.route('**/api/admin/prompts/preflight',unavailable_ai)
+  retry_ai=len(events('ai'))
+  await page.locator('#btn_submit_gen').click()
+  await page.wait_for_function("document.querySelector('#gen_action_msg').textContent.includes('Đã tìm lại video')")
+  assert len(events('submit'))==received_before+1 and len(events('ai'))==retry_ai
+  await page.unroute('**/api/admin/prompts/preflight')
   # TXT import, blocked batch, review gate and four separate persisted jobs.
   await page.locator('#gen_mode').select_option('list')
   await page.locator('#gen_batch_prompts').fill('cat\nBLOCK_ME')
@@ -211,6 +241,22 @@ async def browser_journey():
   assert 'Một con thuyền' in await page.locator('#gen_batch_prompts').input_value()
   await page.get_by_role('button',name='▤ Video của tôi',exact=True).click();await page.wait_for_selector('.video-job')
   assert await page.locator('#myVideoJobs .video-job').count()==4
+  await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
+  await page.locator('#gen_batch_prompts').fill('Lost batch cat\nLost batch boat')
+  await page.locator('#gen_copies').fill('1')
+  await page.route('**/api/admin/videos/batches',lose_accepted_response)
+  received_before=len(events('submit'))
+  await page.locator('#btn_submit_gen').click()
+  await page.wait_for_function("document.querySelector('#gen_action_msg').textContent.startsWith('Chưa xác định trạng thái mẻ:')")
+  await page.unroute('**/api/admin/videos/batches')
+  await page.reload();await page.wait_for_selector('#tab-generate',state='visible')
+  await page.route('**/api/admin/prompts/preflight',unavailable_ai)
+  retry_ai=len(events('ai'))
+  await page.locator('#btn_submit_gen').click()
+  await page.wait_for_selector('#tab-videos',state='visible')
+  await page.wait_for_function("document.querySelectorAll('#myVideoJobs .video-job').length===2")
+  assert len(events('submit'))==received_before+2 and len(events('ai'))==retry_ai
+  await page.unroute('**/api/admin/prompts/preflight')
   await page.locator('#myBatchClear').click()
   await page.get_by_role('button',name='▤ Video của tôi',exact=True).click();await page.wait_for_selector('.video-job')
   await page.locator('#tab-videos').get_by_role('button',name='Bảng',exact=True).click()
@@ -285,7 +331,8 @@ async def browser_journey():
   await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'studio-mobile.png'),full_page=True)
   assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'Mobile horizontal overflow'
   assert await page.locator('main').evaluate('(el)=>el.getBoundingClientRect().width>350'), 'Mobile content too narrow'
-  assert not errors, errors
+  (OUT/'browser-errors.json').write_text(json.dumps({'console':errors,'responses':bad_responses},indent=2))
+  assert not errors, (errors,bad_responses)
   await browser.close()
 async def delayed_rewrite(route):
  await asyncio.sleep(.4);await route.fulfill(status=200,content_type='application/json',body=json.dumps({'rewritten_prompt':'Bản cũ không được áp dụng'}))
@@ -355,7 +402,7 @@ try:
  assert len(events('submit'))==count_before_restart+2
  asyncio.run(browser_journey())
  (OUT/'result.json').write_text(json.dumps({'passed':True,'process_pids':[pid1,pid2],
-  'restart_submission_count':1,'continuation_submission_count':2,'manual_check_no_resubmit':True,'idempotent_request_retry':True,'reference_image_reload':True,'rewrite_iterations':2,'stale_rewrite_discarded':True,'upstream_progress_browser':True,'txt_batch_four_jobs':True,'batch_process_restart_no_duplicate':True,
+  'lost_post_receipt_before_ai_single_batch':True,'boundary_whitespace_anchor':True,'restart_submission_count':1,'continuation_submission_count':2,'manual_check_no_resubmit':True,'idempotent_request_retry':True,'reference_image_reload':True,'rewrite_iterations':2,'stale_rewrite_discarded':True,'upstream_progress_browser':True,'txt_batch_four_jobs':True,'batch_process_restart_no_duplicate':True,
   'after_300s_single_conversation':True,'polling_error_recovered_same_conversation':True,'ambiguous_send_restart_no_resubmit':True,
   'folder_two_groups_own_images_restart':True,'folder_zip_playable':True,'export_copy_preserves_original':True,'inventory_disable_keeps_active_job':True,'confirmed_http_rejection_keeps_draft':True,
   'rich_ai_selective_edit':True,'context_stale_discarded':True,'vietnamese_progress':True,'queue_table_preview':True,

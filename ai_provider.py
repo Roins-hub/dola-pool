@@ -309,8 +309,8 @@ async def preflight_check_prompt(
     *, context: Optional[dict[str, Any]] = None, upstream_error: Optional[str] = None,
 ) -> dict[str, Any]:
     """Kiểm tra prompt trước khi gửi (allow, review, block)."""
-    text = (prompt or "").strip()
-    if not text:
+    text = prompt or ""
+    if not text.strip():
         raise ValueError("Prompt kiểm tra không được để trống")
 
     context = context or {}

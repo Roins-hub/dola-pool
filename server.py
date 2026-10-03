@@ -127,7 +127,7 @@ async def localized_request_error(request, exc):
     if re.search(r'[\u3400-\u9fff]', text):
         message = display['message_vi'] if display['category'] != 'unknown' else 'Không thực hiện được yêu cầu; hãy xem chi tiết để kiểm tra dữ liệu hoặc kết nối.'
     else:
-        message = text
+        message = failure_text.sanitize_details(text)
     return JSONResponse(status_code=exc.status_code, headers=exc.headers,
         content={'detail': failure_text.sanitize_details(raw) if isinstance(raw, str) else raw,
                  'message_vi': message, 'failure_display': {**display, 'message_vi': message}})
@@ -3364,6 +3364,24 @@ def _acceptance_lock(identity: str):
     return _STUDIO_ACCEPT_LOCKS[index]
 
 
+@app.get("/api/admin/video-receipts/{request_id}")
+async def admin_video_receipt(request_id: str, kind: str = "single",
+                              x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id) or kind not in ("single", "batch"):
+        raise HTTPException(422, "Mã hoặc loại yêu cầu không hợp lệ")
+    username = ADMIN_SESSIONS[x_admin_key]["username"]
+    digest = hashlib.sha256(f"studio:{username}:{request_id}".encode()).hexdigest()[:32]
+    if kind == "batch":
+        batch_id = "batch_" + digest
+        if store.batch_fingerprint(batch_id) is None:
+            return None
+        return {"batch_id": batch_id, "tasks": [{"id": r["id"], "status": r["status"]}
+                for r in store.batch_tasks(batch_id)]}
+    row = store.get("video_" + digest)
+    return {"id": row["id"], "status": row["status"]} if row else None
+
+
 @app.post("/api/admin/videos/generations", response_model=TaskResponse)
 async def admin_create_video(request: Request, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
@@ -3379,8 +3397,8 @@ async def _accept_create_video(request: Request, x_admin_key: str | None = None)
 
     form = await request.form()
     p_val = form.get("prompt")
-    prompt = str(p_val).strip() if p_val and isinstance(p_val, str) else ""
-    if not prompt:
+    prompt = str(p_val) if isinstance(p_val, str) else ""
+    if not prompt.strip():
         raise HTTPException(422, "Prompt không được để trống")
     if len(prompt) > config.MAX_PROMPT_CHARS:
         raise HTTPException(

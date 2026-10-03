@@ -2151,7 +2151,7 @@ function applyRewrittenPrompt(){
 function dismissRewrite(){rewriteVersion++;hide('gen_rewrite_box');q('#gen_rewrite_draft').value='';saveStudioDraft();studioMessage('Đã bỏ đề xuất; prompt đang dùng được giữ nguyên.');}
 async function doPreflightCheck(){
   if(isBatchGeneration())return checkBatchPrompts();
-  const original=q('#gen_prompt').value.trim();if(!original){studioMessage('Nhập ý tưởng trước khi tạo video.');return null;}
+  const original=q('#gen_prompt').value;if(!original.trim()){studioMessage('Nhập ý tưởng trước khi tạo video.');return null;}
   await referenceHashPromise;const version=++preflightVersion,pv=promptVersion,snapshot=analysisSnapshot();
   q('#btn_preflight').disabled=true;studioMessage('Đang kiểm tra nội dung…');
   try{const res=await requestPreflight(original);
@@ -2270,10 +2270,17 @@ async function checkBatchPrompts(){
   return !blocked&&entries.every(e=>['allow','review'].includes(e.status));
   }catch(e){if(snapshot===generationSnapshot()){batchPreflight=null;q('#gen_batch_check').textContent='Kiểm tra nội dung lỗi; mẻ chưa được gửi: '+e.message;}return false;}
 }
+async function recoverPendingReceipt(kind,snapshot){
+  if(!pendingRequestId||pendingSnapshot!==snapshot)return null;
+  return api('/api/admin/video-receipts/'+encodeURIComponent(pendingRequestId)+'?kind='+kind);
+}
 async function submitVideoBatch(){
   const btn=q('#btn_submit_gen');if(btn.disabled)return;btn.disabled=true;
   await referenceHashPromise;const snapshot=generationSnapshot();
   try{
+    const receipt=await recoverPendingReceipt('batch',snapshot);
+    if(receipt){currentBatchId=receipt.batch_id;pendingRequestId='';pendingSnapshot='';saveStudioDraft();if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');switchTab('videos');studioMessage('Đã tìm lại mẻ đã nhận; không gửi thêm video.');return;}
+    if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã đổi; hãy kiểm tra lại.');
     if(!batchPreflight||batchPreflight.snapshot!==snapshot||batchPreflight.entries.some(e=>e.expires_at*1000<Date.now()))if(!await checkBatchPrompts())return;
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại mẻ.');
     if(!batchPreflight||batchPreflight.entries.some(e=>!['allow','review'].includes(e.status)))return;
@@ -2294,14 +2301,17 @@ async function submitVideoBatch(){
   }
   finally{btn.disabled=false;btn.textContent='Tạo video';}
 }
-function generationSnapshot(){return JSON.stringify({prompt:q('#gen_prompt').value.trim(),model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,images:selectedImages.map((f,i)=>[f.name,f.size,f.lastModified,selectedImageDigests[i]||'',referenceRoles[i]||'other']),mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,folderGroups});}
+function generationSnapshot(){return JSON.stringify({prompt:q('#gen_prompt').value,model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,images:selectedImages.map((f,i)=>[f.name,f.size,f.lastModified,selectedImageDigests[i]||'',referenceRoles[i]||'other']),mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,folderGroups});}
 async function doSubmitGenerate(){
   if(isBatchGeneration())return submitVideoBatch();
   const btn=q('#btn_submit_gen');if(btn.disabled)return;
-  const prompt=q('#gen_prompt').value.trim();if(!prompt)return studioMessage('Nhập ý tưởng trước khi tạo video.');
+  const prompt=q('#gen_prompt').value;if(!prompt.trim())return studioMessage('Nhập ý tưởng trước khi tạo video.');
   btn.disabled=true;await referenceHashPromise;const snapshot=generationSnapshot();
-  if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
   try{
+    const receipt=await recoverPendingReceipt('single',snapshot);
+    if(receipt){pendingRequestId='';pendingSnapshot='';currentBatchId='';trackStudioJob(receipt.id);studioMessage('Đã tìm lại video đã nhận; không gửi thêm yêu cầu.');return;}
+    if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã đổi; hãy kiểm tra lại.');
+    if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
     if(!currentPreflight||currentPreflight.prompt!==prompt||currentPreflight.snapshot!==snapshot||currentPreflight.expires_at*1000<Date.now())await doPreflightCheck();
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại trước khi gửi.');
     if(!currentPreflight)return;

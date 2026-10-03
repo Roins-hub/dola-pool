@@ -81,6 +81,9 @@ async def ai_transport(request):
   result='Một chú mèo trên cửa sổ, máy quay tiến nhẹ, giữ ánh sáng ban đầu.'
  elif 'BLOCK_ME' in user:result=json.dumps({'status':'block','reason':'Nội dung cần chỉnh sửa','suggestions':'Thử mô tả khác'})
  elif 'REVIEW_ME' in user:result=json.dumps({'status':'review','reason':'Cần xác nhận cảnh hành động','suggestions':''})
+ elif 'WHITESPACE_ANCHOR' in user:
+  original=json.loads(user)['prompt_data']
+  result=json.dumps({'status':'allow','quality_summary':'Sửa câu thứ hai.', 'issues':[{'id':'space','kind':'quality','severity':'suggestion','quote':' mèo chạy','occurrence':2 if original.startswith(' ') else 1,'replacement':' mèo bước','reason_vi':'Đổi chuyển động thứ hai.','confidence':'high','source_ids':['visual-action']}]})
  elif 'DELETE_REPEAT' in user:result=json.dumps({'status':'allow','reason':'','suggestions':'', 'quality_summary':'Bỏ câu lặp.', 'issues':[{'id':'delete','kind':'quality','severity':'suggestion','quote':'Mèo chạy.','occurrence':2,'replacement':'','reason_vi':'Câu lặp nguyên văn.','confidence':'high','source_ids':['visual-action']}]})
  elif 'ANALYZE_ME' in user:result=json.dumps({'status':'allow','reason':'','suggestions':'',
   'quality_summary':'Giữ cảnh mèo; làm rõ góc máy và ánh sáng.', 'issues':[
