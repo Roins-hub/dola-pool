@@ -651,6 +651,10 @@ class TaskStore:
                 ).fetchall()
         return [dict(r) for r in rows]
 
+    def active_tasks(self):
+        with _LOCK:
+            return [dict(row) for row in self._conn.execute("SELECT * FROM tasks WHERE status IN ('queued','processing') ORDER BY created_at")]
+
     def video_stats(self) -> dict:
         """视频管理统计：全部已完成记录数、仍保留视频文件的记录数。"""
         with _LOCK:

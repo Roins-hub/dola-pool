@@ -40,7 +40,7 @@ LABEL_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 # 这些片段是提示词回显/回执噪音，不该占满报错
-_ECHO_PREFIXES = ("生成视频：", "生成视频:", "本次使用", "我将按", "我可以按")
+_ECHO_PREFIXES = ("生成视频：", "生成视频:", 'Tạo video:', 'Generate a video:', "本次使用", "我将按", "我可以按")
 _ECHO_MARKERS = ("动态分镜脚本", "分镜脚本：", "角色参考：", "场景参考：")
 _MAX_FRAGMENT_CHARS = 300
 
@@ -196,6 +196,10 @@ _CATEGORY_LABELS = {
     'content_refusal': 'content',
 }
 _MESSAGES = {
+    'quota': ('Dola báo tài khoản không đủ hạn mức để tạo video này.',
+              'Chọn tài khoản còn đủ hạn mức hoặc giảm cấu hình rồi xác nhận tạo yêu cầu mới.'),
+    'generation': ('Dola báo tạo video thất bại.',
+                   'Giữ job gốc để xem phản hồi; chỉ tạo lại khi bạn xác nhận.'),
     'portrait': ('Dola yêu cầu kiểm tra quyền sử dụng hình ảnh người trong ảnh tham chiếu.',
                  'Chọn ảnh có quyền sử dụng phù hợp hoặc chuyển sang mô tả bằng văn bản.'),
     'copyright': ('Bản quyền hoặc quyền sử dụng hình ảnh cần được xem xét theo phản hồi Dola.',
@@ -217,6 +221,13 @@ _MESSAGES = {
 _CJK = re.compile(r'[\u3400-\u9fff]')
 
 
+def _quota_facts(text):
+    text = str(text or '').replace('*', '')
+    used = re.search(r'消耗\s*(\d+)\s*个视频生成额度', text)
+    left = re.search(r'剩余\s*(\d+)\s*个视频生成额度', text)
+    return used.group(1) if used else '', left.group(1) if left else ''
+
+
 def sanitize_details(text: str) -> str:
     """Bounded diagnostic text; credentials are removed before API serialization."""
     text = str(text or '')
@@ -230,7 +241,13 @@ def sanitize_details(text: str) -> str:
 
 def present(text: str, *, code: str = '', category: str = '') -> dict:
     raw = str(text or '')
+    used, left = _quota_facts(raw)
     category = _CATEGORY_LABELS.get(category, category)
+    if category in ('', 'unknown', 'rate_limit'):
+        if re.search(r'额度不足|积分不足|insufficient credits', raw, re.I) or (used and left and '无法生成' in raw):
+            category = 'quota'
+        elif re.search(r'生成额度未扣除|额度未扣除|credits? (?:were|was) not deducted', raw, re.I):
+            category = 'generation'
     if category not in _MESSAGES:
         category = _CATEGORY_LABELS.get(label_for(raw), '')
     if not category and (str(code) == '710022002' or '710022002' in raw):
@@ -241,6 +258,10 @@ def present(text: str, *, code: str = '', category: str = '') -> dict:
         category = 'connection'
     category = category or 'unknown'
     message, action = _MESSAGES[category]
+    if category == 'quota' and used and left:
+        message = f'Dola báo yêu cầu này cần {used} lượt tạo nhưng tài khoản chỉ còn {left} lượt.'
+    if category == 'generation' and re.search(r'未扣除|not deducted', raw, re.I):
+        message += ' Dola báo chưa trừ lượt tạo.'
     safe_code = str(code or '')
     if not safe_code:
         match = re.search(r'(?<!\d)710022002(?!\d)', raw)
@@ -262,7 +283,7 @@ def present_note(text: str) -> dict:
 
 
 def present_update(update: dict) -> dict:
-    texts = update.get('texts') or []
+    texts = [text for text in (update.get('texts') or []) if not str(text).strip().startswith(('生成视频', 'Tạo video:', 'Generate a video:'))]
     failures = update.get('failure_reasons') or []
     raw = '\n'.join(str(x) for x in [*texts, *failures])
     result = present(raw) if failures or label_for(raw) else {
@@ -275,6 +296,12 @@ def present_update(update: dict) -> dict:
     }
     if update.get('connection') == 'interrupted':
         result['message_vi'] = 'Kết nối với Dola gián đoạn; đang giữ cập nhật nhận trước đó.'
+    used, left = _quota_facts(raw)
+    if result['category'] == 'progress' and update.get('status') == 'pending':
+        if used:
+            result['message_vi'] += f' Dola dự kiến dùng {used} lượt tạo.'
+        if left:
+            result['message_vi'] += f' Theo phản hồi này, tài khoản còn {left} lượt.'
     wait = str(update.get('wait_minutes') or '')
     wait = wait.replace('小时',' giờ').replace('分钟',' phút').replace('秒',' giây').strip()
     result.update(at=update.get('at'), status=update.get('status'),

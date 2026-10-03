@@ -544,6 +544,8 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
     <div class="studio-results">
     <div class="card" id="studio_queue_card"><h3>Hàng đợi video</h3>
       <p id="studioHealth" class="studio-health" role="status">Đang lấy trạng thái backend…</p>
+      <p class="tiny">Đổi prompt, model, thời lượng hoặc tỉ lệ chỉ áp dụng cho video tạo tiếp theo. Các video đã gửi tiếp tục chạy với cấu hình riêng.</p>
+      <div id="studioRunningJobs" aria-label="Tất cả video đang chạy"></div>
       <div class="queue-toolbar"><button class="btn" onclick="setQueueView('table')">Bảng</button><button class="btn" onclick="setQueueView('grid')">Lưới</button>
       <label for="studioQueueFilter">Trạng thái</label><select id="studioQueueFilter" onchange="renderStudioQueue()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option><option value="cancelled">Đã bỏ trước khi gửi</option></select></div>
       <div id="studioQueueRows" class="queue-table"></div>
@@ -2425,7 +2427,7 @@ async function continueVideo(id){
 }
 async function analyzeFailedTask(id){await useTaskPrompt(id);analysisTaskId=id;renderDraftSource();saveStudioDraft();await doPreflightCheck();}
 async function useTaskPrompt(id){analysisTaskId='';const t=await api('/api/admin/tasks/'+encodeURIComponent(id));q('#gen_mode').value='single';q('#gen_copies').value='1';batchInputsChanged();rewriteHistory.push(q('#gen_prompt').value);q('#gen_prompt').value=t.prompt||'';if(t.model)q('#gen_model').value=t.model;onModelChange();if(t.duration)q('#gen_duration').value=t.duration;if(t.ratio&&t.ratio!=='default')q('#gen_ratio').value=t.ratio;onPromptInput();switchTab('generate');}
-let queueView='table',studioQueueTasks=[],studioQueueVersion=0,myVideoView='grid',mySelectedId='';
+let queueView='table',studioQueueTasks=[],studioQueueVersion=0,myVideoView='grid',mySelectedId='',studioQueueRunning=[];
 let selectedVideoIds=new Set(),myVisibleTasks=[],currentBatchPaused=false;
 function videoSelectionMarkup(t){return `<label class="tiny"><input type="checkbox" data-video-select="${esc(t.id)}" ${selectedVideoIds.has(t.id)?'checked':''} onchange="toggleVideoSelection('${esc(t.id)}',this.checked)"> Chọn video ${esc(t.id.slice(-8))}</label>`;}
 function toggleVideoSelection(id,value){if(value&&selectedVideoIds.size>=50&&!selectedVideoIds.has(id)){q('#queueActionMessage').textContent='Mỗi lượt chọn tối đa 50 video.';}else{value?selectedVideoIds.add(id):selectedVideoIds.delete(id);q('#queueActionMessage').textContent='Đã chọn '+selectedVideoIds.size+' video.';}document.querySelectorAll('[data-video-select]').forEach(el=>el.checked=selectedVideoIds.has(el.dataset.videoSelect));}
@@ -2441,11 +2443,11 @@ function queueMarkup(tasks,target,mode='table'){
   if(mode==='grid')return '<div class="queue-grid">'+tasks.map(t=>`<article><strong>${esc(taskLabel(t))}</strong><p>${esc((t.prompt||'').slice(0,120))}</p><p class="tiny">${esc(t.model)} · ${esc(t.video_duration||t.duration)} giây</p>${button(t)}</article>`).join('')+'</div>';
   return '<table><thead><tr><th>Trạng thái</th><th>Prompt</th><th>Model / thời lượng</th><th>Tài khoản</th><th>Tuyến</th><th></th></tr></thead><tbody>'+tasks.map(t=>`<tr><td>${esc(taskLabel(t))}</td><td title="${esc(t.prompt)}">${esc((t.prompt||'').slice(0,80))}</td><td>${esc(t.model)} · ${esc(t.video_duration||t.duration)} giây</td><td>${esc(t.account||'Chưa chọn')}</td><td>${esc(t.transport_mode||'Xem Cài đặt')}</td><td>${button(t)}</td></tr>`).join('')+'</tbody></table>';
 }
-function renderStudioQueue(){q('#studioQueueRows').innerHTML=queueMarkup(filteredTasks(studioQueueTasks,q('#studioQueueFilter').value),'studio',queueView);}
+function renderStudioQueue(){q('#studioQueueRows').innerHTML=queueMarkup(filteredTasks(studioQueueTasks,q('#studioQueueFilter').value),'studio',queueView);q('#studioRunningJobs').innerHTML=studioQueueRunning.map(t=>`<article class="analysis-issue" data-running-job="${esc(t.id)}"><strong>${esc(taskLabel(t))} · Video ${esc(t.id.slice(-8))}</strong><p class="tiny">${esc(t.model)} · ${esc(t.duration)} giây · ${esc(t.ratio)} — cấu hình của video này</p>${t.phase==='paused'?'':`<progress max="100" aria-label="${esc(taskLabel(t))}" style="width:100%"></progress>`}<p>${esc(t.upstream_display?.at(-1)?.message_vi||'Chưa có phản hồi mới từ Dola.')}</p><button class="btn" onclick="trackStudioJob('${esc(t.id)}')">Xem tiến độ video này</button></article>`).join('');}
 function setQueueView(mode){queueView=mode;renderStudioQueue();}
 async function loadStudioQueue(){
   const version=++studioQueueVersion;
-  try{const r=await api('/api/admin/tasks?limit=100');if(version!==studioQueueVersion||curTab!=='generate')return;studioQueueTasks=r.tasks||[];renderStudioQueue();q('#studioHealth').textContent='Backend đã kết nối · '+studioQueueTasks.filter(t=>['queued','processing'].includes(t.status)).length+' video đang chờ/tạo. Kết nối Dola được hiển thị riêng trong từng video.';}
+  try{const r=await api('/api/admin/tasks?limit=100');if(version!==studioQueueVersion||curTab!=='generate')return;studioQueueTasks=r.tasks||[];studioQueueRunning=r.running_tasks||studioQueueTasks.filter(t=>['queued','processing'].includes(t.status));renderStudioQueue();q('#studioHealth').textContent='Backend đã kết nối · '+studioQueueRunning.length+' video đang chờ/tạo. Các video tiếp tục chạy khi bạn sửa bản nháp hoặc tạo video khác.';}
   catch(e){if(version===studioQueueVersion)q('#studioHealth').textContent='Mất kết nối backend; thông tin hàng đợi đang là bản đã nhận trước đó.';}
 }
 function setMyVideoView(mode){myVideoView=mode;q('#myVideoJobs').style.display=mode==='grid'?'grid':'none';q('#myVideoTable').style.display=mode==='table'?'block':'none';loadMyVideos();}

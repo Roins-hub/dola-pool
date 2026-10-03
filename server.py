@@ -2973,7 +2973,8 @@ def _task_display(row: dict) -> dict:
 @app.get("/api/admin/tasks")
 async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"tasks": [{**row, **_task_display(row), "target_duration": _target_duration(row), "file_exists": _task_file_exists(row)} for row in store.recent_tasks(min(max(limit, 1), 200))]}
+    return {"tasks": [{**row, **_task_display(row), "target_duration": _target_duration(row), "file_exists": _task_file_exists(row)} for row in store.recent_tasks(min(max(limit, 1), 200))],
+            "running_tasks": [{**row, **_task_display(row), "target_duration": _target_duration(row)} for row in store.active_tasks()]}
 
 
 @app.get("/api/admin/tasks/{task_id}")

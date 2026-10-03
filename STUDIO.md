@@ -95,3 +95,9 @@ Bản nháp sửa lỗi và lịch sử được lưu trong trình duyệt; sau 
 Job lỗi mới giữ ảnh gốc để tạo lại, theo thời hạn lưu task hiện có. Mỗi video tạo lại sở hữu bản sao ảnh riêng và giữ vai trò ảnh. Nếu ảnh gốc của job cũ đã bị xóa, Studio báo cần bổ sung ảnh; không thay bằng thumbnail.
 
 Kiểm tra nút tạo trực tiếp riêng: `.venv/bin/python tests/run_direct_submit_journey.py /tmp/dola-direct-evidence`.
+
+## Ngôn ngữ và các video đang chạy
+
+Tool giữ nguyên nội dung prompt Việt/Anh, dùng chỉ dẫn tạo video và tham chiếu ảnh bằng tiếng Việt, yêu cầu Dola trả thông báo bằng tiếng Việt. Dola vẫn có thể trả nguyên văn tiếng Trung: thông báo chính diễn giải hạn mức cần/còn lại, lỗi không trừ lượt và thời gian dự kiến khi upstream cung cấp; nguyên văn đã che thông tin nhạy cảm nằm trong chi tiết kỹ thuật. Không dùng AI để dịch mỗi lượt polling.
+
+Đổi model, thời lượng, tỉ lệ hoặc prompt chỉ thay bản nháp tiếp theo. Cấu hình của mỗi video được lưu khi gửi; tạo video mới hoặc xem tiến độ video khác không hủy video đang chạy. Khu vực tạo video hiển thị tất cả job đang chạy với cấu hình riêng, kể cả khi đã có nhiều video mới hơn trong lịch sử. Thanh tiến độ chờ và thông báo lấy từ job đã lưu; không suy ra phần trăm từ thời gian.

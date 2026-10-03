@@ -1732,15 +1732,18 @@ def build_text_block(text: str) -> dict[str, Any]:
 def build_prompt_text(prompt: str, ratio: str | None) -> str:
     prompt = prompt or ""
     ratio_value = normalize_ratio(ratio)
-    if ratio_value and ratio_value not in prompt and "画面比例" not in prompt:
-        return f"生成视频：{prompt}，{ratio_value}"
-    return f"生成视频：{prompt}" if not prompt.startswith("生成视频") else prompt
+    text = prompt if prompt.startswith('Tạo video:') else f'Tạo video: {prompt}'
+    if ratio_value and ratio_value not in prompt:
+        text += f'\nTỉ lệ khung hình: {ratio_value}.'
+    if 'Vui lòng trả lời thông báo bằng tiếng Việt.' not in text:
+        text += '\nVui lòng trả lời thông báo bằng tiếng Việt.'
+    return text
 
 
 def is_prompt_echo_text(text: Any) -> bool:
     """build_prompt_text 统一给提交消息加"生成视频"前缀，Dola 会把它原样回显成一条会话文本。
     回显内容就是用户提示词本身，不参与成功/失败判定，避免提示词措辞误触发额度/拆段/失败短语。"""
-    return str(text or "").strip().startswith("生成视频")
+    return str(text or "").strip().startswith(('生成视频', 'Tạo video:', 'Generate a video:'))
 
 
 def enrich_multi_image_prompt(prompt: str, image_count: int) -> str:
@@ -1748,9 +1751,9 @@ def enrich_multi_image_prompt(prompt: str, image_count: int) -> str:
     text = prompt or ""
     if image_count <= 1:
         return text
-    if any(token in text for token in ("多图", "多张图", "参考图", "图片1", "图1", "第一张")):
+    if any(token in text.casefold() for token in ("多图", "多张图", "参考图", "图片1", "图1", "第一张", 'ảnh tham chiếu', 'tham chiếu các ảnh', 'reference images')):
         return text
-    return f"参考上传的{image_count}张图片，保持主体与画面元素一致；{text}"
+    return f'Tham chiếu các ảnh đã tải lên ({image_count} ảnh), giữ nhất quán chủ thể và các yếu tố trong cảnh.\n{text}'
 
 
 def build_audio_reference_prompt(
