@@ -59,3 +59,15 @@ Hai script E2E cũ là entrypoint tương thích cho journey này. Script dịch
 Workspace có prompt/AI bên trái, ảnh tham chiếu bên phải và hàng đợi bảng/lưới cạnh preview. Vai trò ảnh là thông tin người dùng chọn; phân tích hiện đọc văn bản và metadata, không tuyên bố đã xem pixel. AI chỉ rõ đoạn gốc, lý do và thay thế; chọn từng gợi ý để dựng bản đề xuất, xem trước rồi áp dụng, có hoàn tác. Đoạn trích sai, trùng chưa rõ vị trí hoặc chồng lấn không tự thay.
 
 Kiểm tra prompt mới gắn model, thời lượng, tỉ lệ và SHA-256 byte ảnh. Đổi đầu vào làm mất hiệu lực kết quả cũ. Request preflight JSON chỉ có prompt vẫn được nhận; khi tạo video, token chỉ kiểm tra văn bản cần phân tích bổ sung cấu hình thực. Biên nhận request đã có được trả trước gate hết hạn và không gọi lại AI. Cập nhật Dola hiển thị tiếng Việt; nguyên văn đã che secrets ở Chi tiết kỹ thuật.
+
+## Thư mục prompt và xuất kết quả
+
+Chọn **Thư mục TXT + ảnh**: mỗi nhóm chứa đúng một TXT UTF-8; toàn bộ nội dung nhiều dòng là một prompt. Mỗi nhóm dùng ảnh của chính thư mục đó, có thể chọn vai trò cho từng ảnh và sửa prompt trong bản xem trước. Duyệt trước khi tạo. File không hỗ trợ, nhiều TXT hoặc thiếu TXT được báo lỗi và giữ bản nháp trước. Tối đa 50 video mỗi mẻ và 1–10 bản mỗi prompt; giới hạn ảnh toàn mẻ dùng cấu hình backend hiện có. Bản nháp nhóm và ảnh được giữ trong trình duyệt. Mobile không có directory picker thì dùng danh sách TXT và chọn ảnh chung.
+
+Ở **Video của tôi**, **Tải ZIP kết quả** tải các file đã hoàn tất của mẻ. `ket-qua.json` ghi các video đã đóng gói và file bị thiếu/chưa hoàn tất. ZIP được ghi ra file tạm trên server, xóa sau khi trả response; file symlink ra ngoài kho media bị bỏ qua. Trình duyệt nhận ZIP để tải, nên mẻ rất lớn có thể cần chia nhỏ để tránh dùng nhiều bộ nhớ trình duyệt.
+
+**Cài đặt → Nâng cao: proxy → Thư mục xuất video** cho chọn thư mục đã tồn tại và có quyền ghi trên máy chạy Studio. Video hoàn tất sau đó được sao chép, giữ nguyên media gốc và dữ liệu tác vụ. Lỗi sao chép không làm mất kết quả; tải bản gốc vẫn hoạt động. **Mở thư mục** chỉ dùng với truy cập localhost trực tiếp đã đăng nhập; truy cập từ xa dùng ZIP.
+
+Kho tài khoản được bật/tắt độc lập với trạng thái đăng nhập và hạn mức. Tắt kho chặn nhận video mới, không dừng conversation đã gửi. Nếu tất cả kho/tài khoản bị tắt, video mới giữ trạng thái Chờ tài khoản. Nhập Google/Facebook hàng loạt có kiểm tra từng dòng và loại trùng trước đăng nhập; tiến độ hiển thị từ job đăng nhập thật, không gửi Hello khi chỉ xem danh sách.
+
+Nhật ký nâng cao lấy trạng thái và phản hồi đã lưu, lọc theo tác vụ/tài khoản/mức. Đây không phải toàn bộ stdout của process. Tuyến Relay được ghi riêng, không được diễn giải thành Proxy tài khoản đang hoạt động. Proxy đã gán bị hết node báo lỗi, không tự đổi sang tuyến mặc định.

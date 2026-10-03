@@ -219,7 +219,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
 }
 .ai-config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.prompt-history textarea,.prompt-history select{display:block;width:100%;padding:10px;margin:10px 0;line-height:1.5}.account-advanced[open]{padding:10px;border:1px solid var(--stroke);border-radius:12px}.account-advanced summary{cursor:pointer;padding:8px}.account-advanced .settings-nav{max-width:500px}
 @media(max-width:920px){.ai-config-grid{grid-template-columns:1fr}}
-.creator-body{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:22px}.creator-prompt,.creator-references{min-width:0}.creator-references{border-left:1px solid var(--line);padding-left:20px}.creator-references .drop-zone{min-height:160px}.studio-results{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:18px;align-items:start}.studio-results .card{min-width:0}.analysis-issue{padding:12px;border:1px solid var(--line);border-radius:10px;margin:10px 0;overflow-wrap:anywhere}.analysis-issue label{display:flex;gap:8px;align-items:start}.analysis-issue blockquote{padding:8px 12px;margin:8px 0;border-left:3px solid var(--blue);white-space:pre-wrap}.analysis-issue .replacement{color:#a9d8c6;white-space:pre-wrap}.analysis-sources{font-size:12px;color:var(--sub);margin-top:8px}.queue-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}.queue-toolbar select{padding:8px}.queue-table{overflow:auto;max-height:520px}.queue-table table{min-width:650px;width:100%}.queue-table td{max-width:260px;overflow:hidden;text-overflow:ellipsis}.queue-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.queue-grid article{padding:12px;border:1px solid var(--line);border-radius:10px;min-width:0;overflow-wrap:anywhere}.reference-role{width:100%;font-size:12px;padding:6px;margin-top:6px}.image-preview-item{height:auto!important;width:160px!important}.image-preview-item img{height:100px;object-fit:cover}.studio-health{font-size:12px;color:var(--sub);margin:10px 0}.analysis-summary{line-height:1.6;margin:10px 0}
+.creator-body{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:22px}.creator-prompt,.creator-references{min-width:0}.creator-references{border-left:1px solid var(--line);padding-left:20px}.creator-references .drop-zone{min-height:160px}.studio-results{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:18px;align-items:start}.studio-results .card{min-width:0}.analysis-issue{padding:12px;border:1px solid var(--line);border-radius:10px;margin:10px 0;overflow-wrap:anywhere}.analysis-issue textarea{width:100%;max-width:100%;box-sizing:border-box}#gen_folder_preview label{display:block}.analysis-issue label{display:flex;gap:8px;align-items:start}.analysis-issue blockquote{padding:8px 12px;margin:8px 0;border-left:3px solid var(--blue);white-space:pre-wrap}.analysis-issue .replacement{color:#a9d8c6;white-space:pre-wrap}.analysis-sources{font-size:12px;color:var(--sub);margin-top:8px}.queue-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}.queue-toolbar select{padding:8px}.queue-table{overflow:auto;max-height:520px}.queue-table table{min-width:650px;width:100%}.queue-table td{max-width:260px;overflow:hidden;text-overflow:ellipsis}.queue-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.queue-grid article{padding:12px;border:1px solid var(--line);border-radius:10px;min-width:0;overflow-wrap:anywhere}.reference-role{width:100%;font-size:12px;padding:6px;margin-top:6px}.image-preview-item{height:auto!important;width:160px!important}.image-preview-item img{height:100px;object-fit:cover}.studio-health{font-size:12px;color:var(--sub);margin:10px 0}.analysis-summary{line-height:1.6;margin:10px 0}
 @media(max-width:1100px){.studio-results{grid-template-columns:1fr}}
 @media(max-width:920px){.creator-body{grid-template-columns:1fr}.creator-references{border-left:0;border-top:1px solid var(--line);padding-left:0;padding-top:16px}.studio-options{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.studio-options select{padding:8px 4px!important}.studio-intro{margin-bottom:14px}.queue-toolbar{gap:6px}}
 #gen_batch_editor label{display:block;margin:8px 0}#gen_batch_prompts{display:block;width:100%;padding:12px;line-height:1.6;resize:vertical}#gen_txt_file{max-width:100%}.queue-table th:last-child,.queue-table td:last-child{position:sticky;right:0;background:#192337}.queue-table td:last-child{min-width:62px}
@@ -276,7 +276,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
         </div>
       </div>
       <div id="videoStat" style="margin:10px 0 6px;color:var(--sub);font-size:13px">Đang tải thống kê video...</div>
-      <p id="myBatchSummary" role="status"></p><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div class="queue-toolbar"><button class="btn" onclick="setMyVideoView('grid')">Lưới</button><button class="btn" onclick="setMyVideoView('table')">Bảng</button><label for="myVideoFilter">Trạng thái</label><select id="myVideoFilter" onchange="loadMyVideos()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option></select></div><div id="myVideoTable" class="queue-table" style="display:none"></div><div id="myVideoJobs" class="my-video-jobs"></div><article id="mySelectedPreview" class="video-job" style="display:none"></article><details><summary>Thông tin file đã lưu</summary><div id="videosTable"></div></details>
+      <p id="myBatchSummary" role="status"></p><button id="myBatchZip" class="btn" style="display:none" onclick="downloadBatchZip()">Tải ZIP kết quả</button><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div class="queue-toolbar"><button class="btn" onclick="setMyVideoView('grid')">Lưới</button><button class="btn" onclick="setMyVideoView('table')">Bảng</button><label for="myVideoFilter">Trạng thái</label><select id="myVideoFilter" onchange="loadMyVideos()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option></select></div><div id="myVideoTable" class="queue-table" style="display:none"></div><div id="myVideoJobs" class="my-video-jobs"></div><article id="mySelectedPreview" class="video-job" style="display:none"></article><details><summary>Thông tin file đã lưu</summary><div id="videosTable"></div></details>
     </div>
   </section>
 
@@ -389,6 +389,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
         Hỗ trợ thiết lập Proxy HTTP / SOCKS5: <b>IP Tĩnh (Static IP)</b> dùng một địa chỉ cố định; <b>IP Động xoay (Dynamic Pool)</b> không cần điền IP/Port cố định,<br>        hệ thống nạp danh sách Node từ API hoặc dán danh sách <code>host:port:user:pass</code>. Mỗi Node cấp phát riêng cho từng tài khoản.<br>        Gán Proxy trực tiếp trong bảng tài khoản hoặc chọn nhiều tài khoản rồi bấm "Đổi Proxy hàng loạt".<br>        Tài khoản không chỉ định Proxy sẽ sử dụng Proxy mặc định từ biến môi trường
         <span id="defaultProxyShow" style="font-family:monospace"></span>。
       </div>
+      <details><summary>Thư mục xuất video</summary><p class="tiny">Nhập thư mục đã tồn tại trên máy chạy Studio. Video mới hoàn tất được sao chép vào đây; file gốc vẫn được giữ. Truy cập từ xa dùng tải ZIP.</p><label for="exportDirectory">Thư mục xuất</label><input id="exportDirectory" placeholder="/Users/.../Videos"><button class="btn" onclick="saveOutputDirectory()">Lưu</button><button class="btn" onclick="openOutputDirectory()">Mở thư mục</button><p id="exportMessage" role="status"></p></details>
       <div id="proxiesTable"></div>
       <details><summary>Nhật ký và chẩn đoán kết nối</summary>
         <div class="queue-toolbar"><label>Mã tác vụ <input id="diagTask"></label><label>Tài khoản <input id="diagAccount"></label>
@@ -439,10 +440,15 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
       </div>
 
       <div class="job-heading">
-        <div><label for="gen_mode">Cách tạo</label><select id="gen_mode" onchange="batchInputsChanged()"><option value="single">Một prompt</option><option value="list">Danh sách prompt / TXT</option></select></div>
+        <div><label for="gen_mode">Cách tạo</label><select id="gen_mode" onchange="batchInputsChanged()"><option value="single">Một prompt</option><option value="folder">Thư mục TXT + ảnh</option><option value="list">Danh sách prompt / TXT</option></select></div>
         <div><label for="gen_copies">Số video mỗi prompt</label><input id="gen_copies" type="number" min="1" max="10" value="1" oninput="batchInputsChanged()" style="width:85px"></div>
       </div>
       <div class="creator-body"><div class="creator-prompt">
+      <div id="gen_folder_editor" style="display:none;margin-bottom:14px">
+        <label for="gen_folder_picker">Chọn thư mục chứa TXT và ảnh</label><input id="gen_folder_picker" type="file" webkitdirectory multiple onchange="importPromptFolder(this)">
+        <p class="tiny">Mỗi thư mục con (hoặc thư mục gốc) chứa đúng một TXT UTF-8 và ảnh JPG, PNG, WEBP. Toàn bộ TXT là một prompt, giữ các dòng cảnh. Xem trước bên dưới rồi bấm Tạo video. Nếu trình duyệt không hỗ trợ chọn thư mục, dùng Danh sách prompt và chọn ảnh.</p>
+        <div id="gen_folder_preview" role="status"></div>
+      </div>
       <div id="gen_batch_editor" style="display:none;margin-bottom:14px">
         <label for="gen_batch_prompts">Danh sách prompt — mỗi dòng là một prompt</label>
         <textarea id="gen_batch_prompts" rows="7" oninput="batchInputsChanged()" placeholder="Một chú mèo trên cửa sổ&#10;Một con thuyền trên biển lúc bình minh"></textarea>
@@ -590,7 +596,7 @@ let settingsTab='accounts';
 function switchSettings(t){
   settingsTab=t;
   ['accounts','ai-settings','proxies','dash'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
-  if(t==='accounts')loadAccounts();else if(t==='ai-settings')loadAiSettings();else if(t==='proxies')loadProxies();else loadDash();
+  if(t==='accounts')loadAccounts();else if(t==='ai-settings')loadAiSettings();else if(t==='proxies'){loadProxies();loadOutputDirectory();}else loadDash();
 }
 function switchTab(t){
   if(['accounts','ai-settings','proxies','dash'].includes(t)){switchTab('settings');switchSettings(t);return;}
@@ -1598,6 +1604,14 @@ async function rotateProxy(id){
   }catch(e){return alert(e.message);}
   loadProxies();loadAccounts();
 }
+async function loadOutputDirectory(){try{const r=await api('/api/admin/studio-output');q('#exportDirectory').value=r.export_directory||'';}catch(e){q('#exportMessage').textContent=e.message;}}
+async function saveOutputDirectory(){try{const r=await api('/api/admin/studio-output',{method:'PUT',body:{export_directory:q('#exportDirectory').value}});q('#exportDirectory').value=r.export_directory;q('#exportMessage').textContent=r.export_directory?'Đã lưu thư mục xuất cho các video tiếp theo.':'Đã tắt sao chép tự động.';}catch(e){q('#exportMessage').textContent=e.message;}}
+async function openOutputDirectory(){try{await api('/api/admin/studio-output/open',{method:'POST'});}catch(e){q('#exportMessage').textContent=e.message;}}
+async function downloadBatchZip(){if(!currentBatchId)return;const btn=q('#myBatchZip');btn.disabled=true;try{
+  const response=await fetch('/api/admin/videos/batches/'+encodeURIComponent(currentBatchId)+'/download',{headers:{'x-admin-key':adminKey}});
+  if(response.status===401)showLogin();if(!response.ok)throw new Error('Không tải được ZIP. Hãy đăng nhập và thử lại.');
+  const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download='dola-videos.zip';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+}catch(e){q('#myBatchSummary').textContent=e.message;}finally{btn.disabled=false;}}
 async function loadDiagnostics(){
   const out=q('#diagnosticEvents');out.textContent='Đang lấy trạng thái đã lưu…';
   const params=new URLSearchParams({task_id:q('#diagTask').value.trim(),account:q('#diagAccount').value.trim(),level:q('#diagLevel').value,limit:'200'});
@@ -1948,8 +1962,9 @@ let studioPollTimer = null;
 let activeAiProvider = null;
 let clearKeyFlags = { gemini: false, openai: false };
 
+let studioLimits={reference_image_max_bytes:15*1024*1024,reference_image_max_count:30,reference_total_max_bytes:60*1024*1024,max_prompt_chars:20000};
 let studioInitialized=false;
-async function initGenerateTab(){if(studioInitialized)return;studioInitialized=true;await restoreStudioDraft();onModelChange();}
+async function initGenerateTab(){if(studioInitialized)return;studioInitialized=true;try{studioLimits=await api('/api/admin/studio-info');}catch(e){}await restoreStudioDraft();onModelChange();}
 
 function onModelChange(){
   const m = q('#gen_model')?.value || 'seedance-2.5';
@@ -1975,10 +1990,12 @@ function refreshReferenceHashes(){
   referenceHashPromise.catch(()=>studioMessage('Không đọc được ảnh tham chiếu; hãy chọn lại ảnh.'));
 }
 function changeReferenceRole(index,value){referenceRoles[index]=value;invalidateAnalysis();saveStudioDraft();}
-async function requestPreflight(prompt){
+async function requestPreflight(prompt,indices=null){
   await referenceHashPromise;
-  const fd=new FormData();fd.append('analysis',JSON.stringify({prompt,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,reference_roles:selectedImages.map((_,i)=>isBatchGeneration()?'other':referenceRoles[i]||'other'),...(analysisTaskId?{upstream_task_id:analysisTaskId}:{})}));
-  for(const image of selectedImages)fd.append('images',image);
+  const inputImages=indices===null?selectedImages:indices.map(i=>selectedImages[i]);
+  const roles=indices===null?selectedImages.map((_,i)=>isBatchGeneration()?'other':referenceRoles[i]||'other'):indices.map(i=>referenceRoles[i]||'other');
+  const fd=new FormData();fd.append('analysis',JSON.stringify({prompt,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,reference_roles:roles,...(analysisTaskId?{upstream_task_id:analysisTaskId}:{})}));
+  for(const image of inputImages)fd.append('images',image);
   const response=await fetch('/api/admin/prompts/preflight',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await response.json();
   if(response.status===401)showLogin();
   if(!response.ok){const error=new Error(typeof data.detail==='string'?data.detail:'Không phân tích được prompt');error.status=response.status;throw error;}
@@ -2018,7 +2035,7 @@ function saveStudioDraft(){
     suggestion:q('#gen_rewrite_draft').value,before:q('#gen_rewrite_before').value,
     requestId:pendingRequestId,requestSnapshot:pendingSnapshot,suggestionVisible:q('#gen_rewrite_box').style.display!=='none',
     model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,taskId:currentActiveTaskId,
-    referenceRoles,mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,batchId:currentBatchId}));}
+    folderGroups,referenceRoles,mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,batchId:currentBatchId}));}
   catch(e){studioMessage('Không lưu được bản nháp trên trình duyệt; hãy sao chép prompt trước khi đóng trang.');}
 }
 async function imageDraftStore(files){
@@ -2036,7 +2053,8 @@ async function restoreStudioDraft(){
     onModelChange();if(d.duration)q('#gen_duration').value=d.duration;if(d.ratio)q('#gen_ratio').value=d.ratio;
     q('#gen_mode').value=d.mode||'single';q('#gen_copies').value=d.copies||'1';q('#gen_batch_prompts').value=d.batchPrompts||'';currentBatchId=d.batchId||'';renderBatchInputs();
     q('#prompt_char_count').textContent=q('#gen_prompt').value.length;
-    referenceRoles=d.referenceRoles||[];const files=await imageDraftStore();if(files&&!selectedImages.length){selectedImages=files;renderImagePreviews();refreshReferenceHashes();await referenceHashPromise;}
+    folderGroups=d.folderGroups||[];renderFolderPreview();referenceRoles=d.referenceRoles||[];const files=await imageDraftStore();if(files&&!selectedImages.length){selectedImages=files;renderImagePreviews();refreshReferenceHashes();await referenceHashPromise;}
+    renderBatchInputs();
     if(d.taskId)trackStudioJob(d.taskId);
   }catch(e){studioMessage('Không khôi phục được toàn bộ bản nháp; bạn có thể tiếp tục nhập ý tưởng.');}
 }
@@ -2057,6 +2075,7 @@ function undoPrompt(){
 }
 
 function handleImageSelection(files){
+  if(q('#gen_mode').value==='folder'){studioMessage('Để thay bộ ảnh của nhóm, hãy chọn lại thư mục.');return;}
   if(!files) return;
   for(let i=0; i<files.length; i++){
     const f = files[i];
@@ -2077,6 +2096,7 @@ function handleImageSelection(files){
 }
 
 function removeImage(idx){
+  if(q('#gen_mode').value==='folder'){studioMessage('Để đổi bộ ảnh riêng, hãy chọn lại thư mục; các nhóm được giữ nguyên.');return;}
   selectedImages.splice(idx, 1);referenceRoles.splice(idx,1);
   renderImagePreviews();refreshReferenceHashes();
   document.body.dataset.imagesSaved='pending';
@@ -2093,8 +2113,9 @@ function renderImagePreviews(){
     const img = document.createElement('img');
     img.src = URL.createObjectURL(f);
     img.onload=()=>URL.revokeObjectURL(img.src);
-    img.alt='Ảnh tham chiếu: '+f.name;
-    img.title = f.name + ' (' + fmtSize(f.size) + ')';
+    const referenceName=q('#gen_mode').value==='folder'?(folderGroups.find(g=>g.reference_indices.includes(idx))?.name||'')+'/'+f.name:f.name;
+    img.alt='Ảnh tham chiếu: '+referenceName;
+    img.title = referenceName + ' (' + fmtSize(f.size) + ')';
     const rm = document.createElement('button');
     rm.className = 'rm-btn';
     rm.setAttribute('aria-label','Bỏ ảnh '+f.name);
@@ -2102,7 +2123,7 @@ function renderImagePreviews(){
     rm.onclick = (e)=>{ e.stopPropagation(); removeImage(idx); };
     item.appendChild(img);
     item.appendChild(rm);
-    const role=document.createElement('select');role.className='reference-role';role.setAttribute('aria-label','Vai trò ảnh '+f.name);
+    const role=document.createElement('select');role.className='reference-role';role.setAttribute('aria-label','Vai trò ảnh '+referenceName);
     role.innerHTML='<option value="other">Ảnh tham chiếu</option><option value="character">Nhân vật</option><option value="scene">Bối cảnh</option><option value="style">Phong cách</option>';role.value=referenceRoles[idx]||'other';role.onchange=()=>changeReferenceRole(idx,role.value);item.appendChild(role);
     box.appendChild(item);
   });
@@ -2170,14 +2191,62 @@ function renderPreflightBanner(res){
 }
 
 let batchPreflight=null,currentBatchId='';
-function isBatchGeneration(){return q('#gen_mode').value==='list'||Number(q('#gen_copies').value)!==1;}
-function batchPromptList(){return q('#gen_mode').value==='list'?q('#gen_batch_prompts').value.replace(/^\uFEFF/,'').split(/\r?\n/).map(p=>p.trim()).filter(Boolean):[q('#gen_prompt').value.trim()].filter(Boolean);}
+function isBatchGeneration(){return ['list','folder'].includes(q('#gen_mode').value)||Number(q('#gen_copies').value)!==1;}
+function batchPromptList(){return q('#gen_mode').value==='folder'?folderGroups.map(g=>g.prompt):q('#gen_mode').value==='list'?q('#gen_batch_prompts').value.replace(/^\uFEFF/,'').split(/\r?\n/).map(p=>p.trim()).filter(Boolean):[q('#gen_prompt').value.trim()].filter(Boolean);}
 function renderBatchInputs(){
-  const list=q('#gen_mode').value==='list';q('#gen_batch_editor').style.display=list?'block':'none';q('#gen_single_editor').style.display=list?'none':'block';
+  const list=q('#gen_mode').value==='list',folder=q('#gen_mode').value==='folder';q('#gen_folder_editor').style.display=folder?'block':'none';q('#gen_batch_editor').style.display=list?'block':'none';q('#gen_single_editor').style.display=(list||folder)?'none':'block';
   const total=batchPromptList().length*Number(q('#gen_copies').value);
   q('#gen_batch_summary').textContent=isBatchGeneration()?batchPromptList().length+' prompt × '+q('#gen_copies').value+' bản = '+total+' video. Mỗi video có thể dùng điểm Dola.':'';
 }
 function batchInputsChanged(){batchPreflight=null;preflightVersion++;q('#gen_batch_check').innerHTML='';renderBatchInputs();saveStudioDraft();}
+// folder-parser-start
+async function buildFolderGroups(files,maxPromptChars=20000){
+  const groups=new Map();
+  for(let i=0;i<files.length;i++){
+    const file=files[i],path=file.webkitRelativePath||file.name,parts=path.split('/');
+    if(parts.some(p=>p==='..'||p==='')||path.startsWith('/'))throw new Error('Đường dẫn nhóm không hợp lệ');
+    const directory=parts.length>1?parts.slice(1,-1).join('/')||'.':'.',name=file.name.toLowerCase();
+    if(!groups.has(directory))groups.set(directory,{name:directory,txt:[],image_indices:[]});
+    const group=groups.get(directory);
+    if(name.endsWith('.txt'))group.txt.push(file);
+    else if(/\.(png|jpe?g|webp)$/.test(name))group.image_indices.push(i);
+    else throw new Error('File chưa được hỗ trợ: '+path);
+  }
+  if(!groups.size||groups.size>50)throw new Error('Chọn từ 1 đến 50 nhóm');
+  const result=[];
+  for(const group of [...groups.values()].sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0)){
+    if(group.txt.length!==1)throw new Error('Nhóm '+group.name+' cần đúng một file TXT');
+    const file=group.txt[0];if(file.size>1024*1024)throw new Error('TXT nhóm '+group.name+' vượt 1 MB');
+    const prompt=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer()).replace(/^\uFEFF/,'').trim();
+    if(!prompt||prompt.length>maxPromptChars)throw new Error('Prompt nhóm '+group.name+' trống hoặc quá dài');
+    result.push({name:group.name,prompt,image_indices:group.image_indices});
+  }
+  return result;
+}
+// folder-parser-end
+let folderGroups=[],folderImportVersion=0;
+function renderFolderPreview(){
+  const box=q('#gen_folder_preview');if(!box)return;
+  box.innerHTML=folderGroups.map((g,i)=>`<article class="analysis-issue"><strong>Nhóm ${i+1}: ${esc(g.name)}</strong><p>${g.reference_indices.length} ảnh riêng</p><label>Prompt nhóm ${i+1}<textarea rows="4" data-folder-prompt="${i}" oninput="folderGroups[${i}].prompt=this.value;batchInputsChanged()">${esc(g.prompt)}</textarea></label></article>`).join('');
+}
+async function importPromptFolder(input){
+  const version=++folderImportVersion,files=Array.from(input.files||[]);if(!files.length)return;
+  try{const groups=await buildFolderGroups(files,studioLimits.max_prompt_chars);if(version!==folderImportVersion)return;
+    if(groups.length*Number(q('#gen_copies').value)>50)throw new Error('Mẻ có quá 50 video; giảm số bản trước khi chọn thư mục.');
+    const images=[],mapped=[];
+    for(const group of groups){const indices=[];let total=0;
+      if(group.image_indices.length>studioLimits.reference_image_max_count)throw new Error('Số ảnh của nhóm vượt giới hạn.');
+      for(const index of group.image_indices){const file=files[index];if(file.size>studioLimits.reference_image_max_bytes)throw new Error('Ảnh '+file.name+' vượt giới hạn dung lượng.');total+=file.size;indices.push(images.length);images.push(file);}
+      if(total>studioLimits.reference_total_max_bytes)throw new Error('Tổng dung lượng ảnh của nhóm vượt giới hạn.');
+      mapped.push({name:group.name,prompt:group.prompt,reference_indices:indices});
+    }
+    if(images.length>studioLimits.reference_image_max_count||images.reduce((sum,f)=>sum+f.size,0)>studioLimits.reference_total_max_bytes)throw new Error('Tổng ảnh của mẻ vượt giới hạn hiện tại: '+studioLimits.reference_image_max_count+' ảnh, '+Math.round(studioLimits.reference_total_max_bytes/1024/1024)+' MB. Chia thành các mẻ nhỏ hơn.');
+    // Replace the draft only after every group passes validation.
+    folderGroups=mapped;selectedImages=images;referenceRoles=images.map(()=>'other');q('#gen_mode').value='folder';
+    renderImagePreviews();refreshReferenceHashes();renderFolderPreview();batchInputsChanged();await imageDraftStore(images);
+    studioMessage('Đã đọc '+groups.length+' nhóm. Duyệt prompt và ảnh trước khi tạo video.');
+  }catch(e){studioMessage('Không nhập được thư mục: '+e.message+'; bản nháp trước vẫn được giữ.');}finally{input.value='';}
+}
 async function importPromptTxt(input){
   const file=input.files?.[0];if(!file)return;
   try{if(!file.name.toLowerCase().endsWith('.txt')||file.size>1024*1024)throw new Error('Chọn file TXT tối đa 1 MB.');
@@ -2189,10 +2258,11 @@ async function checkBatchPrompts(){
   if(!prompts.length||!Number.isInteger(copies)||copies<1||copies>10||prompts.length*copies>50){studioMessage('Nhập prompt và chọn 1–10 bản mỗi prompt, tối đa 50 video mỗi mẻ.');return false;}
   const checked=new Map(),entries=[];q('#gen_batch_check').textContent='Đang kiểm tra danh sách; chưa gửi video…';
   try{for(let i=0;i<prompts.length;i++){
-    const prompt=prompts[i];let result=checked.get(prompt);
-    if(!result){result=await requestPreflight(prompt);checked.set(prompt,result);}
+    const prompt=prompts[i],group=q('#gen_mode').value==='folder'?folderGroups[i]:null;
+    const cacheKey=JSON.stringify([prompt,group?.reference_indices||null]);let result=checked.get(cacheKey);
+    if(!result){result=await requestPreflight(prompt,group?.reference_indices??null);checked.set(cacheKey,result);}
     if(snapshot!==generationSnapshot())return false;
-    entries.push({prompt,...result});q('#gen_batch_check').textContent='Đã kiểm tra '+(i+1)+'/'+prompts.length+' prompt; chưa gửi video…';
+    entries.push({prompt,...result,...(group?{reference_indices:group.reference_indices,reference_roles:group.reference_indices.map(i=>referenceRoles[i]||'other'),group:group.name}:{})});q('#gen_batch_check').textContent='Đã kiểm tra '+(i+1)+'/'+prompts.length+' prompt; chưa gửi video…';
   }
   if(snapshot!==generationSnapshot())return false;
   batchPreflight={snapshot,entries};const blocked=entries.some(e=>e.status==='block'),review=entries.some(e=>e.status==='review');
@@ -2212,7 +2282,7 @@ async function submitVideoBatch(){
     if(!confirm('Tạo '+total+' video? Mỗi video có thể dùng thêm điểm Dola. Các video là những kết quả riêng, không tự ghép.'))return;
     if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
     const fd=new FormData();fd.append('batch',JSON.stringify({request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
-      prompts:batchPreflight.entries.map(e=>({prompt:e.prompt,preflight_token:e.token,confirm_review:review}))}));for(const image of selectedImages)fd.append('images',image);
+      prompts:batchPreflight.entries.map(e=>({prompt:e.prompt,preflight_token:e.token,confirm_review:review,...(e.reference_indices?{reference_indices:e.reference_indices,reference_roles:e.reference_roles,group:e.group}:{})}))}));for(const image of selectedImages)fd.append('images',image);
     btn.textContent='Đang gửi mẻ…';const resp=await fetch('/api/admin/videos/batches',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await resp.json();
     if(!resp.ok){const error=new Error(typeof data.detail==='string'?data.detail:'Không nhận được mẻ');error.status=resp.status;throw error;}
     currentBatchId=data.batch_id;if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');pendingRequestId='';pendingSnapshot='';saveStudioDraft();switchTab('videos');
@@ -2224,7 +2294,7 @@ async function submitVideoBatch(){
   }
   finally{btn.disabled=false;btn.textContent='Tạo video';}
 }
-function generationSnapshot(){return JSON.stringify({prompt:q('#gen_prompt').value.trim(),model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,images:selectedImages.map((f,i)=>[f.name,f.size,f.lastModified,selectedImageDigests[i]||'',referenceRoles[i]||'other']),mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value});}
+function generationSnapshot(){return JSON.stringify({prompt:q('#gen_prompt').value.trim(),model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,images:selectedImages.map((f,i)=>[f.name,f.size,f.lastModified,selectedImageDigests[i]||'',referenceRoles[i]||'other']),mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,folderGroups});}
 async function doSubmitGenerate(){
   if(isBatchGeneration())return submitVideoBatch();
   const btn=q('#btn_submit_gen');if(btn.disabled)return;
@@ -2303,6 +2373,7 @@ function taskMarkup(t){
   if(t.status==='unknown')html+='<p>Chưa lấy được kết quả — có thể Dola vẫn đang tạo. Tool không tự gửi lại yêu cầu.</p>';
   if(['unknown','failed'].includes(t.status)&&t.can_check_result)html+=`<button class="btn btn-p" onclick="checkVideoResult('${esc(t.id)}')">Kiểm tra lại kết quả</button>`;
   if(t.status==='failed')html+='<p>'+esc(t.failure_display?.message_vi||'Không tạo được video; chưa xác định nguyên nhân.')+'</p><p>'+esc(t.failure_display?.next_action_vi||'')+'</p><button class="btn" onclick="analyzeFailedTask(\''+esc(t.id)+'\')">Phân tích và sửa prompt</button>';
+  if(t.export_error)html+='<p role="status">Video đã nhận nhưng chưa sao chép được vào thư mục xuất. Bạn vẫn có thể tải bản gốc.</p>';
   if(t.error)html+=`<details><summary>Chi tiết kỹ thuật</summary><pre class="technical-error">${esc(t.failure_display?.details||t.error)}</pre></details>`;
   html+=`<div class="job-actions"><button class="btn" onclick="useTaskPrompt('${esc(t.id)}')">Dùng lại prompt</button><button class="btn" onclick="switchTab('generate');trackStudioJob('${esc(t.id)}')">Theo dõi</button></div>`;
   return html;
@@ -2340,7 +2411,7 @@ async function loadMyVideos(){
   if(videosLoading)return;videosLoading=true;
   try{const batchId=currentBatchId;
     const r=await api(batchId?'/api/admin/videos/batches/'+encodeURIComponent(batchId):'/api/admin/tasks?limit=100');if(curTab!=='videos'||batchId!==currentBatchId)return;
-    q('#myBatchClear').style.display=batchId?'inline-block':'none';if(!batchId)q('#myBatchSummary').textContent='';
+    q('#myBatchZip').style.display=batchId?'inline-block':'none';q('#myBatchClear').style.display=batchId?'inline-block':'none';if(!batchId)q('#myBatchSummary').textContent='';
     const container=q('#myVideoJobs'),tasks=filteredTasks(r.tasks||[],q('#myVideoFilter').value),ids=new Set(tasks.map(t=>t.id));q('#myVideoTable').innerHTML=queueMarkup(tasks,'my');const selected=tasks.find(t=>t.id===mySelectedId);if(selected)renderJobInto(q('#mySelectedPreview'),selected);
     if(container.firstElementChild?.tagName==='P')container.innerHTML='';
     const members=currentBatchId?(r.tasks||[]).filter(t=>t.batch_id===currentBatchId):[];

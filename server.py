@@ -21,6 +21,8 @@ import secrets
 import shutil
 import subprocess
 import time
+import tempfile
+import zipfile
 import uuid
 from pure_api_gen import ConfirmedVideoFailure
 from collections import defaultdict
@@ -31,7 +33,9 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ValidationError
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
+from pydantic import BaseModel, Field, ValidationError, StrictInt
 
 import config
 if config.TRANSPORT_MODE == "relay":
@@ -607,7 +611,7 @@ def _uncertain_task(task_id, error="Chưa lấy được kết quả — có th�
 
 
 def _task_file_exists(row):
-    return bool(row.get("video_url") and (Path(config.DOWNLOAD_DIR) / Path(urlparse(row["video_url"]).path).name).is_file())
+    return _stored_video_path(row) is not None
 
 
 def _target_duration(row):
@@ -642,6 +646,11 @@ async def _save_video_result(task_id, result):
                  video_url=f"{config.PUBLIC_BASE}/videos/{path.name}",
                  account=result.get("account") or row.get("account"),
                  last_poll_at=time.time(), finished_at=time.time(), error="", **meta)
+    try:
+        await asyncio.to_thread(_copy_video_export, task_id)
+    except (OSError, ValueError) as exc:
+        # An optional export failure must never hide an already received video.
+        store.update(task_id, export_error=failure_text.sanitize_details(str(exc)))
 
 
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client):
@@ -2896,6 +2905,7 @@ async def admin_get_task(task_id: str, x_admin_key: str | None = Header(default=
         "prompt": row["prompt"],
         "video_url": row["video_url"],
         "file_exists": _task_file_exists(row),
+        "export_error": failure_text.sanitize_details(row.get("export_error") or ""),
         "error": failure_text.sanitize_details(row["error"]),
         "failure_code": row.get("failure_code"),
         "failure_group": row.get("failure_group"),
@@ -3128,7 +3138,10 @@ async def admin_studio_info(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     return {"transport_mode": config.TRANSPORT_MODE,
             "observation_seconds": config.OBSERVATION_SECONDS,
-            "reference_image_max_bytes": config.REFERENCE_IMAGE_MAX_BYTES}
+            "reference_image_max_bytes": config.REFERENCE_IMAGE_MAX_BYTES,
+            "reference_image_max_count": config.REFERENCE_IMAGE_MAX_COUNT,
+            "reference_total_max_bytes": config.REFERENCE_TOTAL_MAX_BYTES,
+            "max_prompt_chars": config.MAX_PROMPT_CHARS}
 
 
 @app.get("/api/admin/ai-settings")
@@ -3297,6 +3310,7 @@ async def admin_prompt_preflight(body: Request, x_admin_key: str | None = Header
 
 async def _admin_reference_images(form):
     refs: list[str] = []
+    total = 0
     for field in ("images", "image", "image[]", "reference_images"):
         for item in form.getlist(field):
             if hasattr(item, "read") and hasattr(item, "filename"):
@@ -3308,6 +3322,11 @@ async def _admin_reference_images(form):
                 data = await read_fn()
                 if len(data) > config.REFERENCE_IMAGE_MAX_BYTES:
                     raise HTTPException(422, f"Ảnh {filename} vượt quá giới hạn dung lượng ảnh")
+                total += len(data)
+                if total > config.REFERENCE_TOTAL_MAX_BYTES:
+                    raise HTTPException(422, "Tổng dung lượng ảnh của mẻ vượt giới hạn")
+                if len(refs) >= config.REFERENCE_IMAGE_MAX_COUNT:
+                    raise HTTPException(422, "Số ảnh của mẻ vượt giới hạn")
                 if data:
                     _validate_image_content(data, filename)
                     refs.append(_data_url_from_upload(filename, data))
@@ -3413,6 +3432,9 @@ async def _accept_create_video(request: Request, x_admin_key: str | None = None)
 
 # 面板单文件前端（放最后，保证上面的路由优先）
 class BatchPrompt(BaseModel):
+    reference_indices: list[StrictInt] | None = None
+    reference_roles: list[str] = Field(default_factory=list)
+    group: str = Field(default="", max_length=200)
     prompt: str = Field(min_length=1, max_length=config.MAX_PROMPT_CHARS)
     preflight_token: str = ""
     confirm_review: bool = False
@@ -3425,6 +3447,131 @@ class VideoBatch(BaseModel):
     model: str = "seedance-2.5"
     duration: int = 30
     ratio: str = Field(default="16:9", pattern=r"^(16:9|9:16|1:1|4:3|3:4)$")
+
+
+def _safe_task_filename(row, suffix='.mp4'):
+    name = re.sub(r'[^A-Za-z0-9_-]', '_', row['id'])[:80]
+    return f"{int(row.get('batch_index') or 0):03d}_{name}_{hashlib.sha256(row['id'].encode()).hexdigest()[:8]}{suffix}"
+
+
+def _stored_video_path(row):
+    url = row.get('video_url') or ''
+    path = urlparse(url).path
+    if not path.startswith('/videos/'):
+        return None
+    root = Path(config.DOWNLOAD_DIR).resolve()
+    candidate = root / Path(path).name
+    try:
+        resolved = candidate.resolve(strict=True)
+        if candidate.is_symlink() or not resolved.is_relative_to(root) or not resolved.is_file():
+            return None
+        return resolved
+    except OSError:
+        return None
+
+
+def _build_batch_zip(rows):
+    fd, filename = tempfile.mkstemp(prefix='dola-batch-', suffix='.zip')
+    os.close(fd)
+    try:
+        included, skipped = [], []
+        with zipfile.ZipFile(filename, 'w', compression=zipfile.ZIP_STORED) as archive:
+            for row in rows:
+                path = _stored_video_path(row) if row.get('status') == 'completed' else None
+                if not path:
+                    skipped.append({'id': row['id'], 'reason_vi': 'Video chưa hoàn tất hoặc file không còn khả dụng'})
+                    continue
+                name = _safe_task_filename(row, path.suffix)
+                try:
+                    archive.write(path, name)
+                    included.append({'id': row['id'], 'file': name})
+                except OSError:
+                    skipped.append({'id': row['id'], 'reason_vi': 'File không còn đọc được'})
+            archive.writestr('ket-qua.json', json.dumps({'included': included, 'skipped': skipped}, ensure_ascii=False, indent=2))
+        return filename
+    except BaseException:
+        Path(filename).unlink(missing_ok=True)
+        raise
+
+
+@app.get("/api/admin/videos/batches/{batch_id}/download")
+async def admin_download_batch(batch_id: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if store.batch_fingerprint(batch_id) is None:
+        raise HTTPException(404, "Không tìm thấy mẻ")
+    path = await asyncio.to_thread(_build_batch_zip, store.batch_tasks(batch_id))
+    return FileResponse(path, filename='dola-videos.zip', media_type='application/zip',
+                        background=BackgroundTask(Path(path).unlink, missing_ok=True))
+
+
+def _validate_export_directory(value):
+    if not value:
+        return ''
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError('Chọn đường dẫn tuyệt đối đến thư mục trên máy chạy Studio')
+    try:
+        path = path.resolve(strict=True)
+        if not path.is_dir():
+            raise OSError('not a directory')
+        with tempfile.NamedTemporaryFile(dir=path, prefix='.dola-write-check-'):
+            pass
+    except OSError as exc:
+        raise ValueError('Thư mục không tồn tại hoặc Studio không có quyền ghi') from exc
+    return str(path)
+
+
+class StudioOutputBody(BaseModel):
+    export_directory: str = Field(default='', max_length=4000)
+
+
+@app.get('/api/admin/studio-output')
+async def admin_output_settings(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return {'export_directory': store.studio_option('export_directory')}
+
+
+@app.put('/api/admin/studio-output')
+async def admin_set_output(body: StudioOutputBody, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    try:
+        path = await asyncio.to_thread(_validate_export_directory, body.export_directory.strip())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    store.set_studio_option('export_directory', path)
+    return {'export_directory': path}
+
+
+@app.post('/api/admin/studio-output/open')
+async def admin_open_output(request: Request, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if (not request.client or request.client.host not in ('127.0.0.1','::1')
+            or request.url.hostname not in ('127.0.0.1','localhost','::1')
+            or any(h in request.headers for h in ('forwarded','x-forwarded-for','x-forwarded-host'))):
+        raise HTTPException(403, 'Mở thư mục chỉ dùng khi truy cập trực tiếp trên máy chạy Studio; hãy tải ZIP')
+    path = _validate_export_directory(store.studio_option('export_directory'))
+    if not path:
+        raise HTTPException(422, 'Chưa chọn thư mục xuất')
+    await asyncio.to_thread(subprocess.run, ['open', path], check=True, timeout=10)
+    return {'ok': True}
+
+
+def _copy_video_export(task_id):
+    value = store.studio_option('export_directory')
+    if not value:
+        return
+    row = store.get(task_id)
+    source = _stored_video_path(row)
+    if not source:
+        raise ValueError('File video gốc không còn khả dụng')
+    destination = Path(_validate_export_directory(value))
+    fd, temporary = tempfile.mkstemp(dir=destination, prefix='.dola-export-')
+    os.close(fd)
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, destination / _safe_task_filename(row, source.suffix))
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 @app.get("/api/admin/videos/batches/{batch_id}")
@@ -3465,25 +3612,41 @@ async def _accept_create_batch(request: Request, x_admin_key: str | None = None)
     if not model:
         raise HTTPException(422, "Model không hỗ trợ thời lượng đã chọn")
     refs = await _admin_reference_images(form)
-    fingerprint = hashlib.sha256(json.dumps({"prompts":[p.prompt.strip() for p in batch.prompts],
-        "copies":batch.copies,"model":model,"duration":batch.duration,"ratio":batch.ratio,
-        "references":refs},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+    selections = []
+    for prompt in batch.prompts:
+        indices = prompt.reference_indices if prompt.reference_indices is not None else list(range(len(refs)))
+        if (len(indices) != len(set(indices)) or any(type(i) is not int or i < 0 or i >= len(refs) for i in indices)):
+            raise HTTPException(422, "Danh sách ảnh của nhóm không hợp lệ")
+        selections.append(indices)
     username = ADMIN_SESSIONS[x_admin_key]["username"]
     batch_id = "batch_"+hashlib.sha256(f"studio:{username}:{batch.request_id}".encode()).hexdigest()[:32]
-    # Returning a persisted batch is read-only, including after process restart/token expiry.
-    existing = store.batch_tasks(batch_id)
     saved_fingerprint = store.batch_fingerprint(batch_id)
+    # Legacy receipts bound immutable inline bytes. Preserve them without another AI call.
+    legacy_fp = hashlib.sha256(json.dumps({"prompts":[p.prompt.strip() for p in batch.prompts],
+        "copies":batch.copies,"model":model,"duration":batch.duration,"ratio":batch.ratio,
+        "references":refs},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+    if (saved_fingerprint == legacy_fp and all(p.reference_indices is None and not p.reference_roles for p in batch.prompts)
+            and all(ref.startswith('data:') for ref in refs)):
+        return {"batch_id":batch_id,"tasks":[{"id":r["id"],"status":r["status"]} for r in store.batch_tasks(batch_id)]}
+    # Download/freeze each uploaded reference once; hash actual bytes before a receipt comparison.
+    reference_context, frozen_refs = await _reference_context(refs, [])
+    contexts, owned_refs = [], []
+    for prompt, indices in zip(batch.prompts, selections):
+        if len(prompt.reference_roles) > len(indices) or any(role not in ('character','scene','style','other') for role in prompt.reference_roles):
+            raise HTTPException(422, "Vai trò ảnh của nhóm không hợp lệ")
+        refs_context = [{**reference_context[i], 'role': prompt.reference_roles[n] if n < len(prompt.reference_roles) else 'other'} for n,i in enumerate(indices)]
+        contexts.append(_video_context(model, batch.duration, batch.ratio, refs_context))
+        owned_refs.append([frozen_refs[i] for i in indices])
+    fingerprint = hashlib.sha256(json.dumps({'prompts':[{'prompt':p.prompt.strip(),'group':p.group,'context':c} for p,c in zip(batch.prompts,contexts)],
+        'copies':batch.copies},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     if saved_fingerprint is not None:
         if saved_fingerprint != fingerprint:
             raise HTTPException(409, "Mã mẻ đã được dùng cho nội dung khác")
-        return {"batch_id":batch_id,"tasks":[{"id":r["id"],"status":r["status"]} for r in existing]}
+        return {"batch_id":batch_id,"tasks":[{"id":r["id"],"status":r["status"]} for r in store.batch_tasks(batch_id)]}
     session_id = hashlib.sha256((x_admin_key or "default").encode()).hexdigest()[:24]
-    reference_context, frozen_refs = await _reference_context(refs, [])
-    context = _video_context(model, batch.duration, batch.ratio, reference_context)
-    for i,prompt in enumerate(batch.prompts):
+    for prompt, context in zip(batch.prompts, contexts):
         await _ensure_video_preflight(session_id, prompt.prompt.strip(), prompt.preflight_token,
-                                       prompt.confirm_review, context)
-    refs = frozen_refs
+                                      prompt.confirm_review, context)
     if not pool.accounts:
         raise HTTPException(503, "Chưa có tài khoản Dola")
     if not pool.available and (pool.all_accounts_limited or pool.all_accounts_quota_blocked):
@@ -3496,10 +3659,10 @@ async def _accept_create_batch(request: Request, x_admin_key: str | None = None)
               "daily_limit":0,"concurrency_limit":0,"allowed_durations":list(SUPPORTED_DURATIONS)}
     jobs=[];created=False
     try:
-        for prompt in batch.prompts:
+        for prompt, prompt_refs in zip(batch.prompts, owned_refs):
             for _ in range(batch.copies):
                 # Each job owns its references; one finishing must not delete another's input.
-                images = await asyncio.to_thread(materialize_data_urls,refs)
+                images = await asyncio.to_thread(materialize_data_urls,prompt_refs)
                 jobs.append({"id":"video_"+hashlib.sha256(f"{batch_id}:{len(jobs)}".encode()).hexdigest()[:32],
                     "model":model,"prompt":prompt.prompt.strip(),"duration":batch.duration,"ratio":batch.ratio,
                     "reference_images":json.dumps(images,ensure_ascii=False),"api_key_hash":client["api_key_hash"],

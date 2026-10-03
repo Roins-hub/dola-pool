@@ -20,6 +20,7 @@ os.environ.update({'DOLA_SKIP_LOCAL_ENV':'1','DOLA_DB_PATH':str(root/'tasks.db')
 import json
 import shutil
 from types import SimpleNamespace
+import hashlib
 import httpx
 import config
 import ai_settings
@@ -33,7 +34,7 @@ def event(kind, **data):
  with (root/'events.jsonl').open('a') as f:f.write(json.dumps({'kind':kind,**data})+'\n')
 def submit(*args, **kwargs):
  cid='conversation-'+str(sum(1 for line in (root/'events.jsonl').read_text().splitlines() if json.loads(line)['kind']=='submit')+1) if (root/'events.jsonl').exists() else 'conversation-1'
- event('submit',conversation_id=cid,prompt=kwargs['prompt'],images=len(kwargs.get('images') or []))
+ event('submit',conversation_id=cid,prompt=kwargs['prompt'],images=len(kwargs.get('images') or []),image_digests=[item['fixture_digest'] for item in kwargs.get('images') or []])
  return SimpleNamespace(error='',error_code='',conversation_id=cid)
 def inspect(session,ctx,cid):
  event('poll',conversation_id=cid)
@@ -42,7 +43,7 @@ def inspect(session,ctx,cid):
   failure_reasons=[],texts=['Đã nhận yêu cầu. Video đang được dựng.' if status=='pending' else 'Video đã sẵn sàng.','今日剩余 100 个视频生成额度'],creation_statuses=['creation status=1' if status=='pending' else 'creation status=2'],wait_minutes='3分钟' if status=='pending' else '',source_data={})
 def download(url,path,**kwargs):
  event('download');shutil.copyfile(root/'fixture.mp4',path);return path
-fake=SimpleNamespace(normalize_image_paths=lambda paths:[Path(p) for p in paths],upload_image=lambda *a:{'uri':'fixture-image'},enrich_multi_image_prompt=lambda prompt,count:prompt,BASE='https://fixture.invalid',setup_session=lambda **k:(None,None,{}),
+fake=SimpleNamespace(normalize_image_paths=lambda paths:[Path(p) for p in paths],upload_image=lambda *a:{'uri':'fixture-image','fixture_digest':hashlib.sha256(Path(a[3]).read_bytes()).hexdigest()},enrich_multi_image_prompt=lambda prompt,count:prompt,BASE='https://fixture.invalid',setup_session=lambda **k:(None,None,{}),
  warmup_login_session=lambda *a:None,dola_api_post_json=lambda *a,**k: {},
  submit_chat_completion=submit,inspect_video_once=inspect,
  poll_has_duration_split=lambda *a,**k:False,find_video_info_objects=lambda x:[],

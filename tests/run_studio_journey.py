@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
+import hashlib
 from pathlib import Path
 import httpx
 from patchright.async_api import async_playwright
@@ -54,7 +56,8 @@ def wait_row(id,status):
 async def browser_journey():
  async with async_playwright() as p:
   browser=await p.chromium.launch(headless=True)
-  page=await browser.new_page(viewport={'width':1440,'height':1000})
+  context=await browser.new_context(viewport={'width':1440,'height':1000})
+  page=await context.new_page()
   errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
   page.on('console',lambda m:errors.append(m.text) if m.type=='error' and '401' not in m.text else None)
   await page.goto(BASE);await page.locator('#loginUser').fill('admin');await page.locator('#loginPassword').fill('admin123');await page.locator('#loginPassword').press('Enter')
@@ -210,12 +213,64 @@ async def browser_journey():
   assert not await page.get_by_text('Quản lý API Key',exact=True).count()
   await page.screenshot(path=str(OUT/'settings-desktop.png'),full_page=True)
   await page.get_by_role('button',name='Nâng cao: proxy',exact=True).click()
-  await page.locator('#tab-proxies details summary').click()
+  await page.get_by_text('Nhật ký và chẩn đoán kết nối',exact=True).click()
   await page.get_by_role('button',name='Lấy thông tin',exact=True).click()
   await page.wait_for_function("document.querySelector('#diagnosticEvents').textContent.includes('Relay cho kết nối Dola')")
   assert await page.locator('#diagnosticEvents article').count()>0
   assert 'fake-mock' not in await page.locator('#diagnosticEvents').inner_text()
 
+  await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
+  # Native directory import: multiline TXT + per-group images, actual restart, then ZIP.
+  directory=ROOT/'folder-input'
+  for name,color in [('A','red'),('B','blue')]:
+   folder=directory/name;folder.mkdir(parents=True)
+   (folder/'prompt.txt').write_text('Nhóm '+name+'\nCảnh thứ hai giữ nguyên',encoding='utf-8')
+   Image.new('RGB',(12,12),color).save(folder/'reference.png')
+  output=ROOT/'exports';output.mkdir()
+  httpx.put(BASE+'/api/admin/studio-output',headers=login(),json={'export_directory':str(output)}).raise_for_status()
+  await page.locator('#gen_copies').fill('1')
+  await page.locator('#gen_mode').select_option('folder')
+  await page.locator('#gen_duration').select_option('15')
+  await page.locator('#gen_folder_picker').set_input_files(str(directory))
+  await page.wait_for_selector('#gen_folder_preview article')
+  assert await page.locator('#gen_folder_preview article').count()==2
+  assert await page.locator('[data-folder-prompt="0"]').input_value()=='Nhóm A\nCảnh thứ hai giữ nguyên'
+  await page.screenshot(path=str(OUT/'folder-desktop.png'),full_page=True)
+  before=len(events('submit'));(ROOT/'hold').touch()
+  async with page.expect_response(lambda r:'/api/admin/videos/batches' in r.url and r.request.method=='POST') as accepted_response:
+   await page.locator('#btn_submit_gen').dblclick()
+  response=await accepted_response.value;assert response.status==202
+  folder_batch=await response.json()
+  for _ in range(100):
+   if len(events('submit'))==before+2:break
+   await page.wait_for_timeout(100)
+  assert len(events('submit'))==before+2
+  assert [e['image_digests'] for e in events('submit')[-2:]]==[[hashlib.sha256((directory/name/'reference.png').read_bytes()).hexdigest()] for name in ['A','B']]
+  context=page.context;await page.close()
+  process.kill();process.wait(timeout=10);(ROOT/'hold').unlink();await asyncio.to_thread(start)
+  for task in folder_batch['tasks']:await asyncio.to_thread(wait_row,task['id'],'completed')
+  assert len(events('submit'))==before+2
+  assert len(list(output.glob('*.mp4')))==2
+  assert httpx.get(BASE+'/api/admin/studio-output',headers=login()).json()['export_directory']==str(output.resolve())
+  page=await context.new_page()
+  page.on('pageerror',lambda e:errors.append(str(e)))
+  page.on('console',lambda m:errors.append(m.text) if m.type=='error' and '401' not in m.text else None)
+  await page.goto(BASE);await page.wait_for_selector('#loginMask',state='visible')
+  await page.locator('#loginUser').fill('admin');await page.locator('#loginPassword').fill('admin123');await page.locator('#loginPassword').press('Enter')
+  await page.wait_for_selector('#tab-generate',state='visible')
+  assert await page.locator('#gen_mode').input_value()=='folder'
+  assert await page.locator('#gen_folder_preview article').count()==2
+  assert '2 video' in await page.locator('#gen_batch_summary').inner_text()
+  await page.get_by_role('button',name='▤ Video của tôi',exact=True).click()
+  await page.wait_for_function("document.querySelector('#myBatchSummary').textContent.includes('2 hoàn tất')")
+  async with page.expect_download() as download:
+   await page.get_by_role('button',name='Tải ZIP kết quả',exact=True).click()
+  zip_path=OUT/'folder-results.zip';await (await download.value).save_as(zip_path)
+  with zipfile.ZipFile(zip_path) as archive:
+   manifest=json.loads(archive.read('ket-qua.json'));assert len(manifest['included'])==2 and not manifest['skipped']
+   assert all('/' not in n and '..' not in n for n in archive.namelist())
+   media=archive.extract(manifest['included'][0]['file'],OUT)
+  subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=codec_name','-of','csv=p=0',media],check=True,stdout=subprocess.DEVNULL)
   await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
   await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'studio-mobile.png'),full_page=True)
   assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'Mobile horizontal overflow'
@@ -276,6 +331,7 @@ try:
  asyncio.run(browser_journey())
  (OUT/'result.json').write_text(json.dumps({'passed':True,'process_pids':[pid1,pid2],
   'restart_submission_count':1,'continuation_submission_count':2,'manual_check_no_resubmit':True,'idempotent_request_retry':True,'reference_image_reload':True,'rewrite_iterations':2,'stale_rewrite_discarded':True,'upstream_progress_browser':True,'txt_batch_four_jobs':True,'batch_process_restart_no_duplicate':True,
+  'folder_two_groups_own_images_restart':True,'folder_zip_playable':True,'export_copy_preserves_original':True,'inventory_disable_keeps_active_job':True,'confirmed_http_rejection_keeps_draft':True,
   'rich_ai_selective_edit':True,'context_stale_discarded':True,'vietnamese_progress':True,'queue_table_preview':True,
   'mock_boundary':'Dola protocol operations and AI HTTP transport; real scheduler/store/download/ffmpeg/UI',
   'runtime':str(ROOT)},indent=2))

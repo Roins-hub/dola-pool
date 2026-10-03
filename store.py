@@ -64,6 +64,7 @@ class TaskStore:
                 """
             )
             # 旧库兼容：逐列补齐任务恢复、客户用量和耗时统计字段。
+            self._conn.execute("CREATE TABLE IF NOT EXISTS studio_options (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             self._conn.execute("CREATE TABLE IF NOT EXISTS video_batches (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, created_at REAL)")
             for column, definition in (
                 ("account", "TEXT"),
@@ -97,6 +98,7 @@ class TaskStore:
                 ("batch_index", "INTEGER"),
                 ("batch_fingerprint", "TEXT"),
                 ("input_fingerprint", "TEXT"),
+                ("export_error", "TEXT"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -277,6 +279,15 @@ class TaskStore:
     def batch_tasks(self, batch_id):
         with _LOCK:
             return [dict(r) for r in self._conn.execute("SELECT * FROM tasks WHERE batch_id=? ORDER BY batch_index", (batch_id,)).fetchall()]
+
+    def studio_option(self, key):
+        with _LOCK:
+            row = self._conn.execute("SELECT value FROM studio_options WHERE key=?", (key,)).fetchone()
+            return row[0] if row else ''
+
+    def set_studio_option(self, key, value):
+        with _LOCK, self._conn:
+            self._conn.execute("INSERT INTO studio_options VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
 
     def batch_fingerprint(self, batch_id):
         with _LOCK:
