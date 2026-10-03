@@ -311,6 +311,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
           <button class="btn btn-p" onclick="openAddAccount()">+ Thêm tài khoản</button>
         </div>
       </div>
+      <div id="inventoryPools" class="queue-toolbar"></div>
       <div class="groupbar" id="groupBar"></div>
       <div id="accountsTable"></div>
     </div>
@@ -731,8 +732,16 @@ function srcBadge(x){
   if(x.source==='cookie')return '<span class="badge b-orange" title="Nạp bằng Cookie">Cookie Import</span>';
   return '<span class="tiny">—</span>';
 }
+let inventoryPools=[];
+function renderInventoryPools(){
+  q('#inventoryPools').innerHTML='<b>Kho tài khoản</b> '+inventoryPools.map(p=>`<label><input type="checkbox" ${p.enabled?'checked':''} onchange="toggleInventoryPool('${esc(p.id)}',this.checked)"> ${esc(p.name)}</label>`).join(' ')+`<button class="btn" onclick="createInventoryPool()">Thêm kho</button><span class="tiny">Tắt kho chỉ dừng nhận video mới.</span>`;
+}
+async function toggleInventoryPool(id,enabled){try{await api('/api/admin/account-pools/'+encodeURIComponent(id),{method:'PATCH',body:{enabled}});await loadAccounts();}catch(e){alert(e.message);}}
+async function assignInventoryPool(name,pool_id){try{await api('/api/admin/accounts/'+encodeURIComponent(name),{method:'PATCH',body:{pool_id}});await loadAccounts();}catch(e){alert(e.message);}}
+async function createInventoryPool(){const name=prompt('Tên kho tài khoản');if(!name?.trim())return;try{await api('/api/admin/account-pools',{method:'POST',body:{id:'pool_'+crypto.randomUUID().replaceAll('-',''),name,enabled:true}});await loadAccounts();}catch(e){alert(e.message);}}
 async function loadAccounts(){
-  const [a,j]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]);
+  const [a,j,inventory]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs'),api('/api/admin/account-pools')]);
+  inventoryPools=inventory.pools||[];renderInventoryPools();
   const jobs=j.jobs||{};
   allAccountNames=a.accounts.map(x=>x.name);
   allAccounts=a.accounts;
@@ -767,7 +776,7 @@ async function loadAccounts(){
       accLabel(x)+warn,
       groupBadge(x),
       badge+ipInfo,
-      srcBadge(x),
+      srcBadge(x)+`<div><select aria-label="Kho của ${esc(x.name)}" onchange="assignInventoryPool('${x.name}',this.value)">${inventoryPools.map(p=>`<option value="${esc(p.id)}" ${p.id===x.pool_id?'selected':''}>${esc(p.name)}${p.enabled?'':' (Tắt)'}</option>`).join('')}</select></div>`,
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
       `<b>${x.remaining}</b> / ${x.limit}`+
         (x.credit_balance==null?'':`<div class="tiny">Số dư Dola upstream: ${x.credit_balance}${x.credit_balance<2?' (Đã hết điểm)':''}</div>`),
@@ -1202,18 +1211,16 @@ passport_csrf_token=bbb; sessionid=sid-two"></textarea>
   }
   showDlg(`<h2>Nạp tài khoản hàng loạt</h2>${sw}
     <label>Danh sách tài khoản (hỗ trợ nhiều định dạng, xem hướng dẫn bên dưới)</label>
-    <textarea id="f_batch" rows="10" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:ui-monospace,Consolas,monospace" placeholder="acc1 user1@xx.com pass123 TOTPKEY
+    <textarea id="f_batch" oninput="bulkImportVersion++;q('#bulkStart').disabled=true" rows="10" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:ui-monospace,Consolas,monospace" placeholder="acc1 user1@xx.com pass123 TOTPKEY
 61594569136172|Pass|c_user=61594569136172;xs=...|Token|mail@...
 
 Định dạng hỗ trợ:
 1) Facebook Clone MMO: UID|Pass|Cookie|Token|Email (tự động đăng nhập Facebook OAuth)
-2) Mỗi dòng một tài khoản Google: TênTaiKhoan Email MatKhau [TOTP]
-3) Các trường phân cách bằng |: acc1|a@b.com|123|TOTPKEY
-4) Email|MatKhau hoặc Email---MatKhau (tự động đặt tên accN, TOTP tùy chọn)
+2) Google: Email|MatKhau hoặc Email----MatKhau----TOTP (tự đặt tên accN)
 Hệ thống tự động phân loại Google vs Facebook và nạp tuần tự"></textarea>
     <div class="hint" style="margin-top:6px">Hỗ trợ tài khoản Facebook clone (chứa c_user=) và tài khoản Google. Quá trình đăng nhập xếp hàng tuần tự để tiết kiệm RAM.</div>
     <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
-    <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button><button class="btn btn-p" onclick="submitBatchAdd()">Bắt đầu thêm tài khoản</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button><button class="btn" onclick="previewBulkImport()">Kiểm tra danh sách</button><button class="btn btn-p" id="bulkStart" disabled onclick="submitBatchAdd()">Bắt đầu đăng nhập</button></div>`);
 }
 function fileBaseName(fileName){
   const name=(fileName||'').replace(/\.json$/i,'').trim();
@@ -1351,63 +1358,23 @@ function parseBatchInput(text){
   return out;
 }
 
+let bulkImportVersion=0;
+async function previewBulkImport(){
+  const text=q('#f_batch').value, version=++bulkImportVersion;
+  try{const r=await api('/api/admin/accounts/import-preview',{method:'POST',body:{text}});if(version!==bulkImportVersion||q('#f_batch')?.value!==text)return;
+    q('#batchResult').textContent=`Sẵn sàng: ${r.ready} · Trùng: ${r.duplicate} · Lỗi: ${r.invalid}\n`+r.rows.map(x=>`Dòng ${x.line}: ${x.identity||'Sai định dạng'} — ${({ready:'Hợp lệ',duplicate:'Đã có',invalid:'Cần sửa'})[x.status]}`).join('\n');
+    q('#bulkStart').disabled=!r.ready;
+  }catch(e){q('#batchResult').textContent=e.message;}
+}
 async function submitBatchAdd(){
-  const accounts=parseBatchInput(q('#f_batch').value);
-  if(!accounts.length)return alert('Không tìm thấy tài khoản hợp lệ. Vui lòng kiểm tra lại định dạng nhập vào.');
-  const btn=q('#dlg .btn-p');const res=q('#batchResult');
-  btn.disabled=true;res.textContent='';
-  const lines=[];
-  const normEmail=e=>String(e||'').trim().toLowerCase();
-  // 先拉取现有账号与进行中的加号任务，按邮箱剔除重复项
-  let existing=[],jobs={};
-  try{
-    const [a,j]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]);
-    existing=a.accounts||[];jobs=j.jobs||{};
-  }catch(e){}
-  const owner=new Map();
-  existing.forEach(x=>{if(x.email&&!owner.has(normEmail(x.email)))owner.set(normEmail(x.email),x.name);});
-  Object.entries(jobs).forEach(([name,job])=>{
-    if(job.kind==='add'&&job.status==='running'&&job.email&&!owner.has(normEmail(job.email)))
-      owner.set(normEmail(job.email),name+' (Đang thêm)');
-  });
-  const nameTaken=new Set(existing.map(x=>x.name));
-  const seen=new Map();
-  const todo=[];const dups=[];
-  accounts.forEach((a,idx)=>{
-    const em=normEmail(a.email);
-    let why='';
-    if(nameTaken.has(a.name))why='Tên tài khoản '+a.name+' đã tồn tại';
-    else if(owner.has(em))why='Email bị trùng lặp (đã có ở '+owner.get(em)+')';
-    else if(seen.has(em))why='Trùng lặp trong lượt nạp này (dòng '+(seen.get(em)+1)+')';
-    if(why){
-      dups.push('Bỏ qua '+a.name+' '+a.email+': '+why);
-      return;
-    }
-    seen.set(em,idx);
-    nameTaken.add(a.name);
-    todo.push(a);
-  });
-  if(dups.length){
-    lines.push('Phát hiện '+dups.length+' tài khoản bị trùng lặp, đã tự động loại bỏ:');
-    lines.push(...dups);
-    res.textContent=lines.join('\n');
-  }
-  for(let i=0;i<todo.length;i++){
-    const a=todo[i];
-    try{
-      await api('/api/admin/accounts',{method:'POST',body:a});
-      lines.push('✓ '+a.name+' '+a.email+' Đã gửi thành công');
-    }catch(e){
-      lines.push('✗ '+a.name+' '+a.email+': '+e.message);
-    }
-    res.textContent=lines.join('\n');
-    await new Promise(r=>setTimeout(r,800));
-  }
-  btn.disabled=false;
-  if(!todo.length)lines.push('Không có tài khoản mới nào được nạp');
-  else lines.push('Hoàn tất: Đã nạp mới '+todo.length+' tài khoản');
-  res.textContent=lines.join('\n');
-  refresh();
+  const text=q('#f_batch').value, btn=q('#bulkStart'), res=q('#batchResult');btn.disabled=true;
+  try{const r=await api('/api/admin/accounts/import-start',{method:'POST',body:{text}});const names=r.accepted.map(x=>x.name);
+    while(q('#batchResult')===res){const j=await api('/api/admin/jobs');const rows=names.map(n=>j.jobs[n]||{status:'running',stage_vi:'Chờ đăng nhập'});
+      const completed=rows.filter(x=>x.status!=='running').length;
+      res.textContent=`Hoàn thành ${completed}/${names.length} · Bỏ qua ${r.duplicate} dòng trùng, ${r.invalid} dòng lỗi\n`+names.map((n,i)=>`${n}: ${rows[i].stage_vi||({success:'Đã đăng nhập',failed:'Đăng nhập thất bại',running:'Đang đăng nhập'})[rows[i].status]}`).join('\n');
+      if(completed===names.length)break;await new Promise(resolve=>setTimeout(resolve,1000));
+    }await refresh();
+  }catch(e){res.textContent=e.message;}finally{btn.disabled=false;}
 }
 
 let addMode='google';
@@ -2293,6 +2260,7 @@ function jobProgressMarkup(t){
   let html=`<div class="job-progress" aria-label="Tiến độ tạo video"><ol class="job-steps">${steps.map((step,i)=>`<li class="${i<=index?'reached':''} ${i===index?'current':''}" ${i===index?'aria-current="step"':''}>${esc(phaseLabels[step])}</li>`).join('')}</ol>`;
   if(active||t.status==='completed')html+=`<progress max="100" ${t.status==='completed'?'value="100"':''} aria-label="${esc(taskLabel(t))}"></progress>`;
   html+=`<p class="tiny">${active?'Đã chờ '+elapsedLabel+' · ':''}Kiểm tra gần nhất: ${esc(checked)}. ${active?'Studio cập nhật mỗi 3 giây; thông tin Dola được lấy qua polling định kỳ.':''}</p>`;
+  if(t.status==='queued'&&t.error?.startsWith('Chờ tài khoản'))html+='<p role="status">'+esc(t.error)+'</p>';
   if(active)html+='<p class="tiny">Dola chưa cung cấp phần trăm dựng video. Thanh chờ thể hiện tác vụ đang được theo dõi.</p>';
   if(latest.connection==='interrupted')html+='<p role="status">Tạm mất kết nối với Dola. Đang kiểm tra lại conversation cũ; thông tin bên dưới là cập nhật đã nhận trước đó.</p>';
   const display=t.upstream_display||[],message=display.at(-1);

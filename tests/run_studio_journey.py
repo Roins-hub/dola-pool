@@ -116,10 +116,21 @@ async def browser_journey():
   await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'progress-mobile.png'),full_page=True)
   assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
   await page.set_viewport_size({'width':1440,'height':1000})
+  # Disabling inventory does not interrupt the accepted conversation.
+  auth=login()
+  httpx.patch(BASE+'/api/admin/account-pools/default',headers=auth,json={'enabled':False}).raise_for_status()
   (ROOT/'hold').unlink()
   await page.wait_for_function("document.querySelector('#gen_job_content video')!==null")
+  waiting_id=create('Chờ kho được bật',duration=15,request_id='inventory-wait')
+  await page.wait_for_timeout(1200)
+  assert row(waiting_id)['status']=='queued'
+  assert row(waiting_id)['error'].startswith('Chờ tài khoản')
   assert len(events('submit'))==before+1
-  assert events('submit')[-1]['images']==1
+  httpx.patch(BASE+'/api/admin/account-pools/default',headers=auth,json={'enabled':True}).raise_for_status()
+  await asyncio.to_thread(wait_row,waiting_id,'completed')
+
+  assert len(events('submit'))==before+2
+  assert events('submit')[-2]['images']==1
   assert await page.get_by_role('button',name='Tạo tiếp và ghép',exact=True).count()==1
   await page.screenshot(path=str(OUT/'studio-desktop.png'),full_page=True)
   # A stale rewrite must not overwrite a newer idea.

@@ -268,6 +268,8 @@ class BrowserPool:
         self._conn.commit()
         # 旧库兼容：补新元数据列
         for column, definition in (
+            ("pool_id", "TEXT DEFAULT 'default'"),
+            ("facebook_uid", "TEXT DEFAULT ''"),
             ("email", "TEXT DEFAULT ''"),
             ("rate_limited_until", "REAL DEFAULT 0"),
             ("limit_reason", "TEXT DEFAULT ''"),
@@ -297,6 +299,8 @@ class BrowserPool:
                 self._conn.commit()
             except sqlite3.OperationalError:
                 pass
+        self._conn.execute("CREATE TABLE IF NOT EXISTS account_pools (id TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1)")
+        self._conn.execute("INSERT OR IGNORE INTO account_pools VALUES ('default', 'Tài khoản của tôi', 1)")
         # 一次性回填：老号当年验证通过的时点当作「激活时间」，免得它们被误判成【待激活】
         self._conn.execute(
             "UPDATE accounts_meta SET activated_at=COALESCE(NULLIF(login_checked_at, 0), created_at) "
@@ -438,7 +442,7 @@ class BrowserPool:
 
     def _ordered_candidates(self, allowed: tuple[str, ...]) -> list:
         """按额度组优先级排序候选（2.5 先半额再满额），组内保持既有顺序（钉住 > weight > 名称）。"""
-        rows = self._sorted_accounts()
+        rows = [a for a in self._sorted_accounts() if a["pool_enabled"]]
         if len(allowed) < 2:
             return rows
         rank = {group: index for index, group in enumerate(allowed)}
@@ -595,6 +599,7 @@ class BrowserPool:
         """
         self._clear_expired_rate_limits()
         now = time.time()
+        inventories = {r["id"]: r for r in self.list_inventory_pools()}
         out = []
         for a in self.accounts:
             m = self._meta(a)
@@ -602,6 +607,9 @@ class BrowserPool:
             lock = self._locks.get(a)
             out.append({
                 "name": a,
+                "pool_id": m["pool_id"] if m else "default",
+                "pool_enabled": bool(inventories.get(m["pool_id"] if m else "default", {}).get("enabled", False)),
+                "pool_name": inventories.get(m["pool_id"] if m else "default", {}).get("name", ""),
                 "scheduling": bool(m["scheduling"]) if m else True,
                 "note": m["note"] if m else "",
                 "email": m["email"] if m else "",
@@ -659,6 +667,39 @@ class BrowserPool:
         if not m["scheduling"]:
             return "standby"
         return "healthy"
+
+    def list_inventory_pools(self) -> list[dict]:
+        return [dict(r) for r in self._conn.execute("SELECT * FROM account_pools ORDER BY id")]
+
+    def set_inventory_pool(self, pool_id: str, *, name=None, enabled=None) -> dict:
+        import re
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", pool_id):
+            raise ValueError("Mã kho không hợp lệ")
+        if name is not None and (not name.strip() or len(name) > 100):
+            raise ValueError("Tên kho cần từ 1 đến 100 ký tự")
+        row = self._conn.execute("SELECT * FROM account_pools WHERE id=?", (pool_id,)).fetchone()
+        if row is None and name is None:
+            raise ValueError("Không tìm thấy kho tài khoản")
+        self._conn.execute("INSERT INTO account_pools VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, enabled=excluded.enabled",
+                           (pool_id, name.strip() if name is not None else row['name'],
+                            int(enabled) if enabled is not None else (row['enabled'] if row else 1)))
+        self._conn.commit()
+        return dict(self._conn.execute("SELECT * FROM account_pools WHERE id=?", (pool_id,)).fetchone())
+
+    def assign_inventory_pool(self, names: list[str], pool_id: str) -> None:
+        if not self._conn.execute("SELECT 1 FROM account_pools WHERE id=?", (pool_id,)).fetchone():
+            raise ValueError("Không tìm thấy kho tài khoản")
+        if any(n not in self.accounts for n in names):
+            raise ValueError("Không tìm thấy tài khoản")
+        with self._conn:
+            for name in names:
+                self._ensure_meta(name)
+                self._conn.execute("UPDATE accounts_meta SET pool_id=? WHERE name=?", (pool_id, name))
+
+    @property
+    def inventory_waiting(self) -> bool:
+        rows = self.list_accounts()
+        return bool(rows) and not any(a["pool_enabled"] and a["scheduling"] for a in rows)
 
     def set_scheduling(self, name: str, on: bool):
         self._conn.execute(
@@ -967,7 +1008,7 @@ class BrowserPool:
         return not row or row["credit_balance"] is None or row["credit_balance"] >= required
 
     def _schedulable(self, a: dict) -> bool:
-        return (a["scheduling"] and not a["cooling"] and not a["rate_limited"]
+        return (a.get("pool_enabled", True) and a["scheduling"] and not a["cooling"] and not a["rate_limited"]
                 and not a["quota_blocked"] and a["login_ok"] != 0
                 and a["used_today"] < DAILY_LIMIT
                 and (a["credit_balance"] is None or a["credit_balance"] >= 2))
@@ -982,14 +1023,14 @@ class BrowserPool:
     @property
     def all_accounts_limited(self) -> bool:
         """所有开启调度且未处于风控冷却的账号都已达到每日上限。"""
-        candidates = [a for a in self.list_accounts() if a["scheduling"] and not a["cooling"]]
+        candidates = [a for a in self.list_accounts() if a["pool_enabled"] and a["scheduling"] and not a["cooling"]]
         return bool(candidates) and all(
             a["rate_limited"] or a["used_today"] >= DAILY_LIMIT for a in candidates
         )
 
     @property
     def all_accounts_quota_blocked(self) -> bool:
-        candidates = [a for a in self.list_accounts() if a["scheduling"] and not a["cooling"]]
+        candidates = [a for a in self.list_accounts() if a["pool_enabled"] and a["scheduling"] and not a["cooling"]]
         return bool(candidates) and all(
             a["quota_blocked"] or a["rate_limited"] or a["used_today"] >= DAILY_LIMIT
             for a in candidates
@@ -1486,6 +1527,11 @@ class BrowserPool:
                 return deadline is None or time.time() < deadline
 
             while attempts_left() and time_left():
+                while self.inventory_waiting:
+                    await asyncio.sleep(1)
+                    # Waiting for a deliberately disabled inventory is not a generation timeout.
+                    if deadline is not None:
+                        deadline += 1
                 picked = False
                 waiting_possible = False
                 group_wait = False

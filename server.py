@@ -662,6 +662,10 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 变化」算排队时长，不清零的话刚被重启捞回来的任务会带着旧的 updated_at 立刻被判
         # 「排队超时」——把刚修好的恢复路径又堵死。
         store.update(task_id, status="queued", phase="waiting", error="")
+        while pool.inventory_waiting:
+            store.update(task_id, phase="waiting", error="Chờ tài khoản — hãy bật kho hoặc bật tài khoản trong Cài đặt")
+            await asyncio.sleep(1)
+        store.update(task_id, error="")
         await key_limiter.acquire(api_key_hash, client.get("concurrency_limit", 0))
         acquired = True
         # 这里不能急着标 processing：接下来 pool.generate_video 还可能在全局并发槽 /
@@ -948,6 +952,8 @@ def _watchdog_plan() -> list[dict]:
     failed_ids: set[str] = set()
     for row in info["waiting"]:
         task_id = row["id"]
+        if pool.inventory_waiting and not row.get("submission_started_at"):
+            continue
         since = row.get("queued_since") or row["created_at"] or time.time()
         minutes = (time.time() - float(since)) / 60
         print(f"[watchdog] {task_id} 排队 {minutes:.0f} 分钟仍没轮到（上游持续限流），判失败",
@@ -1530,6 +1536,7 @@ class StressRequest(BaseModel):
 
 
 class AccountPatch(BaseModel):
+    pool_id: str | None = None
     scheduling: bool | None = None
     note: str | None = None
     email: str | None = None
@@ -1750,12 +1757,40 @@ async def admin_stress_start(body: StressRequest,
     return {**STRESS_RUN, "busy_tasks": 0, "running_jobs": 0}
 
 
+class InventoryPoolBody(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    enabled: bool | None = None
+
+
+@app.get("/api/admin/account-pools")
+async def admin_inventory_pools(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return {"pools": pool.list_inventory_pools()}
+
+
+@app.post("/api/admin/account-pools")
+@app.patch("/api/admin/account-pools/{pool_id}")
+async def admin_inventory_pool_set(body: InventoryPoolBody, pool_id: str = "",
+                                   x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    try:
+        return pool.set_inventory_pool(pool_id or body.id or "", name=body.name, enabled=body.enabled)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @app.patch("/api/admin/accounts/{name}")
 async def admin_account_patch(name: str, body: AccountPatch,
                               x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     if name not in pool.accounts:
         raise HTTPException(404, "account not found")
+    if body.pool_id is not None:
+        try:
+            pool.assign_inventory_pool([name], body.pool_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     if body.scheduling is not None:
         pool.set_scheduling(name, body.scheduling)
     if body.note is not None:
@@ -2306,6 +2341,85 @@ async def admin_import_cookies(body: ImportTextBody,
     return {"ok": True, **result}
 
 
+def _preview_account_import(account_pool, text: str) -> dict:
+    from credential_import import parse_account_line
+    from add_fb_account import parse_fb_input
+    rows, seen = [], set()
+    existing_fb = {j.get("facebook_uid") for j in JOBS.values() if j.get("status") == "running"} | {r["facebook_uid"] for r in account_pool._conn.execute("SELECT facebook_uid FROM accounts_meta") if r["facebook_uid"]}
+    for number, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        identity, kind, state = "", "google", "ready"
+        if "c_user=" in line:
+            kind = "facebook"
+            cookie, email, _ = parse_fb_input(line)
+            cookies = dict(part.strip().split("=", 1) for part in cookie.split(";") if "=" in part)
+            identity = cookies.get("c_user", "").strip()
+            if not identity or not cookies.get("xs"):
+                state = "invalid"
+            elif identity in existing_fb or ("@" in email and account_pool.find_accounts_by_email(email)):
+                state = "duplicate"
+        else:
+            cred = parse_account_line(line)
+            if not cred or not cred.password:
+                state = "invalid"
+            else:
+                identity = cred.email.lower()
+                if account_pool.find_accounts_by_email(identity) or any(j.get("status") == "running" and (j.get("email") or "").lower() == identity for j in JOBS.values()):
+                    state = "duplicate"
+        key = (kind, identity)
+        if state == "ready" and key in seen:
+            state = "duplicate"
+        seen.add(key)
+        rows.append({"line": number, "kind": kind, "identity": identity, "status": state})
+    return {"rows": rows, **{state: sum(r["status"] == state for r in rows) for state in ("ready", "duplicate", "invalid")}}
+
+
+@app.post("/api/admin/accounts/import-preview")
+async def admin_import_preview(body: ImportTextBody, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if len(body.text) > 1_000_000:
+        raise HTTPException(422, "Danh sách quá lớn (tối đa 1 MB)")
+    return _preview_account_import(pool, body.text)
+
+
+@app.post("/api/admin/accounts/import-start", status_code=202)
+async def admin_import_start(body: ImportTextBody, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if len(body.text) > 1_000_000:
+        raise HTTPException(422, "Danh sách quá lớn (tối đa 1 MB)")
+    preview = _preview_account_import(pool, body.text)
+    lines = body.text.splitlines()
+    accepted, errors = [], []
+    taken = set(pool.accounts) | set(JOBS)
+    from credential_import import parse_account_line
+    for row in preview['rows']:
+        if row['status'] != 'ready':
+            continue
+        line = lines[row['line'] - 1]
+        prefix = 'fb' if row['kind'] == 'facebook' else 'acc'
+        index = 1
+        while f"{prefix}{index}" in taken:
+            index += 1
+        name = f"{prefix}{index}"
+        taken.add(name)
+        if row['kind'] == 'facebook':
+            data = AccountAdd(name=name, facebook=line)
+        else:
+            cred = parse_account_line(line)
+            data = AccountAdd(name=name, email=cred.email, password=cred.password, totp=cred.totp)
+        try:
+            await admin_account_add(data, x_admin_key=x_admin_key)
+            JOBS[name]['import_line'] = row['line']
+            if row['kind'] == 'facebook':
+                JOBS[name]['facebook_uid'] = row['identity']
+            accepted.append({'name': name, 'line': row['line']})
+        except HTTPException as exc:
+            errors.append({'line': row['line'], 'message_vi': failure_text.present(str(exc.detail))['message_vi']})
+    return {**preview, 'accepted': accepted, 'errors': errors}
+
+
 @app.post("/api/admin/accounts/import-accounts")
 async def admin_import_accounts(body: ImportTextBody,
                                 x_admin_key: str | None = Header(default=None)):
@@ -2576,16 +2690,20 @@ async def admin_user_delete(username: str,
 async def _run_add_job(name: str, email: str, password: str, totp: str,
                        cookies: str = "", cookie_skip_verify: bool = False,
                        facebook: str = "") -> None:
-    JOBS[name] = {"kind": "add", "status": "running", "email": email or "facebook",
-                  "error": "", "started_at": time.time()}
+    JOBS[name] = {**JOBS.get(name, {}), "kind": "add", "status": "running", "email": email or "facebook",
+                  "error": "", "started_at": time.time(), "stage_vi": "Chờ đăng nhập"}
     try:
         async with ADD_ACCOUNT_SEM:
+            JOBS[name]["stage_vi"] = "Đang đăng nhập Facebook" if facebook else "Đang đăng nhập tài khoản"
             if facebook or ("c_user=" in cookies) or ("c_user=" in email):
                 fb_line = facebook or cookies or email
                 res = await add_fb_account_flow(name, fb_line)
                 pool.ensure_account(name)
                 pool.set_sessionid(name, res["sessionid"])
                 pool.set_source(name, "facebook")
+                uid = _preview_account_import(pool, fb_line)['rows'][0]['identity']
+                pool._conn.execute("UPDATE accounts_meta SET facebook_uid=? WHERE name=?", (uid, name))
+                pool._conn.commit()
                 pool.set_login_status(name, True)
                 if res.get("email"):
                     pool.set_email(name, res["email"])
@@ -2604,9 +2722,9 @@ async def _run_add_job(name: str, email: str, password: str, totp: str,
                 pool.set_email(name, email)
                 pool.set_source(name, "login")
                 pool.set_login_status(name, True)
-        JOBS[name] = {**JOBS[name], "status": "success"}
+        JOBS[name] = {**JOBS[name], "status": "success", "stage_vi": "Đã đăng nhập"}
     except Exception as e:
-        JOBS[name] = {**JOBS[name], "status": "failed", "error": str(e)[:300]}
+        JOBS[name] = {**JOBS[name], "status": "failed", "stage_vi": "Đăng nhập thất bại", "error": failure_text.sanitize_details(str(e))[:300]}
 
 
 async def _cred_try_refresh_once() -> None:
