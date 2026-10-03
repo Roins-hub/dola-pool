@@ -53,6 +53,10 @@ Neo được xác minh trên nguyên văn prompt, không dựa vào hash chuẩn
 
 Token preflight mới gắn session, prompt, cấu hình AI, context fingerprint và rules_version. Khi context thay đổi phải kiểm tra lại. Request cũ không có context vẫn hoạt động ở chế độ kiểm tra văn bản; lúc tạo video backend bổ sung kiểm tra cấu hình thực tế và không dùng token văn bản để chứng nhận khả năng chưa kiểm tra. Frontend mới luôn gửi đầy đủ context. Không loại bỏ backend validation.
 
+Quy tắc tương thích cụ thể: token có context phải khớp toàn bộ context lúc gửi. Với token cũ/text-only hợp lệ, backend chạy một lượt kiểm tra bổ sung có context thực trước khi nhận task mới; allow được tiếp tục, review trả yêu cầu xác nhận kèm kết quả/token mới, block hoặc lỗi AI chưa nhận task. Không chạy lại AI khi trả biên nhận của request đã tồn tại, kể cả token đã hết hạn. Kiểm tra idempotency trước các thao tác có thể tạo chi phí hoặc side effect.
+
+Fingerprint tham chiếu được backend đối chiếu với ảnh nhận thật: SHA-256 byte ảnh theo đúng thứ tự và vai trò, không dùng tên file hoặc tin digest client tự khai. Với URL, chỉ dùng đường tải/validation an toàn hiện có và nội dung đã chuẩn hóa; không cấp chứng nhận ảnh chỉ từ URL có thể thay đổi. Nếu client mới gửi metadata khác ảnh lúc tạo, yêu cầu kiểm tra lại. Phân tích pixel không thuộc khả năng mặc định; UI ghi rõ AI đã kiểm tra văn bản và metadata. Mẻ folder giữ digest/ảnh theo từng prompt và bản sao input riêng của mỗi job như batch hiện có.
+
 Sau confirmed refusal, nút Phân tích và sửa dùng prompt và lỗi thực tế của task; kết quả đi vào bản nháp. Người dùng duyệt rồi tạo job mới có liên kết task trước. Không tự gửi lại conversation unknown, không xoay tài khoản để thử cùng nội dung bị từ chối. Tự sửa/tự gửi có chi phí không thuộc mặc định đợt này.
 
 ## 6. Workspace, batch và tiến độ
