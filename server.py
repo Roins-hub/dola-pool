@@ -33,7 +33,8 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field, ValidationError, StrictInt
 
@@ -42,6 +43,7 @@ if config.TRANSPORT_MODE == "relay":
     import cf_hook
 import cred_store
 import failure_text
+failure_text.install_log_redaction()
 import proxy_store
 from add_account import add_account_flow
 from add_fb_account import add_fb_account_flow
@@ -115,6 +117,21 @@ Path("web").mkdir(parents=True, exist_ok=True)
 APP_VERSION = "2.1.3"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def localized_request_error(request, exc):
+    raw = exc.detail
+    text = raw if isinstance(raw, str) else str(raw.get('message', 'Không thực hiện được yêu cầu')) if isinstance(raw, dict) else 'Không thực hiện được yêu cầu'
+    display = failure_text.present(text)
+    if re.search(r'[\u3400-\u9fff]', text):
+        message = display['message_vi'] if display['category'] != 'unknown' else 'Không thực hiện được yêu cầu; hãy xem chi tiết để kiểm tra dữ liệu hoặc kết nối.'
+    else:
+        message = text
+    return JSONResponse(status_code=exc.status_code, headers=exc.headers,
+        content={'detail': failure_text.sanitize_details(raw) if isinstance(raw, str) else raw,
+                 'message_vi': message, 'failure_display': {**display, 'message_vi': message}})
+
 
 # 浏览器直连（画布这类纯前端）需要 CORS；默认放开所有来源，
 # 用 DOLA_CORS_ORIGINS 收紧（逗号分隔）。鉴权依旧是 Bearer Key，放开来源不等于放开权限。
@@ -335,15 +352,15 @@ def _auth(authorization):
 
 def _admin_auth(x_admin_key: str | None):
     if not x_admin_key:
-        raise HTTPException(401, "Please login first")
+        raise HTTPException(401, "Vui lòng đăng nhập trước")
     session = ADMIN_SESSIONS.get(x_admin_key)
     if not session or session.get("expires_at", 0) < time.time():
         ADMIN_SESSIONS.pop(x_admin_key, None)
-        raise HTTPException(401, "Session expired, please login again")
+        raise HTTPException(401, "Phiên đăng nhập đã hết hạn; hãy đăng nhập lại")
     user = user_get(session.get("username", ""))
     if not user or not user.get("enabled"):
         ADMIN_SESSIONS.pop(x_admin_key, None)
-        raise HTTPException(401, "Account unavailable, please login again")
+        raise HTTPException(401, "Tài khoản không khả dụng; hãy đăng nhập lại")
 
 
 def _normalize_allowed_durations(values) -> list[int]:
@@ -588,7 +605,7 @@ def _log_image_fields(raw, endpoint: str) -> None:
     keys = sorted(str(k) for k in raw.keys())
     print(
         f"[imgreq] {endpoint} top_keys={json.dumps(keys, ensure_ascii=False)} "
-        f"sample={sample[:700]}",
+        f"fields={len(keys)}",
         flush=True,
     )
 
@@ -1664,6 +1681,7 @@ async def admin_accounts(x_admin_key: str | None = Header(default=None)):
     accounts = pool.list_accounts(processing_accounts=store.busy_account_ids())
     sessions = proxy_store.sessions_snapshot()
     for acc in accounts:
+        acc["group_reason_display"] = failure_text.present_account_group(acc.get("group") or "", acc.get("group_reason") or "")
         acc["note_display"] = failure_text.present_note(acc.get("note") or "")
         acc["note"] = failure_text.sanitize_details(acc.get("note") or "")
         info = get_account_proxy(acc["name"])
@@ -2855,7 +2873,8 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
 @app.get("/api/admin/jobs")
 async def admin_jobs(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"jobs": JOBS}
+    return {"jobs": {name: {**job, "error": failure_text.sanitize_details(job.get("error") or ""),
+                            "failure_display": failure_text.present(job.get("error") or "")} for name,job in JOBS.items()}}
 
 
 def _task_display(row: dict) -> dict:

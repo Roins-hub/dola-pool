@@ -163,3 +163,11 @@ async def test_double_click_legacy_only_one_extra_ai_request(studio,ai_http,monk
     assert one.id==two.id and len(studio.recent_tasks(50))==1
     assert len(calls)==1
     assert len(ai_http['requests'])==1
+
+
+def test_explicit_empty_replacement_can_delete_exact_second_occurrence():
+    prompt='🐈 Mèo chạy. Mèo chạy.'
+    issue=gate.validate_issue_anchors(prompt,[{'id':'delete-repeat','quote':'Mèo chạy.','occurrence':2,'replacement':''}])[0]
+    assert issue['applicable'] is True
+    missing=gate.validate_issue_anchors(prompt,[{'id':'comment','quote':'Mèo chạy.','occurrence':2}])[0]
+    assert missing['applicable'] is False

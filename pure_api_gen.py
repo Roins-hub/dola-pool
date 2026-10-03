@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import config
+import failure_text
 from pure_signer import install
 
 log = logging.getLogger("dola.pure_api")
@@ -160,54 +161,21 @@ def _load_state(state_file: Path) -> dict[str, Any]:
     return data
 
 
-def _looks_like_proxy_block(exc: Exception) -> bool:
-    """异常是不是「代理出口把 CDN 拦了」这类和图片上传有关的问题。"""
-    text = ("%s: %s" % (type(exc).__name__, exc)).lower()
-    return any(k in text for k in (
-        "proxy", "tunnel connection failed", "403", "connecttimeout",
-    ))
-
-
 def _upload_reference_images(dola, session, ctx, headers, paths, *,
                              state_file, region, pc_version) -> list[dict[str, Any]]:
-    """把本地参考图逐张上传，返回可直接提交的 uri 列表。
-
-    上传走 2 步（ApplyImageUpload 要打到金山 CDN：imagex-*.bytevcloudapi.com），
-    实测部分代理出口对该域名 CONNECT 直接 403。此时若
-    DOLA_REFERENCE_UPLOAD_DIRECT_FALLBACK 开启，就用直连重传一次
-    （只有上传这一段换出口，生成仍旧走账号代理）。
-    """
+    """Upload on the configured connection; never bypass a failed proxy."""
     imgs = dola.normalize_image_paths(paths)
-    uploaded: list[dict[str, Any]] = []
-    fallback = None
-    try:
-        for idx, img in enumerate(imgs, 1):
-            try:
-                info = dola.upload_image(session, ctx, headers, img)
-            except Exception as exc:
-                if not config.REFERENCE_UPLOAD_DIRECT_FALLBACK or not _looks_like_proxy_block(exc):
-                    raise PureApiError(
-                        f"参考图上传失败（{idx}/{len(imgs)} {img.name}）: {str(exc)[:200]}"
-                    ) from exc
-                log.warning("Reference image upload via proxy failed, retrying directly (%s): %s",
-                            type(exc).__name__, str(exc)[:160])
-                if fallback is None:
-                    fallback = dola.setup_session(
-                        region=region, pc_version=pc_version, proxy="",
-                        login_pure=True, login_state_file=str(state_file))
-                try:
-                    info = dola.upload_image(fallback[0], fallback[1], fallback[2], img)
-                except Exception as exc2:
-                    raise PureApiError(
-                        f"参考图直连上传也失败（{idx}/{len(imgs)} {img.name}）: {str(exc2)[:200]}"
-                    ) from exc2
-            uploaded.append(info)
-            log.info("Reference image %s/%s uploaded %s -> %s",
-                     idx, len(imgs), img.name, str(info.get("uri"))[:80])
-        return uploaded
-    finally:
-        if fallback is not None:
-            fallback[0].close()
+    uploaded = []
+    for idx, img in enumerate(imgs, 1):
+        try:
+            info = dola.upload_image(session, ctx, headers, img)
+        except Exception as exc:
+            raise PureApiError(
+                f"Không tải được ảnh tham chiếu ({idx}/{len(imgs)} {img.name}): {failure_text.sanitize_details(str(exc))[:200]}"
+            ) from exc
+        uploaded.append(info)
+        log.info("Đã tải ảnh tham chiếu %s/%s: %s", idx, len(imgs), img.name)
+    return uploaded
 
 
 def _media_keys(poll) -> list[str]:

@@ -296,7 +296,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
           <select id="srcFilter" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)" onchange="srcFilterVal=this.value;accPage=1;loadAccounts()">
             <option value="all">Tất cả nguồn</option>
             <option value="login">Đăng nhập Google</option>
-            <option value="cookie">Nạp Cookie</option>
+            <option value="facebook">Đăng nhập Facebook</option><option value="cookie">Nạp Cookie</option>
           </select>
           <button class="btn" onclick="loadAccounts()">Làm mới trạng thái</button>
           <details class="account-advanced"><summary>Thao tác nâng cao</summary><div class="settings-nav">
@@ -575,7 +575,7 @@ async function api(path,opts={}){
   if(r.status===401){showLogin();throw new Error('unauthorized');}
   const text=await r.text();
   let data={};try{data=text?JSON.parse(text):{};}catch(e){}
-  if(!r.ok)throw new Error(typeof data.detail==='object'?JSON.stringify(data.detail):(data.detail||`${r.status} ${text.slice(0,120)}`));
+  if(!r.ok){const error=new Error(data.message_vi||(typeof data.detail==='object'?JSON.stringify(data.detail):(data.detail||`${r.status} ${text.slice(0,120)}`)));error.details=data.failure_display?.details;error.status=r.status;throw error;}
   return data;
 }
 
@@ -692,8 +692,8 @@ let groupFilterVal='all';   // all / valid / 满额 / 半额 / 冷却 / 生成�
 const GROUP_STYLE={'满额':'b-green','半额':'b-blue','冷却':'b-orange','生成中':'b-blue',
                    '风控':'b-red','待激活':'b-gray','异常':'b-red'};
 const GROUP_NAMES={
-  '满额':'Đủ 4 điểm (Full)',
-  '半额':'Còn 2 điểm (Half)',
+  '满额':'Hạn mức đầy',
+  '半额':'Còn hạn mức',
   '冷却':'Tạm nghỉ (Cooldown)',
   '生成中':'Đang render (Busy)',
   '风控':'Bị kiểm soát (Risk Flagged)',
@@ -705,8 +705,8 @@ function groupBadge(a){
   const g=a.group||'';
   if(!g)return '<span class="tiny">—</span>';
   const name=GROUP_NAMES[g]||g;
-  return '<span class="badge '+(GROUP_STYLE[g]||'b-gray')+'" title="'+esc(a.group_reason||name)+'">'+esc(name)+'</span>'
-    +(a.group_reason?'<div class="tiny">'+esc(a.group_reason)+'</div>':'');
+  const display=a.group_reason_display||{},reason=display.message_vi||name;
+  return '<span class="badge '+(GROUP_STYLE[g]||'b-gray')+'" title="'+esc(reason)+'">'+esc(name)+'</span><div class="tiny">'+esc(reason)+'</div>'+(display.details?'<details><summary>Chi tiết</summary><pre>'+esc(display.details)+'</pre></details>':'');
 }
 function renderGroupBar(d,container,jump){
   const g=d.groups||{};
@@ -719,16 +719,15 @@ function renderGroupBar(d,container,jump){
   const sep='<span class="sep"></span>';
   q(container||'#groupBar').innerHTML=
     btn('all','Tất cả',d.all_count||0,'Hiển thị toàn bộ tài khoản (kể cả Risk Flagged / Pending)')+
-    btn('valid','Hoạt động (Active)',d.valid_count||0,'Nhóm hoạt động: Đủ điểm + Còn 2 điểm + Tạm nghỉ + Đang render')+sep+
-    btn('满额','Đủ 4 điểm',n('满额'),'Hạn mức 4 điểm: Dành riêng cho Seedance 2.0 / Dự phòng 2.5')+
-    btn('半额','Còn 2 điểm',n('半额'),'Hạn mức 2 điểm: Ưu tiên tạo video 30s Seedance 2.5')+
-    btn('冷却','Tạm nghỉ',n('冷却'),'Còn 0-1 điểm: Tạm dừng gửi task, tự động hồi điểm lúc 00:00 (giờ Tokyo)')+
+    btn('valid','Hoạt động (Active)',d.valid_count||0,'Nhóm được theo dõi theo bộ đếm và trạng thái hiện có')+sep+
+    btn('满额','Hạn mức đầy',n('满额'),'Theo bộ đếm của Studio; số dư Dola có thể khác')+
+    btn('半额','Còn hạn mức',n('半额'),'Theo bộ đếm của Studio, chưa bảo đảm đủ điểm cho mọi video')+
+    btn('冷却','Tạm nghỉ',n('冷却'),'Chờ bộ đếm hoặc thời gian nghỉ; làm mới trạng thái để kiểm tra')+
     btn('生成中','Đang render',n('生成中'),'Tài khoản đang trong tiến trình sinh video')+sep+
     btn('风控','Kiểm soát (Risk)',n('风控'),'Bị đăng xuất hoặc nghi ngờ checkpoint: Cần khôi phục thủ công')+
     btn('待激活','Chờ kích hoạt',n('待激活'),'Tài khoản mới nạp, chưa chạy kiểm tra kích hoạt ban đầu')+
     btn('异常','Bất thường',n('异常'),'Quá thời gian phản hồi (timeout > 5 phút), tự động giải phóng khi hết cooldown')+sep+
-    '<span class="gbtn points" title="Tổng credit khả dụng của nhóm hoạt động (Seedance 2.5: 2 điểm/video 30s, Seedance 2.0: 3 điểm/video)">Điểm còn lại <b>'+pts+'</b> pts'
-      +'<span class="n">≈ Tạo được '+Math.floor(pts/2)+' video 30s</span></span>';
+    '<span class="gbtn points" title="Bộ đếm cục bộ của Studio; chưa bảo đảm số dư hoặc chi phí Dola">Hạn mức ghi nhận <b>'+pts+'</b></span>';
 }
 function setGroupFilter(key){groupFilterVal=key;accPage=1;loadAccounts();}
 function setGroupFilterGo(key){groupFilterVal=key;accPage=1;switchTab('accounts');}
@@ -739,6 +738,7 @@ function matchGroup(x){
 }
 
 function srcBadge(x){
+  if(x.source==='facebook')return '<span class="badge b-blue">Facebook</span>';
   if(x.source==='login')return '<span class="badge b-green" title="Đăng nhập tài khoản Google">Google Login</span>';
   if(x.source==='cookie')return '<span class="badge b-orange" title="Nạp bằng Cookie">Cookie Import</span>';
   return '<span class="tiny">—</span>';
@@ -780,7 +780,7 @@ async function loadAccounts(){
          <a href="javascript:;" onclick="rotateIp('${x.name}')">Đổi IP</a>
          <a href="javascript:;" onclick="probeIp('${x.name}')">Kiểm tra IP</a></div>`
       :'';
-    const warn=(jb&&jb.status==='failed')?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
+    const warn=(jb&&jb.status==='failed')?' <span class="tiny" title="'+esc(jb.failure_display?.message_vi||'Đăng nhập thất bại')+'">⚠</span>':'';
     return [
       `<input type="checkbox" data-name="${esc(x.name)}" ${selAccounts.has(x.name)?'checked':''} onchange="toggleSel('${x.name}',this.checked)">`,
       `<span class="account-id">${esc(x.name)}</span>`,
@@ -1998,7 +1998,7 @@ async function requestPreflight(prompt,indices=null){
   for(const image of inputImages)fd.append('images',image);
   const response=await fetch('/api/admin/prompts/preflight',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await response.json();
   if(response.status===401)showLogin();
-  if(!response.ok){const error=new Error(typeof data.detail==='string'?data.detail:'Không phân tích được prompt');error.status=response.status;throw error;}
+  if(!response.ok){const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không phân tích được prompt'));error.details=data.failure_display?.details;error.status=response.status;throw error;}
   return data;
 }
 function renderPromptAnalysis(result,snapshot){
@@ -2007,7 +2007,7 @@ function renderPromptAnalysis(result,snapshot){
   const issues=result.issues||[];if(!result.quality_summary&&!issues.length){hide('gen_analysis');return;}
   box.innerHTML='<h4>Phân tích và đề xuất sửa</h4><p class="analysis-summary">'+esc(result.quality_summary||'Xem từng nhận xét dưới đây.')+'</p><p class="tiny">AI kiểm tra văn bản và thông tin ảnh; chưa đánh giá nội dung pixel. Gợi ý không bảo đảm Dola chấp nhận.</p>'+issues.map(issue=>{
     const sources=(issue.source_ids||[]).map(id=>(result.sources||[]).find(source=>source.id===id)).filter(Boolean);
-    return `<article class="analysis-issue"><label><input type="checkbox" data-issue-id="${esc(issue.id)}" ${issue.applicable?'':'disabled'}><strong>${esc({content:'Nội dung',capability:'Khả năng thực hiện',quality:'Chất lượng'}[issue.kind]||'Nhận xét')}</strong></label>${issue.quote?'<blockquote>'+esc(issue.quote)+'</blockquote>':''}<p>${esc(issue.reason_vi)}</p>${issue.replacement?'<p class="replacement">Đề xuất: '+esc(issue.replacement)+'</p>':''}<p class="tiny">Mức chắc chắn: ${esc({high:'Cao',medium:'Vừa',low:'Thấp'}[issue.confidence]||'Chưa rõ')}${!issue.applicable?' · '+esc(issue.anchor_error||'Sửa trực tiếp nếu cần'):''}</p>${sources.map(source=>`<p class="analysis-sources">Nguồn: ${esc(source.source)} · ${esc(source.evidence)}</p>`).join('')}</article>`;
+    return `<article class="analysis-issue"><label><input type="checkbox" data-issue-id="${esc(issue.id)}" ${issue.applicable?'':'disabled'}><strong>${esc({content:'Nội dung',capability:'Khả năng thực hiện',quality:'Chất lượng'}[issue.kind]||'Nhận xét')}</strong></label>${issue.quote?'<blockquote>'+esc(issue.quote)+'</blockquote>':''}<p>${esc(issue.reason_vi)}</p>${typeof issue.replacement==='string'?'<p class="replacement">Đề xuất: '+(issue.replacement?esc(issue.replacement):'Xóa đoạn được chọn')+'</p>':''}<p class="tiny">Mức chắc chắn: ${esc({high:'Cao',medium:'Vừa',low:'Thấp'}[issue.confidence]||'Chưa rõ')}${!issue.applicable?' · '+esc(issue.anchor_error||'Sửa trực tiếp nếu cần'):''}</p>${sources.map(source=>`<p class="analysis-sources">Nguồn: ${esc(source.source)} · ${esc(source.evidence)}</p>`).join('')}</article>`;
   }).join('')+'<button class="btn" onclick="applySelectedSuggestions()">Tạo bản đề xuất từ lựa chọn</button>';
   show('gen_analysis');
 }
@@ -2028,7 +2028,7 @@ function applySelectedSuggestions(){
 
 let rewriteHistory=[], rewriteVersions=[], draftOriginal='', rewriteBase='', pendingRequestId='', pendingSnapshot='';
 const DRAFT_KEY='dola-studio-draft-v1';
-function studioMessage(text){q('#gen_action_msg').textContent=text;}
+function studioMessage(text,details=''){const el=q('#gen_action_msg');el.textContent=text;if(details){const d=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent='Chi tiết kỹ thuật';pre.textContent=details;d.append(summary,pre);el.append(d);}}
 function saveStudioDraft(){
   try{localStorage.setItem(DRAFT_KEY,JSON.stringify({prompt:q('#gen_prompt').value,original:draftOriginal,
     instructions:q('#gen_rewrite_instructions').value,history:rewriteHistory.slice(-20),versions:rewriteVersions.slice(-20),
@@ -2157,7 +2157,7 @@ async function doPreflightCheck(){
   try{const res=await requestPreflight(original);
     if(version!==preflightVersion||pv!==promptVersion||snapshot!==analysisSnapshot())return null;
     currentPreflight={...res,prompt:original,snapshot:generationSnapshot()};renderPreflightBanner(res);renderPromptAnalysis(res,snapshot);studioMessage('');return currentPreflight;
-  }catch(e){if(version===preflightVersion)studioMessage('Không kiểm tra được nội dung: '+e.message);return null;}
+  }catch(e){if(version===preflightVersion)studioMessage('Không kiểm tra được nội dung: '+e.message,e.details);return null;}
   finally{q('#btn_preflight').disabled=false;}
 }
 
@@ -2284,7 +2284,7 @@ async function submitVideoBatch(){
     const fd=new FormData();fd.append('batch',JSON.stringify({request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
       prompts:batchPreflight.entries.map(e=>({prompt:e.prompt,preflight_token:e.token,confirm_review:review,...(e.reference_indices?{reference_indices:e.reference_indices,reference_roles:e.reference_roles,group:e.group}:{})}))}));for(const image of selectedImages)fd.append('images',image);
     btn.textContent='Đang gửi mẻ…';const resp=await fetch('/api/admin/videos/batches',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await resp.json();
-    if(!resp.ok){const error=new Error(typeof data.detail==='string'?data.detail:'Không nhận được mẻ');error.status=resp.status;throw error;}
+    if(!resp.ok){const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không nhận được mẻ'));error.details=data.failure_display?.details;error.status=resp.status;throw error;}
     currentBatchId=data.batch_id;if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');pendingRequestId='';pendingSnapshot='';saveStudioDraft();switchTab('videos');
     studioMessage('Đã nhận mẻ gồm '+data.tasks.length+' video. Bạn có thể đóng trang; hàng đợi được lưu ở backend.');
   }catch(e){
@@ -2313,9 +2313,9 @@ async function doSubmitGenerate(){
     fd.append('reference_roles',JSON.stringify(selectedImages.map((_,i)=>referenceRoles[i]||'other')));fd.append('request_id',pendingRequestId);fd.append('preflight_token',currentPreflight.token||'');if(reviewed)fd.append('confirm_review','true');
     for(const image of selectedImages)fd.append('images',image);
     const resp=await fetch('/api/admin/videos/generations',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});
-    const data=await resp.json();if(resp.status===401)showLogin();if(!resp.ok){currentPreflight=null;const error=new Error(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu');error.confirmed=true;throw error;}
+    const data=await resp.json();if(resp.status===401)showLogin();if(!resp.ok){currentPreflight=null;const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu'));error.details=data.failure_display?.details;error.confirmed=true;throw error;}
     pendingRequestId='';pendingSnapshot='';currentBatchId='';trackStudioJob(data.id);studioMessage('Đã gửi. Bạn có thể đóng trang và xem lại trong Video của tôi.');
-  }catch(e){studioMessage(e.confirmed?'Chưa gửi video: '+e.message:'Chưa xác định trạng thái gửi: '+e.message+'. Kiểm tra Video của tôi; gửi lại cùng bản nháp sẽ dùng cùng mã yêu cầu.');}
+  }catch(e){studioMessage(e.confirmed?'Chưa gửi video: '+e.message:'Chưa xác định trạng thái gửi: '+e.message+'. Kiểm tra Video của tôi; gửi lại cùng bản nháp sẽ dùng cùng mã yêu cầu.',e.details);}
   finally{btn.disabled=false;btn.textContent='Tạo video';}
 }
 function trackStudioJob(taskId){

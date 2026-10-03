@@ -178,9 +178,8 @@ WATCHDOG_INTERVAL_SECONDS = int(os.getenv("DOLA_WATCHDOG_INTERVAL_SECONDS", "60"
 # 带参考图片的任务给 Dola 更长的异步生成窗口（秒）。
 REFERENCE_VIDEO_TIMEOUT = int(os.getenv("DOLA_REFERENCE_VIDEO_TIMEOUT", "900"))
 
-# 参考图上传要打金山 CDN（imagex-*.bytevcloudapi.com），实测部分代理出口对该域名
-# CONNECT 直接 403。1 = 上传段遇代理拦截时只用直连重传一次（生成仍走账号代理）。
-REFERENCE_UPLOAD_DIRECT_FALLBACK = os.getenv("DOLA_REFERENCE_UPLOAD_DIRECT_FALLBACK", "1") == "1"
+# Legacy setting retained for import compatibility; the upload path ignores it.
+REFERENCE_UPLOAD_DIRECT_FALLBACK = False
 
 # ===== 号池工程化增强（移植自 api-pool，默认关闭/不破坏现有行为）=====
 

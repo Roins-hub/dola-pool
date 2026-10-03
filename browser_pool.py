@@ -552,24 +552,24 @@ class BrowserPool:
         """
         kind = classify_upstream_failure(message)
         if kind == "transient":
-            print(f"[pool] {account} 上游拒绝本次提交（访问频繁），换号重试: {message[:160]}",
+            print(f"[pool] {account} 上游拒绝本次提交（访问频繁），换号重试: {failure_text.sanitize_details(message)[:160]}",
                   flush=True)
         elif kind == "daily":
-            print(f"[pool] {account} 当日次数已用完，标记到额度刷新: {message[:160]}", flush=True)
+            print(f"[pool] {account} 当日次数已用完，标记到额度刷新: {failure_text.sanitize_details(message)[:160]}", flush=True)
             self._mark_daily_limit(account, message)
         elif kind == "quota":
-            print(f"[pool] {account} 本单额度不够，标记到额度刷新: {message[:160]}", flush=True)
+            print(f"[pool] {account} 本单额度不够，标记到额度刷新: {failure_text.sanitize_details(message)[:160]}", flush=True)
             self._mark_quota_blocked(account, message)
         elif kind == "content":
             # 版权/内容拒稿：同一条提示词换号也过不了，不能把号标记成失败或额度不足。
-            print(f"[pool] {account} 内容/版权拒稿（与账号无关，不标记账号）: {message[:160]}", flush=True)
+            print(f"[pool] {account} 内容/版权拒稿（与账号无关，不标记账号）: {failure_text.sanitize_details(message)[:160]}", flush=True)
             # 拒稿原文同时落到账号备注：面板上能直接看到上游原话（肖像保护/内容审核/侵权…），
             # 不用再去翻日志或截断的任务报错。
             label = failure_text.label_for(message) or "内容/版权"
             self.append_note(account, failure_text.account_note_line(label, message))
             print(f"[pool] {account} 拒稿原文已写入账号备注", flush=True)
         elif kind == "short":
-            print(f"[pool] {account} 只出了短视频（不拼接，不标记账号）: {message[:160]}", flush=True)
+            print(f"[pool] {account} 只出了短视频（不拼接，不标记账号）: {failure_text.sanitize_details(message)[:160]}", flush=True)
         else:
             print(f"[pool] {account} 生成失败（第 {attempt} 次），换号重试: {message[:200]}", flush=True)
             self._note_fail_streak(account, message)
@@ -1483,7 +1483,7 @@ class BrowserPool:
                 except TimeoutError:
                     raise
                 except LoginExpiredError as e:
-                    print(f"[pool] {account} 登录态失效，标记需重新登录: {e}", flush=True)
+                    print(f"[pool] {account} 登录态失效，标记需重新登录: {failure_text.sanitize_details(e)}", flush=True)
                     self._set_risk(account, str(e))
                     self._conn.execute(
                         "UPDATE accounts_meta SET login_ok=0, login_checked_at=? WHERE name=?",
@@ -1617,30 +1617,30 @@ class BrowserPool:
                         except ConfirmedVideoFailure:
                             raise
                         except CreditInsufficientError as e:
-                            print(f"[pool] {account} 生成前积分不足，跳过: {e}", flush=True)
+                            print(f"[pool] {account} 生成前积分不足，跳过: {failure_text.sanitize_details(e)}", flush=True)
                             self._mark_quota_blocked(account, str(e))
                             last_err = e
                         except ShortClipError as e:
                             # 30 秒只要原生成片：上游这次只给了短视频就换号重试，不做两段拼接，
                             # 也不把号标成失败（短视频是上游行为，不是这个号的错）。
-                            print(f"[pool] {account} 只出了短视频，不拼接，换号重试: {e}", flush=True)
+                            print(f"[pool] {account} 只出了短视频，不拼接，换号重试: {failure_text.sanitize_details(e)}", flush=True)
                             last_err = e
                         except AbnormalNoAckError as e:
                             # 派发后 5 分钟一句回执都没有：这是账号侧异常 → 进【异常】组，换号重试
-                            print(f"[pool] {account} 派发后无任何回执 → 进【异常】组，换号: {e}", flush=True)
+                            print(f"[pool] {account} 派发后无任何回执 → 进【异常】组，换号: {failure_text.sanitize_details(e)}", flush=True)
                             self._mark_abnormal(account, str(e))
                             last_err = e
                         except AccountLimitedError as e:
-                            print(f"[pool] {account} 达到每日上限，立即换号: {e}", flush=True)
+                            print(f"[pool] {account} 达到每日上限，立即换号: {failure_text.sanitize_details(e)}", flush=True)
                             self._mark_daily_limit(account, str(e))
                             last_err = e
                         except CreditError as e:
-                            print(f"[pool] {account} 额度不足，换号: {e}", flush=True)
+                            print(f"[pool] {account} 额度不足，换号: {failure_text.sanitize_details(e)}", flush=True)
                             # 额度不足 = 本次不可用，按额度口径落到冷却组（额度刷新时恢复）
-                            self._mark_quota_blocked(account, f"额度不足: {e}")
+                            self._mark_quota_blocked(account, f"额度不足: {failure_text.sanitize_details(e)}")
                             last_err = e
                         except RiskControlError as e:
-                            print(f"[pool] {account} 风控，冷却 30 分钟，换号: {e}", flush=True)
+                            print(f"[pool] {account} 风控，冷却 30 分钟，换号: {failure_text.sanitize_details(e)}", flush=True)
                             self._conn.execute(
                                 "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
                                 (time.time() + COOLDOWN_SEC, account))
@@ -1656,7 +1656,7 @@ class BrowserPool:
                             self._conn.commit()
                             raise
                         except LoginExpiredError as e:
-                            print(f"[pool] {account} 登录态失效，标记需重新登录并换号: {e}", flush=True)
+                            print(f"[pool] {account} 登录态失效，标记需重新登录并换号: {failure_text.sanitize_details(e)}", flush=True)
                             self._set_risk(account, str(e))
                             self._conn.execute(
                                 "UPDATE accounts_meta SET login_ok=0, login_checked_at=? WHERE name=?",
@@ -1664,15 +1664,15 @@ class BrowserPool:
                             self._conn.commit()
                             last_err = e
                         except FileNotFoundError as e:
-                            print(f"[pool] {account} profile 缺失，跳过: {e}", flush=True)
+                            print(f"[pool] {account} profile 缺失，跳过: {failure_text.sanitize_details(e)}", flush=True)
                             # profile 缺失不能一直重试：进【异常】组，到期自动恢复
-                            self._mark_abnormal(account, f"profile 缺失: {e}")
+                            self._mark_abnormal(account, f"profile 缺失: {failure_text.sanitize_details(e)}")
                             last_err = e
                         except Exception as e:
                             message = str(e)
                             kind = classify_upstream_failure(message)
                             if kind == "content":
-                                print(f"[pool] {account} Thượng nguồn từ chối nội dung (Content refusal) -> Dừng ngay lập tức, không đổi tài khoản: {message[:160]}", flush=True)
+                                print(f"[pool] {account} Thượng nguồn từ chối nội dung (Content refusal) -> Dừng ngay lập tức, không đổi tài khoản: {failure_text.sanitize_details(message)[:160]}", flush=True)
                                 code = getattr(e, "error_code", None) or getattr(e, "status_code", None) or ""
                                 req_id = getattr(e, "request_id", None) or getattr(e, "upstream_request_id", None) or ""
                                 group = failure_text.label_for(message) or "content_refusal"

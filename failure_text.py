@@ -281,3 +281,33 @@ def present_update(update: dict) -> dict:
                   connection=update.get('connection'), wait_vi='' if _CJK.search(wait) else sanitize_details(wait),
                   details=sanitize_details(raw+'\n'+'\n'.join(str(x) for x in (update.get('creation_statuses') or []))))
     return result
+
+
+def install_log_redaction():
+    """Apply the existing sanitizer to all app logging, including exception text."""
+    import logging
+    previous = logging.getLogRecordFactory()
+    if getattr(previous, '_dola_redacted', False):
+        return
+    def redacted_record(*args, **kwargs):
+        record = previous(*args, **kwargs)
+        record.msg = sanitize_details(record.getMessage())
+        record.args = ()
+        if record.exc_info:
+            record.exc_text = sanitize_details(logging.Formatter().formatException(record.exc_info))
+            record.exc_info = None
+        if record.stack_info:
+            record.stack_info = sanitize_details(record.stack_info)
+        return record
+    redacted_record._dola_redacted = True
+    logging.setLogRecordFactory(redacted_record)
+
+
+def present_account_group(group: str, reason: str) -> dict:
+    messages = {'满额': 'Sẵn sàng nhận tác vụ theo bộ đếm hiện có.',
+                '半额': 'Còn hạn mức trong bộ đếm hiện có.', '冷却': 'Tạm chờ hạn mức hoặc hết thời gian nghỉ.',
+                '生成中': 'Tài khoản đang tạo video.', '风控': 'Cần kiểm tra đăng nhập hoặc phản hồi Dola.',
+                '待激活': 'Chưa hoàn tất kiểm tra tài khoản.', '异常': 'Phản hồi tài khoản cần kiểm tra lại.'}
+    raw = str(reason or '')
+    return {'message_vi': raw if raw and not re.search(r'[\u3400-\u9fff]', raw) else messages.get(group, 'Cần kiểm tra trạng thái tài khoản.'),
+            'details': sanitize_details(raw)}

@@ -1,4 +1,4 @@
-"""参考图纯 API 补丁单测：上传段直连回落 + guard 已解除。用假 dola，不碰真实上游。"""
+"""Reference uploads retain the selected connection; no live services."""
 from __future__ import annotations
 
 import json
@@ -66,16 +66,12 @@ def test_upload_ok_without_fallback(proxy_block_env):
     assert dola.closed == 0
 
 
-def test_proxy_403_falls_back_to_direct(proxy_block_env):
+def test_proxy_403_keeps_selected_connection(proxy_block_env):
     dola = FakeDola(fail_first=UploadError("HTTPSConnectionPool: 403 CONNECT tunnel connection failed"))
-    out = pure_api_gen._upload_reference_images(
-        dola, "s", "c", "h", ["a"],
-        state_file=Path("state.json"), region="jp", pc_version="1.0")
-    assert [i["uri"] for i in out] == ["uri://img1.png"]
-    assert len(dola.setup_calls) == 1
-    assert dola.setup_calls[0]["proxy"] == ""      # 只有上传段换直连
-    assert dola.closed == 1                          # 回落后关掉临时会话
-    assert dola.upload_calls[0][0] == "s" and dola.upload_calls[1][0] != "s"
+    with pytest.raises(pure_api_gen.PureApiError):
+        pure_api_gen._upload_reference_images(dola, "s", "c", "h", ["a"],
+            state_file=Path("state.json"), region="jp", pc_version="1.0")
+    assert dola.setup_calls == [] and len(dola.upload_calls) == 1
 
 
 def test_non_proxy_error_does_not_fallback(proxy_block_env):
@@ -84,7 +80,7 @@ def test_non_proxy_error_does_not_fallback(proxy_block_env):
         pure_api_gen._upload_reference_images(
             dola, "s", "c", "h", ["a"],
             state_file=Path("state.json"), region="jp", pc_version="1.0")
-    assert "参考图上传失败" in str(excinfo.value)
+    assert "Không tải được ảnh tham chiếu" in str(excinfo.value)
     assert dola.setup_calls == []
 
 
@@ -109,7 +105,7 @@ def test_direct_fallback_failure_reported(proxy_block_env):
         pure_api_gen._upload_reference_images(
             dola, "s", "c", "h", ["a"],
             state_file=Path("state.json"), region="jp", pc_version="1.0")
-    assert "参考图上传失败" in str(excinfo.value)
+    assert "Không tải được ảnh tham chiếu" in str(excinfo.value)
 
 
 def test_generate_pure_video_no_longer_rejects_reference_images(tmp_path, monkeypatch):
@@ -135,4 +131,4 @@ def test_generate_pure_video_no_longer_rejects_reference_images(tmp_path, monkey
             reference_image_paths=["a"], timeout=5)
     msg = str(excinfo.value)
     assert "暂不支持参考图片" not in msg
-    assert "参考图上传失败" in msg
+    assert "Không tải được ảnh tham chiếu" in msg

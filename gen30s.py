@@ -36,7 +36,7 @@ async def run(args):
         print("[!] Cookie không hợp lệ (thiếu sessionid)")
         sys.exit(1)
 
-    print(f"[*] Đã nhận cookie: sessionid={info['sessionid'][:10]}... | fp={info.get('fp', 'N/A')}")
+    print("[*] Đã nhận cookie đăng nhập.")
     client = DolaClient(cookie)
 
     # 1. Test chat

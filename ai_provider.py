@@ -211,6 +211,7 @@ async def call_active_ai(
 
 REWRITE_SYSTEM_PROMPT = """Bạn là đạo diễn hình ảnh hỗ trợ chỉnh sửa prompt video.
 Giữ ngôn ngữ, nhân vật, hành động, bối cảnh và cấu trúc cảnh của bản đầu vào.
+Với prompt tiếng Việt, dùng tiếng Việt tự nhiên cho góc máy (cảnh trung, cận cảnh, máy quay tiến/lùi, quay qua vai); không chèn câu chỉ dẫn tiếng Anh trừ khi người dùng yêu cầu.
 Làm theo yêu cầu chỉnh sửa riêng của người dùng. Không tự thêm tình tiết, không ép
 thành one-take hoặc tự chia timeline. Chỉ thêm chi tiết máy quay, ánh sáng và nhịp
 độ khi phù hợp yêu cầu. Không hứa bảo đảm kết quả của mô hình video.
@@ -271,7 +272,7 @@ Giữ ngôn ngữ, nhân vật, hành động, bối cảnh và cấu trúc cả
 Nếu chỉ nhận metadata ảnh, nói rõ chưa đánh giá pixel. Không hứa Dola sẽ chấp nhận hay trả đủ thời lượng.
 Chỉ viện dẫn source_ids từ rule được cung cấp, phân biệt giới hạn backend với giới hạn upstream.
 Mỗi vấn đề phải nêu đoạn trích đúng nguyên văn, lý do và bản thay thế nếu phù hợp; không bịa đoạn.
-occurrence là thứ tự lần xuất hiện, bắt đầu 1. Nhận xét toàn prompt dùng quote rỗng và replacement rỗng.
+occurrence là thứ tự lần xuất hiện, bắt đầu 1. Nhận xét không sửa trực tiếp dùng replacement null. Muốn xóa một đoạn lặp, dùng quote chính xác và replacement chuỗi rỗng. Nhận xét toàn prompt dùng quote rỗng và replacement null.
 Trả JSON duy nhất, tối đa 20 issues; mỗi chuỗi tối đa 4000 ký tự:
 {"status":"allow|review|block", "reason":"lý do tiếng Việt", "suggestions":"gợi ý ngắn tiếng Việt",
  "quality_summary":"tóm tắt chất lượng tiếng Việt", "issues":[{
@@ -287,7 +288,7 @@ class PromptIssue(BaseModel):
     severity: Literal['suggestion', 'warning', 'error'] = 'suggestion'
     quote: str = Field(default='', max_length=4000)
     occurrence: int | None = Field(default=None, ge=1, le=1000)
-    replacement: str = Field(default='', max_length=4000)
+    replacement: str | None = Field(default=None, max_length=4000)
     reason_vi: str = Field(max_length=4000)
     confidence: Literal['high', 'medium', 'low'] = 'low'
     source_ids: list[str] = Field(default_factory=list, max_length=20)

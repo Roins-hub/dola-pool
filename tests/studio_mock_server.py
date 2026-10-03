@@ -19,6 +19,7 @@ os.environ.update({'DOLA_SKIP_LOCAL_ENV':'1','DOLA_DB_PATH':str(root/'tasks.db')
 (root/'downloads').mkdir(exist_ok=True)
 import json
 import shutil
+import time
 from types import SimpleNamespace
 import hashlib
 import httpx
@@ -35,10 +36,15 @@ def event(kind, **data):
 def submit(*args, **kwargs):
  cid='conversation-'+str(sum(1 for line in (root/'events.jsonl').read_text().splitlines() if json.loads(line)['kind']=='submit')+1) if (root/'events.jsonl').exists() else 'conversation-1'
  event('submit',conversation_id=cid,prompt=kwargs['prompt'],images=len(kwargs.get('images') or []),image_digests=[item['fixture_digest'] for item in kwargs.get('images') or []])
+ if kwargs['prompt']=='AMBIGUOUS_SUBMIT':raise TimeoutError('Fixture lost submission response')
  return SimpleNamespace(error='',error_code='',conversation_id=cid)
 def inspect(session,ctx,cid):
- event('poll',conversation_id=cid)
- status='pending' if (root/'hold').exists() else 'succeeded'
+ event('poll',conversation_id=cid,elapsed_fixture=clock_offset)
+ if (root/'accelerate').exists():
+  polls=[json.loads(line) for line in (root/'events.jsonl').read_text().splitlines() if json.loads(line)['kind']=='poll' and json.loads(line)['conversation_id']==cid]
+  if len(polls)==1:
+   event('poll_error',conversation_id=cid);raise ConnectionError('Fixture transient polling error')
+ status='pending' if (root/'hold').exists() or ((root/'accelerate').exists() and clock_offset<450) else 'succeeded'
  return SimpleNamespace(status=status,vids=[],urls=['https://fixture.invalid/video.mp4'] if status=='succeeded' else [],
   failure_reasons=[],texts=['Đã nhận yêu cầu. Video đang được dựng.' if status=='pending' else 'Video đã sẵn sàng.','今日剩余 100 个视频生成额度'],creation_statuses=['creation status=1' if status=='pending' else 'creation status=2'],wait_minutes='3分钟' if status=='pending' else '',source_data={})
 def download(url,path,**kwargs):
@@ -48,6 +54,19 @@ fake=SimpleNamespace(normalize_image_paths=lambda paths:[Path(p) for p in paths]
  submit_chat_completion=submit,inspect_video_once=inspect,
  poll_has_duration_split=lambda *a,**k:False,find_video_info_objects=lambda x:[],
  choose_video_download_url=lambda url,**k:{'download_url':url},proxy_dict=lambda x:{},download_video=download)
+clock_offset=0
+real_time=time.time
+real_sleep=time.sleep
+def fixture_time():
+ global clock_offset
+ if not (root/'accelerate').exists():clock_offset=0
+ return real_time()+clock_offset
+def fixture_sleep(seconds):
+ global clock_offset
+ real_sleep(min(seconds,.1))
+ if (root/'accelerate').exists():clock_offset+=150
+# Accelerate only the protocol wait clock; scheduler/store timestamps stay real.
+pure_api_gen.time=SimpleNamespace(time=fixture_time,sleep=fixture_sleep)
 pure_api_gen._dola=lambda:fake
 pure_api_gen.install=lambda:None
 config.PURE_API_POLL_INTERVAL=0.1
@@ -62,6 +81,7 @@ async def ai_transport(request):
   result='Một chú mèo trên cửa sổ, máy quay tiến nhẹ, giữ ánh sáng ban đầu.'
  elif 'BLOCK_ME' in user:result=json.dumps({'status':'block','reason':'Nội dung cần chỉnh sửa','suggestions':'Thử mô tả khác'})
  elif 'REVIEW_ME' in user:result=json.dumps({'status':'review','reason':'Cần xác nhận cảnh hành động','suggestions':''})
+ elif 'DELETE_REPEAT' in user:result=json.dumps({'status':'allow','reason':'','suggestions':'', 'quality_summary':'Bỏ câu lặp.', 'issues':[{'id':'delete','kind':'quality','severity':'suggestion','quote':'Mèo chạy.','occurrence':2,'replacement':'','reason_vi':'Câu lặp nguyên văn.','confidence':'high','source_ids':['visual-action']}]})
  elif 'ANALYZE_ME' in user:result=json.dumps({'status':'allow','reason':'','suggestions':'',
   'quality_summary':'Giữ cảnh mèo; làm rõ góc máy và ánh sáng.', 'issues':[
    {'id':'camera','kind':'quality','severity':'suggestion','quote':'quay đẹp','occurrence':1,

@@ -29,7 +29,7 @@ def validate_issue_anchors(prompt: str, issues: list[dict]) -> list[dict]:
     for issue in checked:
         issue.update(applicable=False, anchor_error="")
         quote = issue.get("quote") or ""
-        if not quote or not issue.get("replacement"):
+        if not quote or not isinstance(issue.get("replacement"), str):
             issue["anchor_error"] = "Nhận xét không có đoạn thay thế trực tiếp."
             continue
         positions = []

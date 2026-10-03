@@ -104,6 +104,16 @@ async def browser_journey():
   await page.locator('#btn_submit_gen').click();await page.wait_for_selector('.alert-block',state='visible')
   assert len(events('submit'))==before
   assert await page.locator('#gen_prompt').input_value()=='BLOCK_ME'
+  # A selected deletion removes only the exact second occurrence and can be undone.
+  await page.locator('#gen_prompt').fill('DELETE_REPEAT 🐈 Mèo chạy. Mèo chạy.')
+  await page.locator('#btn_preflight').click();await page.wait_for_selector('#gen_analysis input[data-issue-id="delete"]')
+  await page.locator('#gen_analysis input[data-issue-id="delete"]').check()
+  await page.get_by_role('button',name='Tạo bản đề xuất từ lựa chọn',exact=True).click()
+  assert await page.locator('#gen_rewrite_draft').input_value()=='DELETE_REPEAT 🐈 Mèo chạy. '
+  assert await page.locator('#gen_prompt').input_value()=='DELETE_REPEAT 🐈 Mèo chạy. Mèo chạy.'
+  await page.get_by_role('button',name='Áp dụng prompt này',exact=True).click()
+  await page.get_by_role('button',name='Hoàn tác',exact=True).click()
+  assert await page.locator('#gen_prompt').input_value()=='DELETE_REPEAT 🐈 Mèo chạy. Mèo chạy.'
   # Review requires user confirmation.
   await page.locator('#gen_prompt').fill('REVIEW_ME hành động giả tưởng')
   await page.locator('#btn_submit_gen').click();await page.wait_for_selector('#gen_confirm_review')
@@ -307,6 +317,21 @@ try:
  assert create('idempotent cat',10,'same-request')==retry
  wait_row(retry,'completed');assert len(events('submit'))==before+1
  process.kill();process.wait(timeout=10);start(window=1800)
+ # A >300s protocol wait with a transient polling error stays on one conversation.
+ (ROOT/'accelerate').touch();before=len(events('submit'))
+ delayed=create('clock delayed cat',10);wait_row(delayed,'completed');(ROOT/'accelerate').unlink()
+ assert len(events('submit'))==before+1
+ cid=events('submit')[-1]['conversation_id']
+ polls=[p for p in events('poll') if p['conversation_id']==cid]
+ assert max(p['elapsed_fixture'] for p in polls)>=450
+ assert [p['conversation_id'] for p in events('poll_error')]==[cid]
+ history=json.loads(row(delayed)['upstream_updates'])
+ assert any(p.get('connection')=='interrupted' for p in history) and history[-1]['status']=='succeeded'
+ # Losing a submission response cannot rotate, retry, or be resurrected on restart.
+ before=len(events('submit'));unclear=create('AMBIGUOUS_SUBMIT',10);wait_row(unclear,'unknown')
+ assert len(events('submit'))==before+1 and not row(unclear).get('conversation_id')
+ process.kill();process.wait(timeout=10);start(window=1800)
+ assert row(unclear)['status']=='unknown' and len(events('submit'))==before+1
  # A held batch spans an actual process restart; receipt survives new auth/token state.
  (ROOT/'hold').touch();headers=login();entries=[]
  for prompt in ['batch restart cat','batch restart boat']:
@@ -331,6 +356,7 @@ try:
  asyncio.run(browser_journey())
  (OUT/'result.json').write_text(json.dumps({'passed':True,'process_pids':[pid1,pid2],
   'restart_submission_count':1,'continuation_submission_count':2,'manual_check_no_resubmit':True,'idempotent_request_retry':True,'reference_image_reload':True,'rewrite_iterations':2,'stale_rewrite_discarded':True,'upstream_progress_browser':True,'txt_batch_four_jobs':True,'batch_process_restart_no_duplicate':True,
+  'after_300s_single_conversation':True,'polling_error_recovered_same_conversation':True,'ambiguous_send_restart_no_resubmit':True,
   'folder_two_groups_own_images_restart':True,'folder_zip_playable':True,'export_copy_preserves_original':True,'inventory_disable_keeps_active_job':True,'confirmed_http_rejection_keeps_draft':True,
   'rich_ai_selective_edit':True,'context_stale_discarded':True,'vietnamese_progress':True,'queue_table_preview':True,
   'mock_boundary':'Dola protocol operations and AI HTTP transport; real scheduler/store/download/ffmpeg/UI',
