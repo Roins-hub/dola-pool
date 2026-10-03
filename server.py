@@ -3488,7 +3488,8 @@ async def _accept_create_video(request: Request, x_admin_key: str | None = None)
             raise HTTPException(422, 'Chỉ liên kết bản sửa với tác vụ đã xác nhận thất bại')
     reference_context, frozen_refs = await _reference_context(refs, roles)
     context = _video_context(model, duration, ratio, reference_context)
-    await _ensure_video_preflight(session_id, prompt, preflight_token, confirm_review, context)
+    if str(form.get("skip_preflight") or "").lower() not in ("true", "1"):
+        await _ensure_video_preflight(session_id, prompt, preflight_token, confirm_review, context)
     return await _submit_task(admin_client, resolved, prompt, ratio, duration, frozen_refs,
                               task_id=task_id, input_fingerprint=input_fp, source_task_id=source_task_id)
 
@@ -3504,6 +3505,7 @@ class BatchPrompt(BaseModel):
 
 
 class VideoBatch(BaseModel):
+    skip_preflight: bool = False
     source_task_id: str | None = Field(default=None, max_length=200)
     name: str = Field(default="", max_length=100)
     request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
@@ -3718,9 +3720,10 @@ async def _accept_create_batch(request: Request, x_admin_key: str | None = None)
         if not source or source['status'] != 'failed':
             raise HTTPException(422, 'Chỉ liên kết bản sửa với tác vụ đã xác nhận thất bại')
     session_id = hashlib.sha256((x_admin_key or "default").encode()).hexdigest()[:24]
-    for prompt, context in zip(batch.prompts, contexts):
-        await _ensure_video_preflight(session_id, prompt.prompt.strip(), prompt.preflight_token,
-                                      prompt.confirm_review, context)
+    if not batch.skip_preflight:
+        for prompt, context in zip(batch.prompts, contexts):
+            await _ensure_video_preflight(session_id, prompt.prompt.strip(), prompt.preflight_token,
+                                          prompt.confirm_review, context)
     if not pool.accounts:
         raise HTTPException(503, "Chưa có tài khoản Dola")
     if not pool.available and (pool.all_accounts_limited or pool.all_accounts_quota_blocked):

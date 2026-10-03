@@ -2289,15 +2289,13 @@ async function submitVideoBatch(){
     const receipt=await recoverPendingReceipt('batch',snapshot);
     if(receipt){currentBatchId=receipt.batch_id;pendingRequestId='';pendingSnapshot='';analysisTaskId='';renderDraftSource();saveStudioDraft();if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');switchTab('videos');studioMessage('Đã tìm lại mẻ đã nhận; không gửi thêm video.');return;}
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã đổi; hãy kiểm tra lại.');
-    if(!batchPreflight||batchPreflight.snapshot!==snapshot||batchPreflight.entries.some(e=>e.expires_at*1000<Date.now()))if(!await checkBatchPrompts())return;
-    if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại mẻ.');
-    if(!batchPreflight||batchPreflight.entries.some(e=>!['allow','review'].includes(e.status)))return;
-    const review=batchPreflight.entries.some(e=>e.status==='review');if(review&&!q('#gen_batch_review')?.checked)return studioMessage('Xem lý do và xác nhận nội dung trước khi gửi mẻ.');
-    const copies=Number(q('#gen_copies').value),total=batchPreflight.entries.length*copies;
+    const copies=Number(q('#gen_copies').value),prompts=batchPromptList(),total=prompts.length*copies;
+    if(!prompts.length||!Number.isInteger(copies)||copies<1||copies>10||total>50)return studioMessage('Nhập prompt và chọn 1–10 bản, tối đa 50 video mỗi mẻ.');
+    const entries=prompts.map((prompt,i)=>{const group=q('#gen_mode').value==='folder'?folderGroups[i]:null;return {prompt,reference_roles:selectedImages.map((_,n)=>referenceRoles[n]||'other'),...(group?{reference_indices:group.reference_indices,reference_roles:group.reference_indices.map(n=>referenceRoles[n]||'other'),group:group.name}:{})};});
     if(!confirm('Tạo '+total+' video? Mỗi video có thể dùng thêm điểm Dola. Các video là những kết quả riêng, không tự ghép.'))return;
     if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
-    const fd=new FormData();fd.append('batch',JSON.stringify({source_task_id:analysisTaskId||null,name:q('#gen_batch_name').value,request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
-      prompts:batchPreflight.entries.map(e=>({prompt:e.prompt,preflight_token:e.token,confirm_review:review,reference_roles:e.reference_roles||[],...(e.reference_indices?{reference_indices:e.reference_indices,reference_roles:e.reference_roles,group:e.group}:{})}))}));for(const image of selectedImages)fd.append('images',image);
+    const fd=new FormData();fd.append('batch',JSON.stringify({skip_preflight:true,source_task_id:analysisTaskId||null,name:q('#gen_batch_name').value,request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
+      prompts:entries}));for(const image of selectedImages)fd.append('images',image);
     btn.textContent='Đang gửi mẻ…';const resp=await fetch('/api/admin/videos/batches',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await resp.json();
     if(!resp.ok){const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không nhận được mẻ'));error.details=data.failure_display?.details;error.status=resp.status;throw error;}
     currentBatchId=data.batch_id;if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');pendingRequestId='';pendingSnapshot='';analysisTaskId='';renderDraftSource();saveStudioDraft();switchTab('videos');
@@ -2320,15 +2318,9 @@ async function doSubmitGenerate(){
     if(receipt){pendingRequestId='';pendingSnapshot='';currentBatchId='';analysisTaskId='';renderDraftSource();trackStudioJob(receipt.id);studioMessage('Đã tìm lại video đã nhận; không gửi thêm yêu cầu.');return;}
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã đổi; hãy kiểm tra lại.');
     if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
-    if(!currentPreflight||currentPreflight.prompt!==prompt||currentPreflight.snapshot!==snapshot||currentPreflight.expires_at*1000<Date.now())await doPreflightCheck();
-    if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại trước khi gửi.');
-    if(!currentPreflight)return;
-    if(currentPreflight.status==='block')return studioMessage('Chỉnh nội dung theo gợi ý trước khi tạo.');
-    const reviewed=currentPreflight.status==='review';
-    if(reviewed&&!q('#gen_confirm_review')?.checked)return studioMessage('Xem lý do phía trên, xác nhận rồi bấm Tạo video.');
     btn.textContent='Đang gửi…';const fd=new FormData();fd.append('prompt',prompt);
     fd.append('model',q('#gen_model').value);fd.append('duration',q('#gen_duration').value);fd.append('ratio',q('#gen_ratio').value);
-    fd.append('reference_roles',JSON.stringify(selectedImages.map((_,i)=>referenceRoles[i]||'other')));fd.append('request_id',pendingRequestId);if(analysisTaskId)fd.append('source_task_id',analysisTaskId);fd.append('preflight_token',currentPreflight.token||'');if(reviewed)fd.append('confirm_review','true');
+    fd.append('reference_roles',JSON.stringify(selectedImages.map((_,i)=>referenceRoles[i]||'other')));fd.append('request_id',pendingRequestId);if(analysisTaskId)fd.append('source_task_id',analysisTaskId);fd.append('skip_preflight','true');
     for(const image of selectedImages)fd.append('images',image);
     const resp=await fetch('/api/admin/videos/generations',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});
     const data=await resp.json();if(resp.status===401)showLogin();if(!resp.ok){currentPreflight=null;const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu'));error.details=data.failure_display?.details;error.confirmed=true;throw error;}
