@@ -29,6 +29,7 @@ import config
 import proxy_store
 from browser import cookie_value, launch_account_context
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
+from pure_api_gen import upstream_poll_update
 from video_worker import POLL_JS, RiskControlError, _download, extract_unwatermarked_url
 
 # Dola 返回的每日上限文案（当前日文 UI 实测：動画生成の 1 日あたりの上限に達しました。）
@@ -603,10 +604,25 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 POLL_JS, {"conversationId": conversation_id, "msToken": ms_token, "fp": fp}), timeout=30)
         except Exception as e:
             print(f"  轮询异常: {e}", flush=True)
+            if on_poll:
+                try:
+                    on_poll(time.time(), {"connection": "interrupted"})
+                except TypeError:
+                    on_poll(time.time())
+            continue
+        if not poll.get("ok", True):
+            if on_poll:
+                try:
+                    on_poll(time.time(), {"connection": "interrupted"})
+                except TypeError:
+                    on_poll(time.time())
             continue
         now = time.time()
-        if on_poll and now - last_callback >= 30:
-            on_poll(now)
+        if on_poll:
+            try:
+                on_poll(now, upstream_poll_update(poll))
+            except TypeError:
+                on_poll(now)
             last_callback = now
         texts = poll.get("texts") or []
         videos = poll.get("videos") or []
@@ -682,6 +698,11 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             url = await fetch_higher_bitrate_url(vm_str, account) \
                 or extract_unwatermarked_url(vm_str, videos[0])
             print(f"[{account}] 出片! 下载中（高码率优先）...", flush=True)
+            if on_poll:
+                try:
+                    on_poll(time.time(), "downloading")
+                except TypeError:
+                    on_poll(time.time())
             local = await _download(url, account)
             print(f"[{account}] 已下载 {local}（{local.stat().st_size / 1e6:.1f} MB）", flush=True)
             return {"video_url": url, "local_path": str(local),
@@ -719,7 +740,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
     ratio/duration: None = 用 UI 默认（当前默认 10s）。
     异常：RiskControlError（滑块 3 次不过）、CreditError（额度不足）。出片轮询不限时。
     """
-    timeout = timeout or config.VIDEO_TIMEOUT
+    timeout = timeout if timeout is not None else config.OBSERVATION_SECONDS
     model_key = model.lower().replace("-", "_")
     if model_key in ("seedance_2.5", "seedance_v2.5", "seedance_25", "seedance_v25"):
         model_key = "seedance_v2.5"
@@ -731,11 +752,6 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         raise ValueError("Dola 当前支持 5/10/15 秒和扩展注入的 30 秒")
     if duration == 30 and not use_extension:
         raise ValueError("30 秒生成需要启用 Dola30 扩展")
-    # 30 秒视频（尤其 Seedance 2.5）页面会明确提示约 15 分钟，不能沿用 5 分钟默认值。
-    if duration == 30:
-        timeout = max(timeout, 1800)
-    if reference_image_paths:
-        timeout = max(timeout, config.REFERENCE_VIDEO_TIMEOUT)
     async with async_playwright() as p:
         context = await launch_account_context(
             p, account, headless=False if use_extension else None,

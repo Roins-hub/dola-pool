@@ -48,7 +48,7 @@ def _kwargs_from_url(raw: str) -> dict | None:
         raw = "http://" + raw
     parts = urlsplit(raw)
     if not parts.hostname:
-        return None
+        raise ValueError("Địa chỉ proxy không hợp lệ")
     port = parts.port or (443 if parts.scheme == "https" else 80)
     kwargs = {"server": f"{parts.scheme}://{parts.hostname}:{port}"}
     if parts.username:

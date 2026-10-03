@@ -122,20 +122,13 @@ def test_upstream_own_two_clips_are_merged():
     assert dola.sent == []
 
 
-def test_no_upstream_ack_gives_up_early(monkeypatch):
-    """提交成功但上游连额度提示都不回：到阈值判【异常】（2.1.0 P5 起不再只是放手返回）。
-
-    账号由调用方（browser_pool）放进异常组，任务提示「生视频过程中出现异常情况，请重试」。
-    """
+def test_no_ack_is_not_failure_at_300_seconds(monkeypatch):
     import pure_api_gen
-
     monkeypatch.setattr(pure_api_gen, "NO_ACK_SECONDS", 0)
-    dola = FakeDola([FakePoll(status="pending", texts=["生成视频：一只橘猫在窗台上打盹"])])
-
-    with pytest.raises(pure_api_gen.AbnormalNoAckError) as exc:
-        _run(dola)
-
-    assert "请重试" in str(exc.value)
+    dola = FakeDola([FakePoll(status="pending"), FakePoll(status="succeeded", vids=["v1"])])
+    poll, segments = _run(dola)
+    assert poll.status == "succeeded"
+    assert not dola.sent
 
 
 def test_single_shot_30s_returns_without_negotiation():
@@ -159,7 +152,7 @@ def test_hard_failure_does_not_start_split():
 
 
 def test_short_duration_never_splits():
-    dola = FakeDola([FakePoll(texts=[CAP_TEXT])])
+    dola = FakeDola([FakePoll(status="succeeded", texts=[CAP_TEXT])])
     poll, segments = _run(dola, duration=10)
 
     assert segments == []

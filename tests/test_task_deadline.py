@@ -75,7 +75,7 @@ def test_unlimited_attempts_retry_another_round_before_deadline(tmp_path, monkey
     async def fake(account, *a, **k):
         calls.append(account)
         if len(calls) <= 2:
-            raise RuntimeError("上游临时失败")
+            raise RuntimeError("请求过于频繁 710022002")
         return {"account": account, "local_path": "x.mp4"}
 
     bp._generate_effective = fake
@@ -105,5 +105,5 @@ def test_expired_deadline_dispatches_nothing(tmp_path, monkeypatch):
 
 
 def test_config_defaults():
-    assert config.TASK_DEADLINE == 600
+    assert config.TASK_DEADLINE == 1800
     assert config.VIDEO_MAX_ATTEMPTS == 0

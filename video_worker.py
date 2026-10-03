@@ -76,6 +76,7 @@ async ({conversationId, msToken, fp}) => {
   const texts = [];
   const videos = [];
   const videoModels = [];
+  const creation_statuses = [];
   for (const msg of messages) {
     let content = msg.content;
     if (typeof content === "string") {
@@ -84,11 +85,12 @@ async ({conversationId, msToken, fp}) => {
     if (!Array.isArray(content)) continue;
     for (const block of content) {
       const text = (((block.content || {}).text_block) || {}).text || "";
-      if (text) texts.push(text.slice(0, 120));
+      if (text) texts.push(text.slice(0, 2000));
       if (block.block_type !== 2074) continue;
       const creations = (((block.content || {}).creation_block) || {}).creations || [];
       for (const cre of creations) {
         if (cre.type !== 2) continue;
+        if(cre.status !== undefined) creation_statuses.push('creation status='+cre.status);
         const url = ((cre.video || {}).download_url) || "";
         if (url.startsWith("http")) {
           videos.push(url);
@@ -97,7 +99,7 @@ async ({conversationId, msToken, fp}) => {
       }
     }
   }
-  return {ok: true, status: resp.status, texts, videos, videoModels};
+  return {ok: true, status: videos.length?'succeeded':'pending', texts, videos, videoModels, creation_statuses};
 }
 """
 

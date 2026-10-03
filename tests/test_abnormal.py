@@ -59,7 +59,7 @@ def _pool(tmp_path, monkeypatch, names=("acc1", "acc2")):
     return browser_pool, bp
 
 
-def test_no_ack_marks_account_abnormal_and_switches(tmp_path, monkeypatch):
+def test_no_ack_never_rotates_or_marks_account_abnormal(tmp_path, monkeypatch):
     browser_pool, bp = _pool(tmp_path, monkeypatch)
     from pure_api_gen import AbnormalNoAckError
 
@@ -71,18 +71,12 @@ def test_no_ack_marks_account_abnormal_and_switches(tmp_path, monkeypatch):
 
     bp._generate_effective = fake
 
-    with pytest.raises(RuntimeError) as exc:
+    from pure_api_gen import PendingResultError
+    with pytest.raises(PendingResultError):
         _run(bp.generate_video("p", None, 10, "seedance-2.5"))
-
-    # 两个号都被换了一遍，且都进了【异常】组
-    assert calls == ["acc1", "acc2"]
+    assert calls == ["acc1"]
     for name in ("acc1", "acc2"):
-        row = bp._meta(name)
-        assert row["abnormal_until"] > 0
-        assert "请重试" in row["abnormal_reason"]
-    assert "请重试" in str(exc.value)
-    groups = {a["name"]: a["group"] for a in bp.list_accounts()}
-    assert groups == {"acc1": browser_pool.GROUP_ABNORMAL, "acc2": browser_pool.GROUP_ABNORMAL}
+        assert not bp._meta(name)["abnormal_until"]
 
 
 def test_abnormal_account_is_not_dispatched(tmp_path, monkeypatch):

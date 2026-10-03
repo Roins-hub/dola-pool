@@ -55,5 +55,5 @@ def test_recover_runtime_keeps_conversation(tmp_path):
     assert kept["account"] == "acc1"
     assert kept["conversation_id"] == "c-live"
     fresh = store.get("video_fresh")
-    assert fresh["status"] == "queued"
-    assert fresh["account"] is None
+    assert fresh["status"] == "unknown"
+    assert fresh["account"] == "acc2"

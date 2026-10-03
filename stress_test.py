@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+import re
 from pathlib import Path
 
 from patchright.async_api import async_playwright
@@ -34,13 +35,44 @@ SAMPLE_INTERVAL = 0.5
 
 
 def mem_available_mb() -> int | None:
-    """当前系统可用内存（/proc/meminfo MemAvailable，MiB）。"""
+    """当前系统可用内存（Linux /proc/meminfo 或 macOS vm_stat，MiB）。"""
+    # 1. Linux /proc/meminfo
     try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
-            if line.startswith("MemAvailable:"):
-                return int(line.split()[1]) // 1024
+        meminfo = Path("/proc/meminfo")
+        if meminfo.exists():
+            for line in meminfo.read_text().splitlines():
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
     except Exception:
-        return None
+        pass
+
+    # 2. macOS vm_stat
+    try:
+        out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=2).stdout
+        page_size_match = re.search(r"page size of (\d+) bytes", out)
+        page_size = int(page_size_match.group(1)) if page_size_match else 4096
+        counts = {}
+        for line in out.splitlines():
+            m = re.match(r"Pages\s+([^:]+):\s+(\d+)\.", line)
+            if m:
+                counts[m.group(1).strip()] = int(m.group(2))
+        free_pages = (
+            counts.get("free", 0)
+            + counts.get("inactive", 0)
+            + counts.get("purgeable", 0)
+            + counts.get("speculative", 0)
+        )
+        return (free_pages * page_size) // (1024 * 1024)
+    except Exception:
+        pass
+
+    # 3. psutil fallback
+    try:
+        import psutil
+        return psutil.virtual_memory().available // (1024 * 1024)
+    except Exception:
+        pass
+
     return None
 
 
@@ -178,16 +210,16 @@ async def run_stress(max_concurrency: int = 8,
     for n in range(1, int(max_concurrency) + 1):
         avail = mem_available_mb()
         if avail is not None and avail < PRE_MIN_AVAILABLE_MB:
-            logs.append(f"剩余内存 {avail}MB 低于安全线 {PRE_MIN_AVAILABLE_MB}MB，停止继续加压")
+            logs.append(f"RAM khả dụng {avail}MB thấp hơn ngưỡng an toàn {PRE_MIN_AVAILABLE_MB}MB, dừng tăng tải.")
             break
         if estimated_mb is not None and avail is not None:
-            # 按上一级实测峰值 RSS 预判：每个浏览器约 estimated_mb*0.7 增量，
-            # 再留 800MB 系统余量，避免直接加压到 OOM。
+            # Dự toán theo mức tiêu thụ đỉnh RSS của cấp trước: mỗi browser ~ estimated_mb*0.7,
+            # giữ lại 800MB RAM đệm cho hệ thống để tránh OOM Crash.
             need_mb = int(estimated_mb * 0.7 * n) + 800
             if avail < need_mb:
                 logs.append(
-                    f"{n} 个并发：预计需要约 {need_mb}MB，当前可用 {avail}MB，"
-                    f"不再加压（单浏览器实测约 {estimated_mb}MB）"
+                    f"{n} luồng đồng thời: Dự kiến cần {need_mb}MB RAM, hiện còn {avail}MB. "
+                    f"Dừng tăng tải (mỗi browser tiêu thụ thực tế ~{estimated_mb}MB)"
                 )
                 break
         res = await run_level(n, hold_seconds)
@@ -196,20 +228,20 @@ async def run_stress(max_concurrency: int = 8,
         if res["ok"] and (min_avail is None or min_avail >= MIN_AVAILABLE_MB):
             recommended = n
             logs.append(
-                f"{n} 个并发：OK（真实浏览器主进程峰值 "
-                f"{res['peak_browser_processes']}，Chromium 总进程 "
-                f"{res['peak_chromium_processes']}，峰值 RSS "
-                f"{res['peak_rss_mb']}MB，最低可用内存 {min_avail}MB）"
+                f"{n} luồng đồng thời: ĐẠT CHUẨN (Browser chính: "
+                f"{res['peak_browser_processes']}, Tổng tiến trình Chromium: "
+                f"{res['peak_chromium_processes']}, RAM tiêu thụ đỉnh: "
+                f"{res['peak_rss_mb']}MB, RAM trống tối thiểu: {min_avail}MB)"
             )
             if n == 1:
                 estimated_mb = max(res["peak_rss_mb"], 256)
         else:
-            reason = ("、".join(res["errors"][:3])
+            reason = (", ".join(res["errors"][:3])
                       if res["errors"]
-                      else f"最低可用内存 {min_avail}MB 过低"
+                      else f"RAM trống tối thiểu {min_avail}MB quá thấp (< {MIN_AVAILABLE_MB}MB)"
                       if min_avail is not None and min_avail < MIN_AVAILABLE_MB
-                      else f"实际浏览器主进程峰值 {res['peak_browser_processes']} 未达 {n}")
-            logs.append(f"{n} 个并发：未达标（{reason}）")
+                      else f"Số tiến trình browser thực tế {res['peak_browser_processes']} không đạt {n}")
+            logs.append(f"{n} luồng đồng thời: CHƯA ĐẠT ({reason})")
             if not res["ok"] or (min_avail is not None and min_avail < MIN_AVAILABLE_MB):
                 break
     return {"recommended": recommended, "results": results, "logs": logs}

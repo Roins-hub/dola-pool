@@ -2597,7 +2597,7 @@ def wait_for_chain_update(
             detail = str(exc).replace("\n", " ")[:500]
             log(f"   Chain update query failed ({consecutive_errors}/5): {detail}")
             if consecutive_errors >= 5:
-                raise DolaError(f"连续 5 次查询 Dola 会话更新失败: {detail}") from exc
+                raise DolaError(f"Failed to query Dola conversation updates after 5 attempts: {detail}") from exc
             time.sleep(interval_sec)
             continue
         consecutive_errors = 0
@@ -2781,6 +2781,11 @@ def looks_like_our_duration_split_reply(text: str) -> bool:
 
 def looks_like_duration_confirm(text: str) -> bool:
     compact = _compact_duration_text(text)
+    lower = str(text or "").lower()
+    if "supports durations from 4 to 15 seconds" in lower or "nearest supported duration" in lower or "proceed with a 15-second" in lower:
+        return True
+    if "duration" in lower and "15 seconds" in lower and ("proceed" in lower or "confirm" in lower or "support" in lower):
+        return True
     if not compact or looks_like_our_duration_split_reply(compact):
         return False
     if "超出了单条生成范围" in compact or "超出支持范围" in compact:

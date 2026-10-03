@@ -61,16 +61,16 @@ def test_progress_payload_messages(tmp_path, monkeypatch):
 
     queued = server._progress_payload(status="queued", created_at=time.time(), duration=10)
     assert queued["state"] == "queued"
-    assert queued["message"].startswith("排队中，预计")
+    assert queued["message"].startswith("Chờ tài khoản")
     assert queued["position"] == queued["ahead"] + 1
     assert queued["eta_seconds"] > 0
 
     running = server._progress_payload(status="processing", created_at=time.time(), duration=30)
     assert running["state"] == "running"
-    assert running["message"].startswith("生成中，预计")
+    assert running["message"] == "Dola đang tạo video"
 
     done = server._progress_payload(status="completed", created_at=time.time(), duration=10)
-    assert done["state"] == "done" and done["message"] == "已完成"
+    assert done["state"] == "done" and done["message"] == "Hoàn tất"
 
     failed = server._progress_payload(status="failed", created_at=time.time(), duration=10)
     assert failed["state"] == "failed"

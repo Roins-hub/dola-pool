@@ -5,8 +5,8 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
-_KEYFILE = Path(__file__).with_name("cred.key")
-_CREDFILE = Path(__file__).with_name("creds.json")
+_KEYFILE = Path(os.getenv("DOLA_CRED_KEY_FILE") or Path(__file__).with_name("cred.key"))
+_CREDFILE = Path(os.getenv("DOLA_CRED_FILE") or Path(__file__).with_name("creds.json"))
 
 
 def _key() -> bytes:

@@ -165,6 +165,9 @@ def test_import_cookie_account_forced_browser_still_falls_back(tmp_path, monkeyp
     import cookie_login
 
     monkeypatch.chdir(tmp_path)
+    async def unavailable(*a, **k):
+        raise RuntimeError("Browser driver unavailable")
+    monkeypatch.setattr(cookie_login, "_apply_browser_profile", unavailable)
     probe_calls = _pure_probe_stub(monkeypatch, result=(False, "not logged in"))
 
     bundle = {"cookies": [

@@ -1,10 +1,31 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="vi">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>dola-pool 管理面板</title>
+<title>dola-pool - Bảng điều khiển quản trị (Admin Panel)</title>
 <style>
+.studio-intro{color:var(--sub);line-height:1.6;margin-bottom:24px}
+.studio-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:22px}
+.rewrite-controls{padding:18px;background:rgba(255,255,255,.025);border:1px solid var(--stroke);border-radius:14px;margin:18px 0}
+.rewrite-controls label{display:block;margin-bottom:8px;font-weight:600}
+.rewrite-controls textarea,#gen_rewrite_before,#gen_rewrite_draft{width:100%;padding:12px;line-height:1.6;margin:8px 0;resize:vertical}
+.settings-nav,.job-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.job-progress{margin:12px 0;padding:14px;border:1px solid var(--stroke);border-radius:12px}
+.job-progress progress{width:100%;height:12px;accent-color:#64c7b8}
+.job-steps{display:flex;gap:6px;flex-wrap:wrap;padding:0;list-style:none;font-size:12px}
+.job-steps li{padding:5px 8px;border-radius:6px;background:var(--bg)}
+.job-steps .reached{color:#64c7b8}.job-steps .current{border:1px solid currentColor;font-weight:600}
+.dola-message{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;margin:8px 0}
+.job-heading label{display:block;margin-bottom:6px}.job-heading select,.job-heading input{padding:8px 10px}
+.job-heading{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.studio-video{display:block;width:100%;max-height:420px;background:#000;border-radius:12px;margin:14px 0}
+.my-video-jobs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr));gap:18px;margin:18px 0}
+.video-job{border:1px solid var(--stroke);border-radius:14px;padding:18px;min-width:0}
+.technical-error{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;color:var(--sub)}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:700px){.studio-options{grid-template-columns:1fr}.sidebar{position:sticky!important;top:0;width:100%!important;height:auto!important;z-index:10;padding:12px!important}.sidebar .side-nav{display:flex}.sidebar .nav-item span{display:inline!important}.side-foot,.brand{display:none!important}.main{margin-left:0!important;padding:16px!important}.nav-item{font-size:12px;padding:10px!important}.shell,body{display:block!important}section{min-width:0}table{max-width:100%}}
+
 :root{
   --bg:#0a0f1d;--card:rgba(255,255,255,.08);
   --glass:linear-gradient(158deg,rgba(255,255,255,.115),rgba(255,255,255,.035));
@@ -88,6 +109,18 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .btn-danger{color:#ff9a9a}
 .btn-danger:hover{border-color:rgba(255,107,107,.55);color:#ffb3b3;background:rgba(255,107,107,.12)}
 .btn:disabled{opacity:.42;cursor:not-allowed}
+.drop-zone{border:2px dashed var(--line);border-radius:var(--r);padding:20px;text-align:center;cursor:pointer;transition:.18s;background:rgba(255,255,255,.02)}
+.drop-zone:hover{border-color:var(--accent);background:rgba(255,255,255,.05)}
+.image-previews{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
+.image-preview-item{position:relative;width:96px;height:96px;border-radius:8px;overflow:hidden;border:1px solid var(--stroke);background:#000}
+.image-preview-item img{width:100%;height:100%;object-fit:cover}
+.image-preview-item .rm-btn{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.75);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;line-height:1}
+.image-preview-item .rm-btn:hover{background:#e5484d}
+.alert-box{padding:12px 16px;border-radius:10px;font-size:13px;line-height:1.55;margin:12px 0}
+.alert-allow{background:rgba(46,230,168,.12);border:1px solid rgba(46,230,168,.35);color:#5cf0bb}
+.alert-review{background:rgba(255,180,84,.14);border:1px solid rgba(255,180,84,.4);color:#ffcb85}
+.alert-block{background:rgba(255,107,107,.14);border:1px solid rgba(255,107,107,.4);color:#ff9a9a}
+.alert-info{background:rgba(107,168,255,.12);border:1px solid rgba(107,168,255,.35);color:#a3c9ff}
 .toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .toolbar .hint{color:var(--sub);font-size:12px}
 /* 分组按钮条：每个按钮带数量，点一下筛表 */
@@ -174,168 +207,336 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
   .cards{grid-template-columns:repeat(2,1fr)}
   th,td{white-space:nowrap}
 }
+@media(max-width:920px){
+  .sidebar{position:sticky!important;inset:auto!important;top:0!important;width:100%!important;height:auto!important;padding:10px!important;z-index:10;border-radius:0 0 18px 18px}
+  .sidebar .side-nav{flex-direction:row!important;overflow:visible;gap:6px}
+  .sidebar .nav-item{flex:1;justify-content:center;padding:10px 4px!important}
+  .sidebar .nav-item span{display:inline!important;white-space:nowrap}
+  .side-foot,.brand{display:none!important}
+  main{margin-left:0!important;max-width:100%;padding:18px 12px 36px!important}
+  .studio-options{grid-template-columns:1fr}.card{padding:16px}
+  #tab-settings{overflow-x:auto}.my-video-jobs{grid-template-columns:1fr}
+}
+.ai-config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.prompt-history textarea,.prompt-history select{display:block;width:100%;padding:10px;margin:10px 0;line-height:1.5}.account-advanced[open]{padding:10px;border:1px solid var(--stroke);border-radius:12px}.account-advanced summary{cursor:pointer;padding:8px}.account-advanced .settings-nav{max-width:500px}
+@media(max-width:920px){.ai-config-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <div id="loginMask" class="mask" style="display:none">
   <div class="box">
-    <h2>管理面板登录</h2>
-    <input id="loginUser" placeholder="用户名" autocomplete="username" onkeydown="if(event.key==='Enter')q('#loginPassword').focus()">
-    <input id="loginPassword" type="password" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
-    <div class="err" id="loginErr">用户名或密码错误</div>
-    <button class="btn btn-p" onclick="submitLogin()">登录</button>
+    <h2>Đăng nhập quản trị hệ thống</h2>
+    <input id="loginUser" placeholder="Tên đăng nhập (Username)" autocomplete="username" onkeydown="if(event.key==='Enter')q('#loginPassword').focus()">
+    <input id="loginPassword" type="password" placeholder="Mật khẩu (Password)" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
+    <div class="err" id="loginErr">Tên đăng nhập hoặc mật khẩu không chính xác</div>
+    <button class="btn btn-p" onclick="submitLogin()">Đăng nhập</button>
   </div>
 </div>
 
 <aside class="sidebar">
-  <div class="brand"><span class="dot"></span><span class="brand-t">dola-pool</span></div>
+  <div class="brand"><span class="dot"></span><span class="brand-t">Dola Studio</span></div>
 
-  <nav class="side-nav">
-    <button class="nav-item on" data-tab="dash" onclick="switchTab('dash')"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8"/></svg><span>仪表盘</span></button>
-    <button class="nav-item" data-tab="accounts" onclick="switchTab('accounts')"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M4.8 20c0-3.5 3.2-5.9 7.2-5.9s7.2 2.4 7.2 5.9"/></svg><span>账号管理</span></button>
-    <button class="nav-item" data-tab="proxies" onclick="switchTab('proxies')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2M12 3.4c2.4 2.7 2.4 14.5 0 17.2M12 3.4c-2.4 2.7-2.4 14.5 0 17.2"/></svg><span>代理管理</span></button>
-    <button class="nav-item" data-tab="tasks" onclick="switchTab('tasks')"><svg viewBox="0 0 24 24"><path d="M9.5 6h10.5M9.5 12h10.5M9.5 18h10.5"/><circle cx="4.8" cy="6" r="1.4"/><circle cx="4.8" cy="12" r="1.4"/><circle cx="4.8" cy="18" r="1.4"/></svg><span>任务列表</span></button>
-    <button class="nav-item" data-tab="videos" onclick="switchTab('videos')"><svg viewBox="0 0 24 24"><rect x="2.8" y="5" width="18.4" height="14" rx="2.6"/><path d="M10.2 9.3l5.2 2.7-5.2 2.7z" fill="currentColor" stroke="none"/></svg><span>视频管理</span></button>
-    <button class="nav-item" data-tab="keys" onclick="switchTab('keys')"><svg viewBox="0 0 24 24"><circle cx="8" cy="14.4" r="4.3"/><path d="M11.2 11.2l8-8M17 5.4l2.4 2.4M14.4 8l2.4 2.4"/></svg><span>API 密钥</span></button>
-    <button class="nav-item" data-tab="users" onclick="switchTab('users')"><svg viewBox="0 0 24 24"><circle cx="9.4" cy="8" r="3.4"/><path d="M2.9 20c0-3.4 2.9-5.6 6.5-5.6s6.5 2.2 6.5 5.6"/><path d="M17.2 5.3a3.4 3.4 0 010 6.5M18.6 20c0-2.4-.8-4.2-2.2-5.2"/></svg><span>用户管理</span></button>
+  <nav class="side-nav" aria-label="Điều hướng chính">
+    <button class="nav-item on" data-tab="generate" onclick="switchTab('generate')"><span>▶ Tạo video</span></button>
+    <button class="nav-item" data-tab="videos" onclick="switchTab('videos')"><span>▤ Video của tôi</span></button>
+    <button class="nav-item" data-tab="settings" onclick="switchTab('settings')"><span>⚙ Cài đặt</span></button>
   </nav>
 
   <div class="side-foot">
-    <label class="sw-row"><input type="checkbox" id="autoCk" checked onchange="autoRefresh=this.checked">自动刷新</label>
+    <label class="sw-row"><input type="checkbox" id="autoCk" checked onchange="autoRefresh=this.checked">Tự động làm mới</label>
     <span id="lastUpdate"></span>
-    <button class="btn" onclick="refresh()">刷新</button>
-    <button class="btn btn-p" onclick="openStress()">压力测试</button>
-    <button class="btn btn-danger" onclick="logout()" title="清除面板密码">注销</button>
+    <button class="btn" onclick="refresh()">Làm mới</button>
+
+    <button class="btn btn-danger" onclick="logout()" title="Xóa phiên đăng nhập khỏi trình duyệt">Đăng xuất</button>
   </div>
 </aside>
 
 <main>
-  <section id="tab-dash">
-    <div class="cards" id="statCards"></div>
-    <div class="card"><h3>近 7 日出片趋势</h3><div class="chart" id="chart"></div></div>
-    <div class="card"><h3>号池概况</h3>
-      <div class="groupbar" id="poolGroups" style="border-top:none;padding:0 0 12px"></div>
-      <div id="perAccount"></div></div>
+
+
+
+
+
+
+  <section id="tab-tasks" style="display:none">
+    <div class="card"><h3>Hàng đợi tác vụ gần đây (50 tác vụ mới nhất)</h3><div id="tasksTable"></div></div>
   </section>
 
+  <section id="tab-videos" style="display:none">
+    <div class="card">
+      <div class="toolbar">
+        <h3 style="margin:0">Video của tôi</h3>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-danger" id="btnDelVideos" onclick="delSelectedVideos()" disabled>Xóa đã chọn</button>
+          <button class="btn" onclick="loadVideos()">Làm mới</button>
+        </div>
+      </div>
+      <div id="videoStat" style="margin:10px 0 6px;color:var(--sub);font-size:13px">Đang tải thống kê video...</div>
+      <p id="myBatchSummary" role="status"></p><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div id="myVideoJobs" class="my-video-jobs"></div><details><summary>Thông tin file đã lưu</summary><div id="videosTable"></div></details>
+    </div>
+  </section>
+
+
+
+
+  <section id="tab-settings" style="display:none">
+    <div class="card"><h3>Cài đặt Studio</h3><p class="tiny">Tài khoản tạo video và kết nối hỗ trợ viết prompt.</p>
+    <p id="studioNetworkInfo" class="tiny" style="margin-top:10px"></p>
+    <div class="settings-nav"><button class="btn" onclick="switchSettings('accounts')">Tài khoản Dola</button><button class="btn" onclick="switchSettings('ai-settings')">Kết nối AI</button><button class="btn" onclick="switchSettings('proxies')">Nâng cao: proxy</button><button class="btn" onclick="switchSettings('dash')">Chẩn đoán</button></div></div>
   <section id="tab-accounts" style="display:none">
     <div class="card">
       <div class="toolbar">
-        <h3 style="margin:0">账号列表</h3>
+        <h3 style="margin:0">Danh sách tài khoản</h3>
         <span id="resetHint" class="tiny"></span>
         <div style="display:flex;gap:8px">
           <select id="srcFilter" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)" onchange="srcFilterVal=this.value;accPage=1;loadAccounts()">
-            <option value="all">全部来源</option>
-            <option value="login">账号登录</option>
-            <option value="cookie">Cookie 载入</option>
+            <option value="all">Tất cả nguồn</option>
+            <option value="login">Đăng nhập Google</option>
+            <option value="cookie">Nạp Cookie</option>
           </select>
-          <button class="btn btn-danger" id="btnDelSel" onclick="delSelected()" disabled>删除选中</button>
-          <button class="btn" id="btnVerifySel" onclick="batchVerifySelected()" disabled>一键验证</button>
-          <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="发一句「你好」判风控：被登出或没回复 → 进【风控】组；不勾选就对当前筛选出来的号批量探测">你好探测</button>
-          <button class="btn" id="btnBatchRecover" onclick="batchRecover()" title="批量把选中的号从【风控】/【异常】组放出来（风控恢复后回到【待激活】，建议接着探测一次）">批量恢复</button>
-          <button class="btn" id="btnProxySel" onclick="openBatchProxy()" disabled>更改代理</button>
-          <button class="btn" onclick="resetAllQuotas()" title="立即恢复全池额度（每天按设定时点自动执行一次）">重置额度</button>
-          <button class="btn" onclick="openBatchAdd()">＋ 批量添加</button>
-          <button class="btn btn-p" onclick="openAddAccount()">＋ 添加账号</button>
+          <button class="btn" onclick="loadAccounts()">Làm mới trạng thái</button>
+          <details class="account-advanced"><summary>Thao tác nâng cao</summary><div class="settings-nav">
+          <button class="btn btn-danger" id="btnDelSel" onclick="delSelected()" disabled>Xóa đã chọn</button>
+          <button class="btn" id="btnVerifySel" onclick="batchVerifySelected()" disabled>Kiểm tra đăng nhập</button>
+          <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="Gửi tin nhắn Hello kiểm tra tài khoản: Nếu bị đăng xuất hoặc không phản hồi -> Chuyển vào nhóm Bị kiểm soát (Risk Flagged). Áp dụng cho các tài khoản đang chọn hoặc toàn bộ bộ lọc hiện tại.">Kiểm tra phản hồi Dola</button>
+          <button class="btn" id="btnBatchRecover" onclick="batchRecover()" title="Khôi phục các tài khoản đã chọn từ nhóm Bị kiểm soát / Bất thường về trạng thái Chờ kích hoạt (Pending). Nên chạy Kiểm tra phản hồi Dola ngay sau đó.">Khôi phục tài khoản</button>
+          <button class="btn" id="btnProxySel" onclick="openBatchProxy()" disabled>Đổi Proxy hàng loạt</button>
+          <button class="btn" onclick="resetAllQuotas()" title="Chỉ đặt lại bộ đếm trên tool; không cấp thêm điểm Dola.">Đặt lại bộ đếm cục bộ</button>
+          <button class="btn" onclick="openBatchAdd()">+ Nạp hàng loạt</button>
+          </div></details>
+          <button class="btn btn-p" onclick="openAddAccount()">+ Thêm tài khoản</button>
         </div>
       </div>
       <div class="groupbar" id="groupBar"></div>
       <div id="accountsTable"></div>
     </div>
   </section>
+  <section id="tab-ai-settings" style="display:none">
+    <div class="card">
+      <div class="toolbar">
+        <h3 style="margin:0">Kết nối AI hỗ trợ prompt</h3>
+        <button class="btn btn-p" onclick="saveAiSettings()">Lưu cấu hình AI</button>
+      </div>
+      <div class="hint" style="margin-bottom:14px">
+        Hỗ trợ Google Gemini API và các dịch vụ tương thích OpenAI (OpenAI, DeepSeek, Groq, Ollama, 9router...).
+        Chỉ một provider hoạt động tại một thời điểm. API Key được mã hóa cục bộ an toàn, không bao giờ hiển thị dạng văn bản rõ.
+      </div>
 
+      <div style="margin-bottom:16px">
+        <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:8px">Lựa chọn Provider đang hoạt động</label>
+        <div style="display:flex;gap:10px">
+          <button class="btn" id="btn_ai_gemini" onclick="selectAiProvider('gemini')">Google Gemini API</button>
+          <button class="btn" id="btn_ai_openai" onclick="selectAiProvider('openai')">OpenAI-compatible</button>
+          <button class="btn" id="btn_ai_none" onclick="selectAiProvider(null)">Tắt (Không dùng)</button>
+        </div>
+      </div>
+
+      <div class="ai-config-grid">
+        <!-- Cột Gemini -->
+        <div class="card" id="card_gemini_config" style="background:rgba(255,255,255,.02);margin-bottom:0">
+          <h4 style="margin:0 0 12px;font-size:14px;color:#a3c9ff">Google Gemini API</h4>
+          <div style="margin-bottom:10px">
+            <label style="display:block;font-size:12px;color:var(--sub);margin-bottom:4px">Model ID</label>
+            <input id="ai_gemini_model" style="width:100%;padding:8px 12px" value="gemini-2.5-flash" placeholder="gemini-2.5-flash">
+          </div>
+          <div style="margin-bottom:10px">
+            <label style="display:block;font-size:12px;color:var(--sub);margin-bottom:4px">API Key</label>
+            <input id="ai_gemini_key" type="password" style="width:100%;padding:8px 12px" placeholder="Nhập Gemini API Key">
+            <div id="ai_gemini_key_status" class="tiny" style="margin-top:4px;color:var(--sub)"></div>
+          </div>
+          <div style="margin-top:12px" id="ai_gemini_clear_row">
+            <button class="btn btn-danger" style="font-size:12px;padding:4px 10px" onclick="clearAiKey('gemini')">Xóa Key đã lưu</button>
+          </div>
+        </div>
+
+        <!-- Cột OpenAI-compatible -->
+        <div class="card" id="card_openai_config" style="background:rgba(255,255,255,.02);margin-bottom:0">
+          <h4 style="margin:0 0 12px;font-size:14px;color:#5cf0bb">OpenAI-compatible API</h4>
+          <div style="margin-bottom:10px">
+            <label style="display:block;font-size:12px;color:var(--sub);margin-bottom:4px">Base URL</label>
+            <input id="ai_openai_base" style="width:100%;padding:8px 12px" value="https://api.openai.com/v1" placeholder="https://api.openai.com/v1">
+          </div>
+          <div style="margin-bottom:10px">
+            <label style="display:block;font-size:12px;color:var(--sub);margin-bottom:4px">Model ID</label>
+            <input id="ai_openai_model" style="width:100%;padding:8px 12px" value="gpt-4o-mini" placeholder="gpt-4o-mini">
+          </div>
+          <div style="margin-bottom:10px">
+            <label style="display:block;font-size:12px;color:var(--sub);margin-bottom:4px">API Key</label>
+            <input id="ai_openai_key" type="password" style="width:100%;padding:8px 12px" placeholder="Nhập OpenAI API Key">
+            <div id="ai_openai_key_status" class="tiny" style="margin-top:4px;color:var(--sub)"></div>
+          </div>
+          <div style="margin-top:12px" id="ai_openai_clear_row">
+            <button class="btn btn-danger" style="font-size:12px;padding:4px 10px" onclick="clearAiKey('openai')">Xóa Key đã lưu</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="ai_save_msg" class="tiny" style="margin-top:14px"></div>
+    </div>
+  </section>
   <section id="tab-proxies" style="display:none">
     <div class="card">
       <div class="toolbar">
-        <h3 style="margin:0">代理列表</h3>
-        <button class="btn btn-p" onclick="openAddProxy()">＋ 添加代理</button>
+        <h3 style="margin:0">Danh sách Proxy & Node Pool</h3>
+        <button class="btn btn-p" onclick="openAddProxy()">+ Thêm Proxy</button>
       </div>
       <div class="hint" style="margin-bottom:12px">
-        可添加多个 HTTP/SOCKS 代理：<b>静态IP</b>填一条固定出口；<b>动态IP</b>不用填 IP、端口，
-        用「提取链接」或直接「粘贴节点（host:port:user:pass，可批量）」组成节点池，一个节点分给一个号。
-        在“账号管理 → 操作 → 代理”里给每个账号选择；也可以勾选账号后点“更改代理”批量绑定。
-        未给账号指定代理时，使用环境变量默认代理
+        Hỗ trợ thiết lập Proxy HTTP / SOCKS5: <b>IP Tĩnh (Static IP)</b> dùng một địa chỉ cố định; <b>IP Động xoay (Dynamic Pool)</b> không cần điền IP/Port cố định,<br>        hệ thống nạp danh sách Node từ API hoặc dán danh sách <code>host:port:user:pass</code>. Mỗi Node cấp phát riêng cho từng tài khoản.<br>        Gán Proxy trực tiếp trong bảng tài khoản hoặc chọn nhiều tài khoản rồi bấm "Đổi Proxy hàng loạt".<br>        Tài khoản không chỉ định Proxy sẽ sử dụng Proxy mặc định từ biến môi trường
         <span id="defaultProxyShow" style="font-family:monospace"></span>。
       </div>
       <div id="proxiesTable"></div>
     </div>
   </section>
-
-  <section id="tab-tasks" style="display:none">
-    <div class="card"><h3>任务列表（最近 50 条）</h3><div id="tasksTable"></div></div>
+  <section id="tab-dash">
+    <div class="cards" id="statCards"></div>
+    <div class="card"><h3>Biểu đồ sản lượng video (7 ngày qua)</h3><div class="chart" id="chart"></div></div>
+    <div class="card"><h3>Tổng quan kho tài khoản</h3>
+      <div class="groupbar" id="poolGroups" style="border-top:none;padding:0 0 12px"></div>
+      <div id="perAccount"></div></div>
   </section>
-
-  <section id="tab-videos" style="display:none">
+  </section>
+  <section id="tab-generate" style="display:none">
     <div class="card">
-      <div class="toolbar">
-        <h3 style="margin:0">视频管理（已生成的视频）</h3>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-danger" id="btnDelVideos" onclick="delSelectedVideos()" disabled>删除选中</button>
-          <button class="btn" onclick="loadVideos()">刷新</button>
+      <h3>Tạo video từ ý tưởng của bạn</h3><p class="studio-intro">Mô tả cảnh, thêm ảnh nếu cần, rồi tạo video. Bạn có thể nhờ AI chỉnh prompt trước khi gửi.</p>
+      <div class="studio-options">
+        <div>
+          <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Mô hình video</label>
+          <select id="gen_model" style="width:100%;padding:8px 12px" onchange="onModelChange()">
+            <option value="seedance-2.5">Seedance 2.5</option>
+            <option value="seedance-2.0">Seedance 2.0</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Thời lượng mong muốn</label>
+          <select id="gen_duration" style="width:100%;padding:8px 12px">
+            <option value="30">30 giây</option>
+            <option value="15">15 giây</option>
+            <option value="10">10 giây</option>
+            <option value="5">5 giây</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Khung hình</label>
+          <select id="gen_ratio" style="width:100%;padding:8px 12px">
+            <option value="16:9">16:9 · Ngang</option>
+            <option value="9:16">9:16 · Dọc</option>
+            <option value="1:1">1:1 · Vuông</option>
+            <option value="4:3">4:3</option>
+            <option value="3:4">3:4</option>
+
+          </select>
         </div>
       </div>
-      <div id="videoStat" style="margin:10px 0 6px;color:var(--sub);font-size:13px">视频统计加载中…</div>
-      <div id="videosTable"></div>
+
+      <div class="job-heading">
+        <div><label for="gen_mode">Cách tạo</label><select id="gen_mode" onchange="batchInputsChanged()"><option value="single">Một prompt</option><option value="list">Danh sách prompt / TXT</option></select></div>
+        <div><label for="gen_copies">Số video mỗi prompt</label><input id="gen_copies" type="number" min="1" max="10" value="1" oninput="batchInputsChanged()" style="width:85px"></div>
+      </div>
+      <div id="gen_batch_editor" style="display:none;margin-bottom:14px">
+        <label for="gen_batch_prompts">Danh sách prompt — mỗi dòng là một prompt</label>
+        <textarea id="gen_batch_prompts" rows="7" oninput="batchInputsChanged()" placeholder="Một chú mèo trên cửa sổ&#10;Một con thuyền trên biển lúc bình minh"></textarea>
+        <label for="gen_txt_file">Nạp file TXT (UTF-8, tối đa 1 MB)</label><input id="gen_txt_file" type="file" accept=".txt,text/plain" onchange="importPromptTxt(this)">
+        <p class="tiny">Bỏ qua dòng trống, giữ các dòng trùng để tạo các video riêng. Tối đa 50 video mỗi mẻ. Ảnh và lựa chọn bên trên áp dụng cho toàn mẻ. Để viết lại một prompt, chuyển về Một prompt.</p>
+      </div>
+      <p id="gen_batch_summary" class="tiny"></p>
+      <div id="gen_batch_check" role="status"></div>
+      <div id="gen_single_editor">
+      <div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <label style="font-size:13px;color:var(--sub)">Ý tưởng và mô tả cảnh</label>
+          <span style="font-size:12px;color:var(--sub)">Ký tự: <b id="prompt_char_count">0</b></span>
+        </div>
+        <textarea id="gen_prompt" rows="5" style="width:100%;padding:10px 14px;font-size:14px;line-height:1.6" placeholder="Nhập mô tả video bạn muốn tạo (ví dụ: Cảnh tiên nhân áo trắng đứng trên vách đá ngắm hoàng hôn, góc quay tracking cinematic, ánh sáng vàng cam...)" oninput="onPromptInput()"></textarea>
+      </div>
+
+      <div class="rewrite-controls">
+        <label for="gen_rewrite_instructions">Bạn muốn sửa gì?</label>
+        <textarea id="gen_rewrite_instructions" rows="2" maxlength="4000" placeholder="Giữ nhân vật và hành động, thêm góc máy, giảm lời văn…" oninput="saveStudioDraft()"></textarea>
+        <div class="settings-nav"><button class="btn" id="btn_rewrite" onclick="doRewritePrompt()">Chỉnh prompt với AI</button><button class="btn" onclick="undoPrompt()">Hoàn tác</button></div>
+      </div>
+      <!-- Khung đề xuất viết lại Prompt (ẩn mặc định) -->
+      <div id="gen_rewrite_box" style="display:none;background:rgba(255,255,255,.03);border:1px solid var(--stroke-hi);border-radius:10px;padding:14px;margin-bottom:14px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:6px;color:#a3c9ff">✨ Đề xuất viết lại từ AI (Xem và chỉnh sửa trước khi áp dụng):</div>
+        <label for="gen_rewrite_before">Bản trước</label><textarea id="gen_rewrite_before" rows="3" readonly></textarea><label for="gen_rewrite_draft">Bản đề xuất — có thể sửa trực tiếp</label>
+        <textarea id="gen_rewrite_draft" rows="4" oninput="rewriteVersion++;saveStudioDraft()" style="width:100%;padding:8px 12px;font-size:13px;line-height:1.5;margin-bottom:8px"></textarea>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-p" onclick="applyRewrittenPrompt()">Áp dụng prompt này</button>
+          <button class="btn" onclick="doRewritePrompt()">Sửa tiếp bản đề xuất</button><button class="btn" onclick="dismissRewrite()">Bỏ đề xuất</button>
+        </div>
+      </div>
+
+      <details class="prompt-history" style="margin-bottom:18px"><summary>Bản gốc và lịch sử chỉnh sửa</summary>
+        <label for="gen_original">Ý tưởng ban đầu</label><textarea id="gen_original" rows="3" readonly></textarea>
+        <button class="btn" onclick="restoreOriginalPrompt()">Dùng lại bản gốc</button>
+        <label for="gen_history">Các lần AI chỉnh prompt</label><select id="gen_history" onchange="chooseRewriteHistory(this.value)"><option value="">Chọn bản đề xuất trước</option></select>
+      </details>
+      </div>
+      <!-- Khung ảnh tham chiếu (Reference Images) -->
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Ảnh tham chiếu (Tùy chọn, tối đa 15MB/ảnh - JPG, PNG, WEBP)</label>
+        <input type="file" id="gen_file_input" accept="image/jpeg,image/png,image/webp" multiple style="display:none" onchange="handleImageSelection(this.files)">
+        <div class="drop-zone" role="button" tabindex="0" aria-label="Chọn ảnh tham chiếu" onclick="q('#gen_file_input').click()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();q('#gen_file_input').click()}" ondragover="event.preventDefault()" ondrop="event.preventDefault();handleImageSelection(event.dataTransfer.files)">
+          <svg style="width:28px;height:28px;fill:var(--sub);margin-bottom:4px" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          <div style="font-size:13px;color:var(--text);font-weight:500">Bấm để chọn ảnh hoặc kéo thả ảnh vào đây</div>
+          <div class="tiny" style="color:var(--sub);margin-top:2px">Hỗ trợ tải lên nhiều ảnh tham chiếu cùng lúc</div>
+        </div>
+        <div id="gen_image_previews" class="image-previews"></div>
+      </div>
+
+      <!-- Banner kết quả kiểm tra Preflight -->
+      <div id="gen_preflight_alert" style="display:none"></div>
+
+      <!-- Nút thao tác -->
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px">
+        <button class="btn" id="btn_preflight" onclick="doPreflightCheck()">Kiểm tra nội dung</button>
+        <button class="btn btn-p" id="btn_submit_gen" onclick="doSubmitGenerate()">Tạo video</button>
+        <span id="gen_action_msg" role="status" aria-live="polite" class="tiny" style="color:var(--sub);margin-left:6px"></span>
+      </div>
+    </div>
+
+    <!-- Khung theo dõi tiến độ Job đang chạy -->
+    <div id="gen_job_card" class="card" style="display:none">
+      <h3>Tiến độ tạo video</h3>
+      <div id="gen_job_content"></div>
     </div>
   </section>
 
-  <section id="tab-keys" style="display:none">
-    <div class="card">
-      <div class="toolbar">
-        <h3 style="margin:0">API 密钥</h3>
-        <button class="btn btn-p" onclick="openCreateKey()">＋ 创建密钥</button>
-      </div>
-      <div class="hint" style="margin-bottom:12px">每个 Key 可独立设置每日额度、并发数和允许时长；0 表示不限。环境变量里的 key 始终有效、不在此列表。</div>
-      <div id="keysTable"></div>
-    </div>
-  </section>
 
-  <section id="tab-users" style="display:none">
-    <div class="card">
-      <div class="toolbar">
-        <h3 style="margin:0">用户管理</h3>
-        <button class="btn btn-p" onclick="openAddUser()">＋ 新增管理员</button>
-      </div>
-      <div class="hint" style="margin-bottom:12px">可增加/删除/修改子管理账号与密码；主账号 admin 不能删除或禁用。</div>
-      <div id="usersTable"></div>
-    </div>
-  </section>
 </main>
 
 <div id="dlg" class="dialog" style="display:none"><div class="box" id="dlgBox"></div></div>
 <div id="promptModal" class="dialog" style="display:none">
   <div class="box" style="width:720px">
-    <h2>任务提示词</h2>
+    <h2>Chi tiết Prompt tác vụ</h2>
     <div class="tiny" id="promptMeta" style="margin-bottom:10px"></div>
     <div class="prompt-body" id="promptBody"></div>
     <div class="row">
-      <button class="btn" id="promptCopyBtn" onclick="copyPrompt()">复制</button>
-      <button class="btn" onclick="hide('promptModal')">关闭</button>
+      <button class="btn" id="promptCopyBtn" onclick="copyPrompt()">Sao chép</button>
+      <button class="btn" onclick="hide('promptModal')">Đóng</button>
     </div>
   </div>
 </div>
 <div id="thumbModal" class="dialog" style="display:none">
   <div class="box" style="width:520px">
-    <h2>参考图</h2>
-    <img id="thumbImg" alt="参考图">
-    <div class="row"><button class="btn" onclick="hide('thumbModal')">关闭</button></div>
+    <h2>Ảnh tham chiếu (Reference Image)</h2>
+    <img id="thumbImg" alt="Ảnh tham chiếu">
+    <div class="row"><button class="btn" onclick="hide('thumbModal')">Đóng</button></div>
   </div>
 </div>
 <div id="videoModal" class="dialog" style="display:none">
   <div class="box" style="width:640px">
-    <h2>视频预览</h2>
+    <h2>Xem trước video</h2>
     <video id="videoEl" controls autoplay style="width:100%;border-radius:8px"></video>
-    <div class="row"><button class="btn" onclick="closeVideo()">关闭</button></div>
+    <div class="row"><button class="btn" onclick="closeVideo()">Đóng</button></div>
   </div>
 </div>
 
 <script>
 const LS_KEY='dola_admin_key';
 let adminKey=localStorage.getItem(LS_KEY)||'';
-let autoRefresh=true, curTab='dash', timer=null;
+let autoRefresh=true, curTab='generate', timer=null;
 
 function q(s){return document.querySelector(s);}
-function show(id){document.getElementById(id).style.display='flex';}
+function show(id){document.getElementById(id).style.display=id.startsWith('gen_')?'block':'flex';}
 function hide(id){document.getElementById(id).style.display='none';}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function fmt(ts){if(!ts)return '-';const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
@@ -346,7 +547,7 @@ async function api(path,opts={}){
   if(r.status===401){showLogin();throw new Error('unauthorized');}
   const text=await r.text();
   let data={};try{data=text?JSON.parse(text):{};}catch(e){}
-  if(!r.ok)throw new Error(data.detail||(`${r.status} ${text.slice(0,120)}`));
+  if(!r.ok)throw new Error(typeof data.detail==='object'?JSON.stringify(data.detail):(data.detail||`${r.status} ${text.slice(0,120)}`));
   return data;
 }
 
@@ -359,28 +560,38 @@ async function submitLogin(){
   try{r=await api('/api/admin/login',{method:'POST',body:{username,password}});}
   catch(e){q('#loginErr').style.display='block';return;}
   adminKey=r.token;localStorage.setItem(LS_KEY,r.token);
-  hide('loginMask');refresh();
+  hide('loginMask');switchTab('generate');
 }
 function logout(){adminKey='';localStorage.removeItem(LS_KEY);showLogin();}
 
+let settingsTab='accounts';
+function switchSettings(t){
+  settingsTab=t;
+  ['accounts','ai-settings','proxies','dash'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
+  if(t==='accounts')loadAccounts();else if(t==='ai-settings')loadAiSettings();else if(t==='proxies')loadProxies();else loadDash();
+}
 function switchTab(t){
+  if(['accounts','ai-settings','proxies','dash'].includes(t)){switchTab('settings');switchSettings(t);return;}
+  if(t==='tasks')t='videos';
+  if(!['generate','videos','settings'].includes(t))t='generate';
   curTab=t;
   document.querySelectorAll('.side-nav .nav-item').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
-  ['dash','accounts','proxies','tasks','videos','keys','users'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
+  ['generate','settings','tasks','videos'].forEach(x=>{const el=q('#tab-'+x);if(el)el.style.display=x===t?'block':'none';});
+  if(t==='settings'){switchSettings(settingsTab);api('/api/admin/studio-info').then(info=>q('#studioNetworkInfo').textContent=info.transport_mode==='relay'?'Pure API dùng relay hiện có; proxy tài khoản chỉ áp dụng cho trình duyệt. Theo dõi tự động tối đa '+Math.round(info.observation_seconds/60)+' phút.':'Pure API và trình duyệt dùng tuyến proxy đã chọn. Proxy hỏng sẽ báo lỗi, không tự chuyển sang direct.').catch(()=>{});}
   refresh();
 }
 
 async function refresh(){
   if(q('#loginMask').style.display!=='none')return;
-  q('#lastUpdate').textContent='更新于 '+new Date().toLocaleTimeString();
+  q('#lastUpdate').textContent='Cập nhật lúc '+new Date().toLocaleTimeString();
   try{
-    if(curTab==='dash')await loadDash();
+    if(curTab==='settings'){if(settingsTab==='accounts')await loadAccounts();}
+    else if(curTab==='generate')await initGenerateTab();
     else if(curTab==='accounts')await loadAccounts();
     else if(curTab==='proxies')await loadProxies();
     else if(curTab==='tasks')await loadTasks();
-    else if(curTab==='videos')await loadVideos();
-    else if(curTab==='keys')await loadKeys();
-    else if(curTab==='users')await loadUsers();
+    else if(curTab==='videos'){await loadMyVideos();await loadVideos();}
+    else if(curTab==='ai-settings')await loadAiSettings();
   }catch(e){if(e.message!=='unauthorized'){/* 静默 */}}
 }
 
@@ -389,28 +600,28 @@ async function loadDash(){
   const st=await api('/api/admin/stats');
   const sr=st.success_rate==null?'—':(st.success_rate*100).toFixed(0)+'%';
   q('#statCards').innerHTML=`
-    <div class="stat s1"><div class="v">${st.today_completed}</div><div class="l">今日出片</div></div>
-    <div class="stat s2"><div class="v">${st.today_failed}</div><div class="l">今日失败</div></div>
-    <div class="stat s3"><div class="v">${sr}</div><div class="l">成功率</div></div>
-    <div class="stat s4"><div class="v">${st.available_accounts}/${st.total_accounts}</div><div class="l">可用号 · 剩余 ${st.total_remaining} 点</div></div>`;
+    <div class="stat s1"><div class="v">${st.today_completed}</div><div class="l">Video hoàn thành hôm nay</div></div>
+    <div class="stat s2"><div class="v">${st.today_failed}</div><div class="l">Video thất bại hôm nay</div></div>
+    <div class="stat s3"><div class="v">${sr}</div><div class="l">Tỉ lệ thành công</div></div>
+    <div class="stat s4"><div class="v">${st.available_accounts}/${st.total_accounts}</div><div class="l">Khả dụng · Còn lại ${st.total_remaining} điểm</div></div>`;
   renderGroupBar(st,'#poolGroups',true);
   const max=Math.max(1,...st.per_day.map(d=>d.completed+d.failed));
   q('#chart').innerHTML=st.per_day.map(d=>`
     <div class="col">
       <div class="bars">
-        <div class="bar" style="height:${Math.round(d.completed/max*100)}px;background:#00b875" title="出片 ${d.completed}"></div>
-        <div class="bar" style="height:${Math.round(d.failed/max*100)}px;background:#e5484d" title="失败 ${d.failed}"></div>
+        <div class="bar" style="height:${Math.round(d.completed/max*100)}px;background:#00b875" title="Hoàn thành: ${d.completed}"></div>
+        <div class="bar" style="height:${Math.round(d.failed/max*100)}px;background:#e5484d" title="Thất bại: ${d.failed}"></div>
       </div>
       <div class="lbl">${d.day}</div>
     </div>`).join('');
   q('#perAccount').innerHTML=table(
-    ['账号','组','调度','剩余额度','累计出片','最近使用','备注'],
+    ['Tài khoản / Email','Nhóm trạng thái','Lập lịch (Schedule)','Hạn mức (Credits)','Tổng video đã tạo','Lần dùng cuối','Ghi chú (Notes)'],
     st.per_account.map(a=>[
       accLabel(a),
       groupBadge(a),
       `<label class="sw"><input type="checkbox" ${a.scheduling?'checked':''} onchange="setSched('${a.name}',this.checked)"><i></i></label>`,
-      `<b>${a.remaining}</b> / ${a.limit}<span class="tiny">（点数/上限）</span>`+
-        (a.credit_balance==null?'':`<div class="tiny">上游余额 ${a.credit_balance}${a.credit_balance<2?'（已用完）':''}</div>`),
+      `<b>${a.remaining}</b> / ${a.limit}<span class="tiny"> (Điểm / Giới hạn)</span>`+
+        (a.credit_balance==null?'':`<div class="tiny">Số dư Dola upstream: ${a.credit_balance}${a.credit_balance<2?' (Đã hết điểm)':''}</div>`),
       a.completed_total||0,
       fmt(a.last_used_at),
       noteCell(a)
@@ -418,19 +629,19 @@ async function loadDash(){
   );
 }
 
-function accLabel(x){return x.email?`<div>${esc(x.email)}</div>`:'<span class="tiny">未录入邮箱</span>';}
+function accLabel(x){return x.email?`<div>${esc(x.email)}</div>`:'<span class="tiny">Chưa có email</span>';}
 /** 运行态（与分组正交的瞬时信息）：出片中 / 加号任务 / 动态代理出口 IP。
     风控、冷却、待激活、异常这些「状态」已经由分组列表达，不在这里重复；
     「限流」「失败(待全池重置)」两个概念已于 2.1.0 P3 删除。 */
 function statusBadge(a){
-  if(a.busy)return '<span class="badge b-blue">出片中</span>';
-  if(a.login_ok===0)return '<span class="badge b-red">登录失效</span>';
+  if(a.busy)return '<span class="badge b-blue">Đang render</span>';
+  if(a.login_ok===0)return '<span class="badge b-red">Phiên đăng nhập hết hạn</span>';
   return '<span class="tiny">—</span>';
 }
 
 function table(heads,rows){
   return `<table><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
-    <tbody>${rows.length?rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${heads.length}" class="empty">暂无数据</td></tr>`}</tbody></table>`;
+    <tbody>${rows.length?rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${heads.length}" class="empty">Không có dữ liệu</td></tr>`}</tbody></table>`;
 }
 
 async function setSched(name,on){
@@ -452,11 +663,21 @@ let groupFilterVal='all';   // all / valid / 满额 / 半额 / 冷却 / 生成�
 
 const GROUP_STYLE={'满额':'b-green','半额':'b-blue','冷却':'b-orange','生成中':'b-blue',
                    '风控':'b-red','待激活':'b-gray','异常':'b-red'};
+const GROUP_NAMES={
+  '满额':'Đủ 4 điểm (Full)',
+  '半额':'Còn 2 điểm (Half)',
+  '冷却':'Tạm nghỉ (Cooldown)',
+  '生成中':'Đang render (Busy)',
+  '风控':'Bị kiểm soát (Risk Flagged)',
+  '待激活':'Chờ kích hoạt (Pending)',
+  '异常':'Bất thường (Abnormal)'
+};
 const GROUP_ACTIVE=['满额','半额','冷却','生成中'];
 function groupBadge(a){
   const g=a.group||'';
   if(!g)return '<span class="tiny">—</span>';
-  return '<span class="badge '+(GROUP_STYLE[g]||'b-gray')+'" title="'+esc(a.group_reason||g)+'">'+esc(g)+'</span>'
+  const name=GROUP_NAMES[g]||g;
+  return '<span class="badge '+(GROUP_STYLE[g]||'b-gray')+'" title="'+esc(a.group_reason||name)+'">'+esc(name)+'</span>'
     +(a.group_reason?'<div class="tiny">'+esc(a.group_reason)+'</div>':'');
 }
 function renderGroupBar(d,container,jump){
@@ -465,22 +686,21 @@ function renderGroupBar(d,container,jump){
   const pts=d.remaining_points||0;
   const go=(key)=>jump?("setGroupFilterGo('"+key+"')"):("setGroupFilter('"+key+"')");
   const btn=(key,label,count,extra)=>'<button class="gbtn'+(groupFilterVal===key?' on':'')+'"'
-    +' onclick="'+go(key)+'" title="'+esc(extra||('筛选 '+label))+'">'
+    +' onclick="'+go(key)+'" title="'+esc(extra||('Lọc '+label))+'">'
     +label+' <b class="n">'+count+'</b></button>';
   const sep='<span class="sep"></span>';
   q(container||'#groupBar').innerHTML=
-    btn('all','全部',d.all_count||0,'显示全部账号（含风控/待激活）')+
-    btn('valid','有效',d.valid_count||0,'正常组：满额+半额+冷却+生成中')+sep+
-    btn('满额','满额',n('满额'),'剩余 4 点：seedance-2.0 专用，seedance-2.5 兜底')+
-    btn('半额','半额',n('半额'),'剩余 2 点：seedance-2.5 优先使用')+
-    btn('冷却','冷却',n('冷却'),'剩余 0/1 点：不派发，每日 23:00 重置回满额')+
-    btn('生成中','生成中',n('生成中'),'正在出片')+sep+
-    btn('风控','风控',n('风控'),'发你好不回复或被登出：永久停留，需人工恢复')+
-    btn('待激活','待激活',n('待激活'),'新号，尚未完成首次激活探测')+
-    btn('异常','异常',n('异常'),'派发后 5 分钟无回执，到期自动恢复')+sep+
-    '<span class="gbtn points" title="正常组（满额+半额+冷却+生成中）的剩余总额度；'
-      +'seedance-2.5 每条 2 点、seedance-2.0 每条 3 点">剩余额度 <b>'+pts+'</b> 点'
-      +'<span class="n">≈2.5 可出 '+Math.floor(pts/2)+' 条</span></span>';
+    btn('all','Tất cả',d.all_count||0,'Hiển thị toàn bộ tài khoản (kể cả Risk Flagged / Pending)')+
+    btn('valid','Hoạt động (Active)',d.valid_count||0,'Nhóm hoạt động: Đủ điểm + Còn 2 điểm + Tạm nghỉ + Đang render')+sep+
+    btn('满额','Đủ 4 điểm',n('满额'),'Hạn mức 4 điểm: Dành riêng cho Seedance 2.0 / Dự phòng 2.5')+
+    btn('半额','Còn 2 điểm',n('半额'),'Hạn mức 2 điểm: Ưu tiên tạo video 30s Seedance 2.5')+
+    btn('冷却','Tạm nghỉ',n('冷却'),'Còn 0-1 điểm: Tạm dừng gửi task, tự động hồi điểm lúc 00:00 (giờ Tokyo)')+
+    btn('生成中','Đang render',n('生成中'),'Tài khoản đang trong tiến trình sinh video')+sep+
+    btn('风控','Kiểm soát (Risk)',n('风控'),'Bị đăng xuất hoặc nghi ngờ checkpoint: Cần khôi phục thủ công')+
+    btn('待激活','Chờ kích hoạt',n('待激活'),'Tài khoản mới nạp, chưa chạy kiểm tra kích hoạt ban đầu')+
+    btn('异常','Bất thường',n('异常'),'Quá thời gian phản hồi (timeout > 5 phút), tự động giải phóng khi hết cooldown')+sep+
+    '<span class="gbtn points" title="Tổng credit khả dụng của nhóm hoạt động (Seedance 2.5: 2 điểm/video 30s, Seedance 2.0: 3 điểm/video)">Điểm còn lại <b>'+pts+'</b> pts'
+      +'<span class="n">≈ Tạo được '+Math.floor(pts/2)+' video 30s</span></span>';
 }
 function setGroupFilter(key){groupFilterVal=key;accPage=1;loadAccounts();}
 function setGroupFilterGo(key){groupFilterVal=key;accPage=1;switchTab('accounts');}
@@ -491,8 +711,8 @@ function matchGroup(x){
 }
 
 function srcBadge(x){
-  if(x.source==='login')return '<span class="badge b-green" title="Google 账号登录">账号登录</span>';
-  if(x.source==='cookie')return '<span class="badge b-orange" title="Cookie 载入">Cookie 载入</span>';
+  if(x.source==='login')return '<span class="badge b-green" title="Đăng nhập tài khoản Google">Google Login</span>';
+  if(x.source==='cookie')return '<span class="badge b-orange" title="Nạp bằng Cookie">Cookie Import</span>';
   return '<span class="tiny">—</span>';
 }
 async function loadAccounts(){
@@ -501,7 +721,7 @@ async function loadAccounts(){
   allAccountNames=a.accounts.map(x=>x.name);
   allAccounts=a.accounts;
   const hint=q('#resetHint');
-  if(hint&&a.next_reset_at)hint.textContent=`额度重置：${a.reset_tz} 每天 ${a.reset_hour}:00（下次 ${fmt(a.next_reset_at)}）`;
+  if(hint&&a.next_reset_at)hint.textContent=`Hồi phục hạn mức: ${a.reset_tz} hàng ngày lúc ${a.reset_hour}:00 (Kế tiếp: ${fmt(a.next_reset_at)})`;
   renderGroupBar(a);
   // 新增的号排最前（按创建时间倒序）；没有 created_at 的老号沉底，保持原有相对顺序
   const sorted=[...a.accounts].sort((x,y)=>(y.created_at||0)-(x.created_at||0));
@@ -515,14 +735,14 @@ async function loadAccounts(){
   if(accPage<1)accPage=1;
   const rows=pageSlice().map(x=>{
     const jb=jobs[x.name];
-    const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">加号中</span>'
-      :(jb&&jb.kind==='add'&&jb.status==='failed')?'<span class="badge b-red">加号失败</span>'
+    const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">Đang nạp nick...</span>'
+      :(jb&&jb.kind==='add'&&jb.status==='failed')?'<span class="badge b-red">Nạp nick thất bại</span>'
       :statusBadge(x);
     // 动态代理账号：显示当前出口 IP，并提供换IP/探测
     const ipInfo=x.proxy_mode==='dynamic'
-      ?`<div class="tiny">出口 ${x.exit_ip?esc(x.exit_ip):'未探测'}
-         <a href="javascript:;" onclick="rotateIp('${x.name}')">换IP</a>
-         <a href="javascript:;" onclick="probeIp('${x.name}')">探测</a></div>`
+      ?`<div class="tiny">IP Thoát: ${x.exit_ip?esc(x.exit_ip):'Chưa kiểm tra'}
+         <a href="javascript:;" onclick="rotateIp('${x.name}')">Đổi IP</a>
+         <a href="javascript:;" onclick="probeIp('${x.name}')">Kiểm tra IP</a></div>`
       :'';
     const warn=(jb&&jb.status==='failed')?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
     return [
@@ -534,24 +754,24 @@ async function loadAccounts(){
       srcBadge(x),
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
       `<b>${x.remaining}</b> / ${x.limit}`+
-        (x.credit_balance==null?'':`<div class="tiny">上游余额 ${x.credit_balance}${x.credit_balance<2?'（已用完）':''}</div>`),
+        (x.credit_balance==null?'':`<div class="tiny">Số dư Dola upstream: ${x.credit_balance}${x.credit_balance<2?' (Đã hết điểm)':''}</div>`),
       fmt(x.last_used_at),
       fmt(x.created_at),
       noteCell(x),
-      `<button class="btn" style="margin-right:6px" onclick="openRenameAccount('${x.name}')">改名</button>`+
-      `<button class="btn" style="margin-right:6px" onclick="verify('${x.name}',this)">验证</button>`+
-      `<button class="btn" style="margin-right:6px" onclick="openTestGen('${x.name}')">测试生成</button>`+
-      `<button class="btn" style="margin-right:6px" onclick="openSetAccountProxy('${x.name}','${x.proxy_id||''}')">${x.proxy_name?esc(x.proxy_name):'代理(默认)'}</button>`+
+      `<button class="btn" style="margin-right:6px" onclick="openRenameAccount('${x.name}')">Đổi tên</button>`+
+      `<button class="btn" style="margin-right:6px" onclick="verify('${x.name}',this)">Kiểm tra</button>`+
+      `<button class="btn" style="margin-right:6px" onclick="openTestGen('${x.name}')">Test tạo video</button>`+
+      `<button class="btn" style="margin-right:6px" onclick="openSetAccountProxy('${x.name}','${x.proxy_id||''}')">${x.proxy_name?esc(x.proxy_name):'Proxy (Mặc định)'}</button>`+
       ((x.group==='风控'||x.group==='待激活')
-        ?`<button class="btn" style="margin-right:6px" title="发一句「你好」：被登出或没回复即判风控" onclick="probeHello('${x.name}')">你好探测</button>`:'')+
+        ?`<button class="btn" style="margin-right:6px" title="Gửi tin nhắn Hello: đánh dấu Risk Flagged nếu bị logout hoặc không phản hồi" onclick="probeHello('${x.name}')">Kiểm tra phản hồi Dola</button>`:'')+
       ((x.group==='风控'||x.group==='异常')
-        ?`<button class="btn" style="margin-right:6px" title="放回正常流程（风控恢复后回到待激活，需重新探测）" onclick="recoverAccount('${x.name}',${x.group==='异常'?"'abnormal'":"'risk'"} )">恢复</button>`:'')+
-      `<button class="btn btn-danger" onclick="delAccount('${x.name}')">删除</button>`
+        ?`<button class="btn" style="margin-right:6px" title="Khôi phục tài khoản về Chờ kích hoạt, cần chạy lại Hello Probe" onclick="recoverAccount('${x.name}',${x.group==='异常'?"'abnormal'":"'risk'"} )">Khôi phục</button>`:'')+
+      `<button class="btn btn-danger" onclick="delAccount('${x.name}')">Xóa</button>`
     ];
   });
   q('#accountsTable').innerHTML=table(
-    ['<input type="checkbox" id="selAll" onchange="toggleAll(this.checked)" title="全选=当前筛选结果的全部账号（跨页保持）">',
-     '内部账号','名称','组','运行','来源','调度','剩余额度','最近使用','创建时间','备注','操作'],rows)
+    ['<input type="checkbox" id="selAll" onchange="toggleAll(this.checked)" title="Chọn tất cả tài khoản trong bộ lọc">',
+     'Mã tài khoản (ID)','Tên / Email','Nhóm trạng thái','Trạng thái / IP Thoát','Nguồn','Lập lịch (Schedule)','Hạn mức (Credits)','Lần dùng cuối','Ngày nạp','Ghi chú (Notes)','Thao tác (Actions)'],rows)
     +accPager(accTotalPages);
   updateSelButtons();
 }
@@ -560,12 +780,12 @@ async function loadAccounts(){
 function noteCell(x){
   const note=x.note||'';
   const open=`onclick="editNote('${x.name}')"`;
-  if(!note)return `<span class="tiny" style="cursor:pointer" title="点击可填写备注" ${open}>—</span>`;
-  return `<span class="note" title="点击编辑备注" ${open}>${esc(note)}</span>`;
+  if(!note)return `<span class="tiny" style="cursor:pointer" title="Bấm để thêm ghi chú" ${open}>—</span>`;
+  return `<span class="note" title="Bấm để sửa ghi chú" ${open}>${esc(note)}</span>`;
 }
 async function editNote(name){
   const cur=(allAccounts.find(a=>a.name===name)||{}).note||'';
-  const v=prompt('账号备注（上游拒稿原文会自动追加在此，可手动修改）：',cur);
+  const v=prompt('Ghi chú tài khoản (Lý do từ chối từ ByteDance sẽ tự động lưu vào đây):',cur);
   if(v===null||v===cur)return;
   try{await api('/api/admin/accounts/'+encodeURIComponent(name),{method:'PATCH',body:{note:v}});}
   catch(e){return alert(e.message);}
@@ -594,13 +814,13 @@ function accPager(totalPages){
   const dis1=accPage<=1?' disabled':'';
   const dis2=accPage>=totalPages?' disabled':'';
   return '<div class="pager">'
-    +'<span>共 '+total+' 个号 · 本页 '+(total?start+'-'+end:'0')+' · 第 '+accPage+'/'+totalPages+' 页</span>'
-    +'<button class="btn"'+dis1+' onclick="accGo(1)">首页</button>'
-    +'<button class="btn"'+dis1+' onclick="accGo('+(accPage-1)+')">上一页</button>'
-    +'<button class="btn"'+dis2+' onclick="accGo('+(accPage+1)+')">下一页</button>'
-    +'<button class="btn"'+dis2+' onclick="accGo('+totalPages+')">末页</button>'
-    +'<button class="btn" onclick="selPage()">本页全选</button>'
-    +'<button class="btn" onclick="clearSel()">清空选择</button>'
+    +'<span>Tổng cộng: '+total+' tài khoản · Trang này: '+(total?start+'-'+end:'0')+' · Trang '+accPage+'/'+totalPages+'</span>'
+    +'<button class="btn"'+dis1+' onclick="accGo(1)">Trang đầu</button>'
+    +'<button class="btn"'+dis1+' onclick="accGo('+(accPage-1)+')">Trang trước</button>'
+    +'<button class="btn"'+dis2+' onclick="accGo('+(accPage+1)+')">Trang sau</button>'
+    +'<button class="btn"'+dis2+' onclick="accGo('+totalPages+')">Trang cuối</button>'
+    +'<button class="btn" onclick="selPage()">Chọn trang này</button>'
+    +'<button class="btn" onclick="clearSel()">Bỏ chọn tất cả</button>'
     +'</div>';
 }
 
@@ -609,30 +829,30 @@ async function probeHello(name){
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/probe-hello',{method:'POST'});
     const p=r.probe||{};
-    alert(`${name} 你好探测：${p.ok?'通过 ✓':'未通过 ✗'}\n`
-      +`登录标记：${p.login_ok?'有效':'已被登出'}\n`
-      +`是否回复：${p.replied?'有回复':'无回复'}\n`
-      +`耗时：${p.elapsed||0}s${p.cached?'（缓存）':''}\n`
-      +`原因：${p.reason||'-'}\n`
-      +`回复：${(p.reply||'').slice(0,80)}`);
+    alert(`${name} Kết quả thăm dò Hello Probe: ${p.ok?'Thành công ✓':'Thất bại ✗'}\n`
+      +`Trạng thái phiên: ${p.login_ok?'Hợp lệ':'Đã bị đăng xuất'}\n`
+      +`Phản hồi từ chatbot: ${p.replied?'Có phản hồi':'Không phản hồi'}\n`
+      +`Thời gian xử lý: ${p.elapsed||0}s${p.cached?' (Cache)':''}\n`
+      +`Lý do: ${p.reason||'-'}\n`
+      +`Phản hồi: ${(p.reply||'').slice(0,80)}`);
   }catch(e){return alert(e.message);}
   refresh();
 }
 async function recoverAccount(name,kind){
-  if(!confirm(`确定把 ${name} 从【${kind==='abnormal'?'异常':'风控'}】组恢复出来？\n`
-    +(kind==='risk'?'（风控恢复后回到【待激活】，要再做一次「你好探测」确认登录）':'')))return;
+  if(!confirm(`Bạn có chắc chắn muốn khôi phục ${name} từ nhóm 【${kind==='abnormal'?'Bất thường (Abnormal)':'Bị kiểm soát (Risk Flagged)'}】?\n`
+    +(kind==='risk'?'(Tài khoản sau khi khôi phục sẽ trở về trạng thái Chờ kích hoạt, cần chạy lại Hello Probe để xác nhận)': '')))return;
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/recover',
       {method:'POST',body:{kind:kind}});
-    alert(`${name} 已恢复，当前分组：${(r.account&&r.account.group)||'-'}`);
+    alert(`${name} đã được khôi phục, nhóm hiện tại: ${(r.account&&r.account.group)||'-'}`);
   }catch(e){return alert(e.message);}
   refresh();
 }
 
 async function verify(name,btn){
-  btn.disabled=true;const old=btn.textContent;btn.textContent='验证中…';
+  btn.disabled=true;const old=btn.textContent;btn.textContent='Đang kiểm tra...';
   try{const r=await api('/api/admin/accounts/'+name+'/verify',{method:'POST'});
-    alert(name+' 登录态：'+(r.ok?'有效✓':('失效✗'+(r.reason?'\n原因：'+r.reason:''))));
+    alert(name+' Trạng thái đăng nhập: '+(r.ok?'Hợp lệ ✓':('Hết hạn ✗'+(r.reason?'\nLý do: '+r.reason:''))));
   }catch(e){alert(e.message);}
   btn.disabled=false;btn.textContent=old;refresh();
 }
@@ -641,21 +861,21 @@ let testGenPollTimer=null;
 function stopTestGenPoll(){if(testGenPollTimer){clearInterval(testGenPollTimer);testGenPollTimer=null;}}
 function openTestGen(name){
   stopTestGenPoll();
-  showDlg(`<h2>测试生成：${esc(name)}</h2>
-    <p class="tiny" style="line-height:1.6;margin-bottom:10px">用<strong>该账号</strong>跑一条真实视频生成，验证此号能否成功出片（消耗该账号真实额度）。</p>
-    <label>模型</label>
+  showDlg(`<h2>Chạy thử nghiệm tạo video: ${esc(name)}</h2>
+    <p class="tiny" style="line-height:1.6;margin-bottom:10px">Sử dụng <strong>tài khoản này</strong> để tạo 1 video thực tế nhằm kiểm tra tài khoản có hoạt động ổn định hay không (sẽ trừ credit thực tế của tài khoản).</p>
+    <label>Mô hình video</label>
     <select id="tg_model" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
       <option value="seedance-2.0" selected>seedance-2.0</option>
       <option value="seedance-2.5">seedance-2.5</option>
     </select>
-    <label>时长（秒）</label>
+    <label>Thời lượng (giây)</label>
     <select id="tg_duration" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
       <option value="5" selected>5</option>
       <option value="10">10</option>
       <option value="15">15</option>
       <option value="30">30</option>
     </select>
-    <label>尺寸 / 画幅</label>
+    <label>Khung hình</label>
     <select id="tg_ratio" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
       <option value="16:9" selected>16:9</option>
       <option value="9:16">9:16</option>
@@ -663,20 +883,20 @@ function openTestGen(name){
       <option value="4:3">4:3</option>
       <option value="3:4">3:4</option>
     </select>
-    <label>提示词</label>
-    <textarea id="tg_prompt" rows="4" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:ui-monospace,Consolas,monospace">汉服美女在赛博朋克的街道跑酷</textarea>
+    <label>Mô tả cảnh video</label>
+    <textarea id="tg_prompt" rows="4" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:ui-monospace,Consolas,monospace">A cinematic aerial shot of ancient floating mountain temples at sunset, 4k ultra detailed</textarea>
     <div id="tg_status" class="tiny" style="margin:10px 0;min-height:18px;white-space:pre-wrap"></div>
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
-      <button class="btn btn-p" id="tg_btn" onclick="submitTestGen('${name}')">开始生成</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button>
+      <button class="btn btn-p" id="tg_btn" onclick="submitTestGen('${name}')">Bắt đầu tạo video</button></div>`);
 }
 async function submitTestGen(name){
   const prompt=q('#tg_prompt').value.trim();
-  if(!prompt){q('#tg_status').textContent='提示词必填';q('#tg_status').style.color='var(--red)';return;}
+  if(!prompt){q('#tg_status').textContent='Vui lòng nhập Prompt mô tả video';q('#tg_status').style.color='var(--red)';return;}
   const body={prompt,model:q('#tg_model').value,duration:Number(q('#tg_duration').value),ratio:q('#tg_ratio').value};
   q('#tg_btn').disabled=true;
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/test-generate',{method:'POST',body});
-    q('#tg_status').textContent='已提交 '+r.task_id.slice(0,12)+'…，开始生成（可能需等待）';
+    q('#tg_status').textContent='Đã gửi task '+r.task_id.slice(0,12)+'... Đang tiến hành render (vui lòng chờ trong giây lát)';
     q('#tg_status').style.color='var(--accent)';
     pollTestGen(r.task_id,name);
   }catch(e){q('#tg_status').textContent=e.message;q('#tg_status').style.color='var(--red)';q('#tg_btn').disabled=false;}
@@ -684,18 +904,18 @@ async function submitTestGen(name){
 async function pollTestGen(taskId,name){
   stopTestGenPoll();
   const apply=(j)=>{
-    const box=q('#tg_status'); 
+    const box=q('#tg_status');
     if(!box)return;
     if(j.status==='done'){
       if(j.result&&j.result.ok){
-        box.textContent='✅ 生成成功：'+(j.result.video_url||'');
+        box.textContent='✅ Tạo video thành công: '+(j.result.video_url||'');
         box.style.color='var(--ok)';
         if(j.result.video_url&&!q('#tg_video')){
           q('#dlgBox').insertAdjacentHTML('beforeend',
             '<div id="tg_video"><video controls src="'+j.result.video_url+'" style="max-width:100%;max-height:300px"></video></div>');
         }
       }else{
-        box.textContent='❌ 生成失败：'+(j.error||(j.result&&j.result.error)||'未知错误');
+        box.textContent='❌ Tạo video thất bại: '+(j.error||(j.result&&j.result.error)||'Lỗi không xác định');
         box.style.color='var(--red)';
       }
       q('#tg_btn').disabled=false;
@@ -704,13 +924,13 @@ async function pollTestGen(taskId,name){
       return;
     }
     if(j.status==='failed'){
-      box.textContent='❌ 任务失败：'+(j.error||'');
+      box.textContent='❌ Tác vụ thất bại: '+(j.error||'');
       box.style.color='var(--red)';
       q('#tg_btn').disabled=false;
       stopTestGenPoll();
       return;
     }
-    box.textContent='生成中…（账号 '+name+'）每 6s 刷新';
+    box.textContent='Đang render... (Tài khoản: '+name+') Tự động làm mới mỗi 6 giây';
     box.style.color='var(--orange)';
   };
   const tick=async()=>{
@@ -721,17 +941,17 @@ async function pollTestGen(taskId,name){
 }
 
 function openRenameAccount(name){
-  showDlg(`<h2>重命名账号：${esc(name)}</h2>
-    <p class="tiny" style="line-height:1.6">会一起搬走该账号的浏览器 profile、代理绑定、今日额度与登录凭据；账号正在出片时不能改名。</p>
-    <label>新账号名</label>
+  showDlg(`<h2>Đổi tên tài khoản: ${esc(name)}</h2>
+    <p class="tiny" style="line-height:1.6">Hệ thống sẽ đồng bộ toàn bộ Profile trình duyệt, cấu hình Proxy, hạn mức và phiên đăng nhập của tài khoản này. Không thể đổi tên khi tài khoản đang render video.</p>
+    <label>Tên tài khoản mới</label>
     <input id="f_newName" value="${esc(name)}" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;margin-top:4px">
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
-      <button class="btn btn-p" onclick="submitRenameAccount('${name}')">保存</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button>
+      <button class="btn btn-p" onclick="submitRenameAccount('${name}')">Lưu</button></div>`);
   const el=q('#f_newName');if(el){el.focus();el.select();}
 }
 async function submitRenameAccount(name){
   const newName=(q('#f_newName').value||'').trim();
-  if(!newName)return alert('请填新账号名');
+  if(!newName)return alert('Vui lòng nhập tên tài khoản mới');
   if(newName===name)return hide('dlg');
   try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/rename',{method:'POST',body:{new_name:newName}});}
   catch(e){return alert(e.message);}
@@ -741,7 +961,7 @@ async function submitRenameAccount(name){
 }
 
 async function delAccount(name){
-  if(!confirm('确定删除账号 '+name+'？将同时删除其 profile。'))return;
+  if(!confirm('Bạn có chắc chắn muốn xóa tài khoản '+name+'? Thao tác này sẽ xóa vĩnh viễn dữ liệu Profile của tài khoản.'))return;
   try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(e.message);}refresh();
 }
 
@@ -754,11 +974,11 @@ function toggleSel(name,on){
 function updateSelButtons(){
   const n=selAccounts.size;
   const del=q('#btnDelSel');
-  if(del){del.disabled=n===0;del.textContent=n?`删除选中（${n}）`:'删除选中';}
+  if(del){del.disabled=n===0;del.textContent=n?`Xóa đã chọn (${n})`:'Xóa đã chọn';}
   const verifyBtn=q('#btnVerifySel');
-  if(verifyBtn){verifyBtn.disabled=n===0;verifyBtn.textContent=n?`一键验证（${n}）`:'一键验证';}
+  if(verifyBtn){verifyBtn.disabled=n===0;verifyBtn.textContent=n?`Kiểm tra đăng nhập (${n})`:'Kiểm tra đăng nhập';}
   const proxyBtn=q('#btnProxySel');
-  if(proxyBtn){proxyBtn.disabled=n===0;proxyBtn.textContent=n?`更改代理（${n}）`:'更改代理';}
+  if(proxyBtn){proxyBtn.disabled=n===0;proxyBtn.textContent=n?`Đổi Proxy (${n})`:'Đổi Proxy hàng loạt';}
   const selAll=q('#selAll');
   if(selAll){
     const scope=filteredNames.length;
@@ -772,16 +992,16 @@ function stopBatchPoll(){if(batchPollTimer){clearInterval(batchPollTimer);batchP
 
 async function batchVerifySelected(){
   const list=[...selAccounts];
-  if(!list.length)return alert('请先勾选账号');
-  if(!confirm(`对选中的 ${list.length} 个账号逐个验证登录态？\n验证会真实打开账号会话，耗时较长（每号约 10-40 秒）。`))return;
+  if(!list.length)return alert('Vui lòng chọn ít nhất một tài khoản');
+  if(!confirm(`Tiến hành kiểm tra phiên đăng nhập cho ${list.length} tài khoản đã chọn?\nQuá trình kiểm tra sẽ kết nối trực tiếp đến phiên đăng nhập, mất khoảng 10-40 giây mỗi tài khoản.`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-verify',{method:'POST',body:{names:list}});}
   catch(e){return alert(e.message);}
   stopBatchPoll();
-  showDlg(`<h2>批量验证（${list.length} 个账号）</h2>
+  showDlg(`<h2>Kiểm tra đăng nhập hàng loạt (${list.length} tài khoản)</h2>
     <div id="batchProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
     <div id="batchOut" class="tiny log-pane"></div>
-    <div class="row"><button class="btn" onclick="hide('dlg');stopBatchPoll();refresh()">关闭</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg');stopBatchPoll();refresh()">Đóng</button></div>`);
   pollBatch(r.job_id);
   batchPollTimer=setInterval(()=>pollBatch(r.job_id),2000);
 }
@@ -792,8 +1012,8 @@ async function pollBatch(jobId){
   const prog=q('#batchProg'),out=q('#batchOut');
   if(!prog||!out)return;
   const pct=j.total?Math.round((j.done/j.total)*100):0;
-  prog.textContent=`进度 ${j.done}/${j.total}（${pct}%）  有效 ${j.ok_count||0}  失效 ${j.failed_count||0}`
-    +(j.current?`\n当前：${j.current}`:'')+(j.status==='completed'?'\n已完成 ✓':'');
+  prog.textContent=`Tiến độ: ${j.done}/${j.total} (${pct}%)  Hợp lệ: ${j.ok_count||0}  Hết hạn: ${j.failed_count||0}`
+    +(j.current?`\nĐang xử lý: ${j.current}`:'')+(j.status==='completed'?'\nHoàn tất ✓':'');
   out.textContent=(j.results||[]).slice().reverse()
     .map(x=>`${x.ok===true?'✓':(x.ok===false?'✗':'–')} ${x.name}  ${x.message||''}`).join('\n');
   if(j.status!=='running'){stopBatchPoll();refresh();}
@@ -803,19 +1023,19 @@ async function pollBatch(jobId){
 async function batchProbeHello(){
   const sel=[...selAccounts];
   const list=sel.length?sel:allAccounts.filter(x=>matchGroup(x)&&(srcFilterVal==='all'||x.source===srcFilterVal)).map(x=>x.name);
-  if(!list.length)return alert('没有要探测的账号：先勾选，或用分组按钮筛出一批');
-  if(!confirm(`对 ${list.length} 个账号各发一句「你好」探测风控？\n`
-    +`· 被登出 → 直接进【风控】组；没回复 → 重试一次仍没回复才进\n`
-    +`· 网络或上游限流（710022002）导致没探成 → 只记「未完成」，不会锁号\n`
-    +`· 不限并发全部一起发，通常十几秒内跑完；被限流的那批会显示为「未完成」`))return;
+  if(!list.length)return alert('Không có tài khoản nào để kiểm tra: Vui lòng chọn tài khoản hoặc dùng bộ lọc nhóm.');
+  if(!confirm(`Gửi lệnh thăm dò Hello Probe tới ${list.length} tài khoản để kiểm tra trạng thái hoạt động?\n`
+    +`· Bị đăng xuất -> Đưa ngay vào nhóm Bị kiểm soát (Risk Flagged); Không phản hồi -> Thử lại 1 lần trước khi chuyển nhóm\n`
+    +`· Lỗi mạng hoặc bị ByteDance bóp băng thông (710022002) -> Chỉ ghi nhận Chưa hoàn thành, không khóa nick\n`
+    +`· Chạy song song không giới hạn, hoàn tất trong vài giây; các nick bị rate-limit sẽ hiện trạng thái Chưa hoàn thành.`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-probe-hello',{method:'POST',body:{names:list}});}
   catch(e){return alert(e.message);}
   stopProbePoll();
-  showDlg(`<h2>批量你好探测（${list.length} 个账号）</h2>
+  showDlg(`<h2>Thăm dò Hello Probe hàng loạt (${list.length} tài khoản)</h2>
     <div id="probeProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
     <div id="probeOut" class="tiny log-pane"></div>
-    <div class="row"><button class="btn" onclick="hide('dlg');stopProbePoll();refresh()">关闭</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg');stopProbePoll();refresh()">Đóng</button></div>`);
   pollProbeBatch(r.job_id);
   probePollTimer=setInterval(()=>pollProbeBatch(r.job_id),2000);
 }
@@ -829,11 +1049,11 @@ async function pollProbeBatch(jobId){
   const prog=q('#probeProg'),out=q('#probeOut');
   if(!prog||!out)return;
   const pct=j.total?Math.round((j.done/j.total)*100):0;
-  prog.textContent=`进度 ${j.done}/${j.total}（${pct}%）  通过 ${j.ok_count||0}  未通过(进风控) ${j.failed_count||0}  未完成 ${j.skipped_count||0}`
-    +(j.current?`\n当前：${j.current}`:'')+(j.status==='completed'?'\n已完成 ✓':'');
+  prog.textContent=`Tiến độ: ${j.done}/${j.total} (${pct}%)  Thành công: ${j.ok_count||0}  Thất bại (Risk): ${j.failed_count||0}  Chưa xong: ${j.skipped_count||0}`
+    +(j.current?`\nĐang xử lý: ${j.current}`:'')+(j.status==='completed'?'\nHoàn tất ✓':'');
   out.textContent=(j.results||[]).slice().reverse()
     .map(x=>`${x.ok===true?'✓':(x.ok===false?'✗':'–')} ${x.name}  [${x.group||'-'}]  ${x.message||''}`
-      +(x.reply?`  回复：${x.reply}`:''))
+      +(x.reply?`  Phản hồi: ${x.reply}`:''))
     .join('\n');
   if(j.status!=='running'){stopProbePoll();refresh();}
 }
@@ -843,34 +1063,34 @@ async function batchRecover(){
   const sel=[...selAccounts];
   const list=sel.length?sel:allAccounts.filter(x=>matchGroup(x)&&(srcFilterVal==='all'||x.source===srcFilterVal)
       &&(x.group==='风控'||x.group==='异常')).map(x=>x.name);
-  if(!list.length)return alert('没有要恢复的账号：先勾选，或切到【风控】/【异常】分组再点');
-  if(!confirm(`把 ${list.length} 个账号从【风控】/【异常】组恢复出来？\n`
-    +`· 风控号恢复后登录态会被清空，回到【待激活】\n`
-    +`· 想确认能不能用，恢复后接着点一次「你好探测」`))return;
+  if(!list.length)return alert('Không có tài khoản cần khôi phục: Vui lòng chọn tài khoản hoặc lọc nhóm Bị kiểm soát / Bất thường trước.');
+  if(!confirm(`Khôi phục ${list.length} tài khoản từ nhóm Bị kiểm soát / Bất thường?\n`
+    +`· Tài khoản bị kiểm soát sau khi khôi phục sẽ trở về trạng thái Chờ kích hoạt (Pending)\n`
+    +`· Khuyên dùng: Chạy Kiểm tra phản hồi Dola sau khi khôi phục để xác nhận lại phiên đăng nhập.`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-recover',{method:'POST',body:{kind:'risk',names:list}});}
   catch(e){return alert(e.message);}
   stopProbePoll();
-  showDlg(`<h2>批量恢复（${list.length} 个账号）</h2>
+  showDlg(`<h2>Khôi phục tài khoản hàng loạt (${list.length} tài khoản)</h2>
     <div id="probeProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
     <div id="probeOut" class="tiny log-pane"></div>
-    <div class="row"><button class="btn" onclick="hide('dlg');stopProbePoll();refresh()">关闭</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg');stopProbePoll();refresh()">Đóng</button></div>`);
   pollProbeBatch(r.job_id);
   probePollTimer=setInterval(()=>pollProbeBatch(r.job_id),1500);
 }
 
 async function openBatchProxy(){
   const list=[...selAccounts];
-  if(!list.length)return alert('请先勾选账号');
+  if(!list.length)return alert('Vui lòng chọn ít nhất một tài khoản');
   try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
-  const opts='<option value="">默认代理（DOLA_PROXY）</option>'+proxyCache.map(p=>
+  const opts='<option value="">Proxy mặc định hệ thống (DOLA_PROXY)</option>'+proxyCache.map(p=>
     `<option value="${esc(p.id)}">${esc(p.name)}（${esc(p.protocol)}://${esc(p.host)}:${p.port}）</option>`).join('');
-  showDlg(`<h2>批量更改代理（${list.length} 个账号）</h2>
-    <p class="tiny">把勾选的账号统一绑定到指定代理；选“默认代理”则解除绑定、回落到环境变量默认代理。验证/出片/下载都按账号代理走。</p>
+  showDlg(`<h2>Đổi Proxy hàng loạt (${list.length} tài khoản)</h2>
+    <p class="tiny">Gán toàn bộ tài khoản đã chọn vào một Proxy chỉ định; Chọn "Proxy mặc định" để hủy gán và sử dụng Proxy từ biến môi trường. Toàn bộ thao tác kiểm tra, sinh video và tải xuống đều chạy qua Proxy này.</p>
     <select id="f_bproxy" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${opts}</select>
     <div class="tiny" style="margin-top:8px;max-height:150px;overflow:auto">${list.map(esc).join('、')}</div>
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
-      <button class="btn btn-p" onclick="submitBatchProxy()">应用</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button>
+      <button class="btn btn-p" onclick="submitBatchProxy()">Áp dụng</button></div>`);
 }
 
 async function submitBatchProxy(){
@@ -881,13 +1101,13 @@ async function submitBatchProxy(){
   catch(e){return alert(e.message);}
   hide('dlg');refresh();
   const failed=(r.failed||[]);
-  alert(`已更新 ${r.updated.length} 个账号的代理`
-    +(failed.length?`\n未改动 ${failed.length} 个：\n`+failed.map(f=>`${f.name}：${f.error}`).join('\n'):''));
+  alert(`Đã cập nhật Proxy cho ${r.updated.length} tài khoản`
+    +(failed.length?`\nKhông thay đổi ${failed.length} tài khoản:\n`+failed.map(f=>`${f.name}: ${f.error}`).join('\n'):''));
 }
 
 async function resetAllQuotas(){
-  if(!confirm('立即重置全池额度？\n所有因「每日上限 / 积分不足 / 失败」被挡的账号会恢复调度与积分缓存。\n（不等同于风控冷却，风控账号仍需重新登录）'))return;
-  try{const r=await api('/api/admin/accounts/reset-quotas',{method:'POST'});alert(`已重置 ${r.reset} 个账号的额度`);}
+  if(!confirm('Bạn có chắc chắn muốn hồi phục hạn mức điểm toàn bộ kho tài khoản?\nMọi tài khoản bị tạm dừng do hết lượt ngày hoặc thiếu điểm sẽ được kích hoạt lại ngay lập tức.\n(Lưu ý: Không áp dụng cho nick đang bị kiểm soát / checkpoint, dùng tính năng Khôi phục tài khoản cho trường hợp đó).'))return;
+  try{const r=await api('/api/admin/accounts/reset-quotas',{method:'POST'});alert(`Đã hồi phục hạn mức điểm thành công cho ${r.reset} tài khoản`);}
   catch(e){alert(e.message);}
   refresh();
 }
@@ -895,27 +1115,27 @@ async function resetAllQuotas(){
 async function delSelected(){
   const list=[...selAccounts];
   if(!list.length)return;
-  if(!confirm(`确定删除选中的 ${list.length} 个账号？将同时删除其 profile。`))return;
+  if(!confirm(`Bạn có chắc chắn muốn xóa ${list.length} tài khoản đã chọn? Thao tác này sẽ xóa vĩnh viễn dữ liệu Profile của các tài khoản này.`))return;
   let ok=0;
   for(const name of list){
     try{await api('/api/admin/accounts/'+encodeURIComponent(name),{method:'DELETE'});ok++;}
-    catch(e){alert(name+' 删除失败：'+e.message);}
+    catch(e){alert(name+' Xóa thất bại: '+e.message);}
   }
   selAccounts.clear();
   refresh();
   updateSelButtons();
-  if(ok)alert(`已删除 ${ok} 个账号`);
+  if(ok)alert(`Đã xóa thành công ${ok} tài khoản`);
 }
 
 async function openSetAccountProxy(name,currentId){
   try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
-  const opts='<option value="">默认代理（DOLA_PROXY）</option>'+proxyCache.map(p=>
+  const opts='<option value="">Proxy mặc định hệ thống (DOLA_PROXY)</option>'+proxyCache.map(p=>
     `<option value="${esc(p.id)}" ${p.id===currentId?'selected':''}>${esc(p.name)}</option>`).join('');
-  showDlg(`<h2>设置账号代理：${esc(name)}</h2>
-    <p class="tiny">选择该账号验证/出片时使用的代理；留空则使用环境变量默认代理。</p>
+  showDlg(`<h2>Gán Proxy cho tài khoản: ${esc(name)}</h2>
+    <p class="tiny">Chọn Proxy sử dụng khi kiểm tra đăng nhập và sinh video. Để trống để sử dụng Proxy mặc định từ biến môi trường.</p>
     <select id="f_proxy" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${opts}</select>
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
-      <button class="btn btn-p" onclick="submitSetAccountProxy('${name}')">保存</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button>
+      <button class="btn btn-p" onclick="submitSetAccountProxy('${name}')">Lưu</button></div>`);
 }
 async function submitSetAccountProxy(name){
   const body={proxy_id:q('#f_proxy').value||null};
@@ -927,9 +1147,9 @@ let batchAddMode='text';
 let batchCookieFiles=[];
 function batchAddModeSwitch(){
   return `<div style="display:flex;gap:8px;margin-bottom:14px">
-    <button class="btn ${batchAddMode==='text'?'btn-p':''}" onclick="setBatchAddMode('text')">文本批量添加</button>
-    <button class="btn ${batchAddMode==='cookie'?'btn-p':''}" onclick="setBatchAddMode('cookie')">Cookie JSON 文件</button>
-    <button class="btn ${batchAddMode==='cookieHeader'?'btn-p':''}" onclick="setBatchAddMode('cookieHeader')">Cookie 头文本</button>
+    <button class="btn ${batchAddMode==='text'?'btn-p':''}" onclick="setBatchAddMode('text')">Nhập văn bản (Text)</button>
+    <button class="btn ${batchAddMode==='cookie'?'btn-p':''}" onclick="setBatchAddMode('cookie')">File JSON Cookie</button>
+    <button class="btn ${batchAddMode==='cookieHeader'?'btn-p':''}" onclick="setBatchAddMode('cookieHeader')">Dán Cookie Header</button>
   </div>`;
 }
 function openBatchAdd(){batchAddMode='text';renderBatchAddForm();}
@@ -937,47 +1157,47 @@ function setBatchAddMode(mode){batchAddMode=mode;renderBatchAddForm();}
 function renderBatchAddForm(){
   const sw=batchAddModeSwitch();
   if(batchAddMode==='cookie'){
-    showDlg(`<h2>批量添加账号（Cookie JSON）</h2>${sw}
+    showDlg(`<h2>Thêm tài khoản hàng loạt (File Cookie JSON)</h2>${sw}
       <input id="f_cookieFiles" type="file" accept=".json,application/json" multiple style="display:block;margin-bottom:10px" onchange="previewCookieBatchFiles()">
-      <div class="hint" style="margin-bottom:8px">选择一个或多个 Cookie 导出 JSON（每个文件对应一个 dola 账号，如 ck76.json）。
-      账号名默认取文件名；文件需为扩展导出格式（含 cookies 数组）。导入会排队逐个写入 profile。</div>
+      <div class="hint" style="margin-bottom:8px">Chọn một hoặc nhiều file JSON xuất từ Cookie-Editor / EditThisCookie (mỗi file tương ứng 1 tài khoản, vd: ck01.json).
+Tên tài khoản mặc định lấy theo tên file; file phải có mảng cookies chuẩn. Quá trình nạp sẽ ghi tuần tự vào cấu hình hệ thống.</div>
       <label style="display:flex;align-items:flex-start;gap:6px;color:var(--sub);margin:8px 0">
         <input type="checkbox" id="f_cookieSkip" style="margin-top:2px;width:auto" checked>
-        <span>跳过在线验证（先导入，之后可在账号列表点“验证”复核）</span>
+        <span>Bỏ qua kiểm tra trực tuyến khi nạp (khuyên dùng để nạp nhanh, kiểm tra lại sau trong danh sách)</span>
       </label>
       <div id="batchCookieInfo" class="tiny" style="margin:6px 0;white-space:pre-wrap"></div>
       <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
-      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitBatchCookieAdd()">开始批量导入</button></div>`);
+      <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button><button class="btn btn-p" onclick="submitBatchCookieAdd()">Bắt đầu nạp Cookie</button></div>`);
     return;
   }
   if(batchAddMode==='cookieHeader'){
-    showDlg(`<h2>批量添加账号（Cookie 头文本 / Cookie JSON）</h2>${sw}
-      <label>Cookie 头文本或 Cookie JSON（一行一个账号）</label>
+    showDlg(`<h2>Thêm tài khoản hàng loạt (Cookie Header / JSON)</h2>${sw}
+      <label>Dán chuỗi Cookie Header hoặc mảng JSON Cookie (mỗi dòng một tài khoản)</label>
       <textarea id="f_cookieHeader" rows="10" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-top:4px" placeholder="passport_csrf_token=aaa; sessionid=sid-one; sid_guard=g1
 passport_csrf_token=bbb; sessionid=sid-two"></textarea>
-      <div class="hint" style="margin-top:6px">每行一个 Cookie 头，或粘贴浏览器扩展导出的 Cookie JSON 数组（一个数组一个账号，可多段连续粘贴）；自动跳过注释/空行/邮箱行，按 sessionid 去重并自动命名 accN。<br>含 localStorage/sessionStorage/indexedDB 的完整会话请改用「Cookie JSON 文件」模式。</div>
+      <div class="hint" style="margin-top:6px">Mỗi dòng một chuỗi Cookie header, hoặc dán mảng JSON từ extension trình duyệt (mỗi mảng một tài khoản, có thể dán nhiều đoạn liên tiếp); hệ thống tự động lọc dòng trống, loại bỏ trùng lặp theo sessionid và tự đặt tên acc1, acc2...<br>Đối với phiên đầy đủ có kèm SessionStorage/IndexedDB, vui lòng dùng tab "File Cookie JSON".</div>
       <label style="display:flex;align-items:flex-start;gap:6px;color:var(--sub);margin:8px 0">
         <input type="checkbox" id="f_cookieHeaderSkip" style="margin-top:2px;width:auto" checked>
-        <span>跳过在线验证（先导入、保留 profile，之后在列表点“验证”复核）</span>
+        <span>Bỏ qua kiểm tra trực tuyến khi nạp (khuyên dùng để nạp nhanh, kiểm tra lại sau trong danh sách)</span>
       </label>
       <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
-      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitBatchCookieHeader()">开始导入</button></div>`);
+      <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button><button class="btn btn-p" onclick="submitBatchCookieHeader()">Bắt đầu nạp dữ liệu</button></div>`);
     return;
   }
-  showDlg(`<h2>批量添加账号</h2>${sw}
-    <label>账号列表（支持多种格式，见下方提示）</label>
+  showDlg(`<h2>Nạp tài khoản hàng loạt</h2>${sw}
+    <label>Danh sách tài khoản (hỗ trợ nhiều định dạng, xem hướng dẫn bên dưới)</label>
     <textarea id="f_batch" rows="10" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:ui-monospace,Consolas,monospace" placeholder="acc1 user1@xx.com pass123 TOTPKEY
-acc2 user2@xx.com pass456
+61594569136172|Pass|c_user=61594569136172;xs=...|Token|mail@...
 
-支持格式：
-1) 每行一个：账号名 邮箱 密码 [TOTP]
-2) 一行内用 | 分隔账号：acc1 a@b.com 123 | acc2 c@d.com 456
-3) 字段用 | 分隔：acc1|a@b.com|123|TOTPKEY
-4) 邮箱|密码 / 邮箱---密码（自动命名 accN，可选 TOTP）
-账号名可省略（自动 accN），TOTP 可省略"></textarea>
-    <div class="hint" style="margin-top:6px">字段分隔支持 空格 / | / ---；多个账号会排队逐个登录（内存限制，避免同时开多个浏览器），请耐心等待</div>
+Định dạng hỗ trợ:
+1) Facebook Clone MMO: UID|Pass|Cookie|Token|Email (tự động đăng nhập Facebook OAuth)
+2) Mỗi dòng một tài khoản Google: TênTaiKhoan Email MatKhau [TOTP]
+3) Các trường phân cách bằng |: acc1|a@b.com|123|TOTPKEY
+4) Email|MatKhau hoặc Email---MatKhau (tự động đặt tên accN, TOTP tùy chọn)
+Hệ thống tự động phân loại Google vs Facebook và nạp tuần tự"></textarea>
+    <div class="hint" style="margin-top:6px">Hỗ trợ tài khoản Facebook clone (chứa c_user=) và tài khoản Google. Quá trình đăng nhập xếp hàng tuần tự để tiết kiệm RAM.</div>
     <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitBatchAdd()">开始批量添加</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button><button class="btn btn-p" onclick="submitBatchAdd()">Bắt đầu thêm tài khoản</button></div>`);
 }
 function fileBaseName(fileName){
   const name=(fileName||'').replace(/\.json$/i,'').trim();
@@ -997,19 +1217,19 @@ async function previewCookieBatchFiles(){
       const text=await file.text();
       const data=JSON.parse(text);
       const cookies=Array.isArray(data)?data:(data&&Array.isArray(data.cookies)?data.cookies:null);
-      if(!cookies||!cookies.length)throw new Error('没有 cookies 数组');
+      if(!cookies||!cookies.length)throw new Error('File không chứa mảng cookies hợp lệ');
       const base=fileBaseName(file.name)||('ck'+(++i));
       batchCookieFiles.push({name:base,cookies:cookies.length,file:file.name,raw:JSON.stringify(data)});
-      lines.push('· '+base+'  <- '+file.name+'（'+cookies.length+' 条 cookie）');
+      lines.push('· '+base+'  <- '+file.name+' ('+cookies.length+' cookie)');
     }catch(e){
-      lines.push('✗ '+file.name+' 解析失败：'+(e.message||e));
+      lines.push('✗ '+file.name+' Lỗi đọc file: '+(e.message||e));
     }
   }
-  info.textContent=lines.join('\n')||'未选择可导入的文件';
+  info.textContent=lines.join('\n')||'Chưa chọn file nào để nạp';
 }
 async function submitBatchCookieAdd(){
   const btn=q('#dlg .btn-p');const res=q('#batchResult');const info=q('#batchCookieInfo');
-  if(!batchCookieFiles.length)return alert('请先选择 Cookie JSON 文件');
+  if(!batchCookieFiles.length)return alert('Vui lòng chọn ít nhất một file Cookie JSON');
   const skip=q('#f_cookieSkip').checked;
   btn.disabled=true;res.textContent='';
   let existing=[];
@@ -1018,13 +1238,13 @@ async function submitBatchCookieAdd(){
   const lines=[];let submitted=0;
   for(const item of batchCookieFiles){
     if(taken.has(item.name)){
-      lines.push('✗ '+item.name+'：账号名已存在，跳过（可先删除或重命名文件）');
+      lines.push('✗ '+item.name+': Tên tài khoản đã tồn tại, tự động bỏ qua (vui lòng xóa hoặc đổi tên file nếu muốn nạp lại)');
       continue;
     }
     taken.add(item.name);
     try{
       await api('/api/admin/accounts',{method:'POST',body:{name:item.name,email:'',password:'',totp:'',cookies:item.raw,cookie_skip_verify:skip}});
-      lines.push('✓ '+item.name+' 已提交导入');
+      lines.push('✓ '+item.name+' Đã gửi nạp thành công');
       submitted++;
     }catch(e){
       lines.push('✗ '+item.name+'：'+e.message);
@@ -1033,7 +1253,7 @@ async function submitBatchCookieAdd(){
     await new Promise(r=>setTimeout(r,500));
   }
   btn.disabled=false;
-  lines.push(submitted?('完成：提交 '+submitted+' 个账号'):'未提交任何账号');
+  lines.push(submitted?('Hoàn tất: Đã gửi '+submitted+' tài khoản'):'Không có tài khoản nào được gửi');
   res.textContent=lines.join('\n');
   info.textContent='';
   batchCookieFiles=[];
@@ -1043,19 +1263,19 @@ async function submitBatchCookieAdd(){
 async function submitBatchCookieHeader(){
   const btn=q('#dlg .btn-p');const res=q('#batchResult');
   const text=q('#f_cookieHeader').value.trim();
-  if(!text)return alert('请粘贴 Cookie 头文本或 Cookie JSON（一个账号一份）');
-  btn.disabled=true;res.textContent='导入中…';
+  if(!text)return alert('Vui lòng dán chuỗi Cookie Header hoặc JSON Cookie (mỗi tài khoản một bản)');
+  btn.disabled=true;res.textContent='Đang tiến hành nạp...';
   try{
     const r=await api('/api/admin/accounts/import-cookies',{method:'POST',body:{
       text, skip_verify:q('#f_cookieHeaderSkip').checked
     }});
     const lines=[];
-    if(r.created&&r.created.length)lines.push('✓ 已创建：'+r.created.join('、'));
-    if(r.updated&&r.updated.length)lines.push('↻ 已存在(sessionid 重复)：'+r.updated.join('、'));
-    if(r.errors&&r.errors.length)lines.push('✗ 失败：\n'+r.errors.join('\n'));
-    res.textContent=lines.join('\n')||'未导入任何账号';
+    if(r.created&&r.created.length)lines.push('✓ Đã tạo mới: '+r.created.join(', '));
+    if(r.updated&&r.updated.length)lines.push('↻ Đã tồn tại (trùng sessionid): '+r.updated.join(', '));
+    if(r.errors&&r.errors.length)lines.push('✗ Thất bại:\n'+r.errors.join('\n'));
+    res.textContent=lines.join('\n')||'Không có tài khoản nào được nạp';
     if(r.created&&r.created.length)refresh();
-  }catch(e){res.textContent='导入失败：'+(e.message||e);}
+  }catch(e){res.textContent='Nạp thất bại: '+(e.message||e);}
   btn.disabled=false;
 }
 
@@ -1117,7 +1337,7 @@ function parseBatchInput(text){
 
 async function submitBatchAdd(){
   const accounts=parseBatchInput(q('#f_batch').value);
-  if(!accounts.length)return alert('未解析到任何账号，请检查格式（账号名 邮箱 密码 [TOTP]）');
+  if(!accounts.length)return alert('Không tìm thấy tài khoản hợp lệ. Vui lòng kiểm tra lại định dạng nhập vào.');
   const btn=q('#dlg .btn-p');const res=q('#batchResult');
   btn.disabled=true;res.textContent='';
   const lines=[];
@@ -1132,7 +1352,7 @@ async function submitBatchAdd(){
   existing.forEach(x=>{if(x.email&&!owner.has(normEmail(x.email)))owner.set(normEmail(x.email),x.name);});
   Object.entries(jobs).forEach(([name,job])=>{
     if(job.kind==='add'&&job.status==='running'&&job.email&&!owner.has(normEmail(job.email)))
-      owner.set(normEmail(job.email),name+'（添加中）');
+      owner.set(normEmail(job.email),name+' (Đang thêm)');
   });
   const nameTaken=new Set(existing.map(x=>x.name));
   const seen=new Map();
@@ -1140,11 +1360,11 @@ async function submitBatchAdd(){
   accounts.forEach((a,idx)=>{
     const em=normEmail(a.email);
     let why='';
-    if(nameTaken.has(a.name))why='账号名 '+a.name+' 已存在';
-    else if(owner.has(em))why='邮箱重复（已存在 '+owner.get(em)+'）';
-    else if(seen.has(em))why='本批内重复（第 '+(seen.get(em)+1)+' 条）';
+    if(nameTaken.has(a.name))why='Tên tài khoản '+a.name+' đã tồn tại';
+    else if(owner.has(em))why='Email bị trùng lặp (đã có ở '+owner.get(em)+')';
+    else if(seen.has(em))why='Trùng lặp trong lượt nạp này (dòng '+(seen.get(em)+1)+')';
     if(why){
-      dups.push('跳过 '+a.name+' '+a.email+'：'+why);
+      dups.push('Bỏ qua '+a.name+' '+a.email+': '+why);
       return;
     }
     seen.set(em,idx);
@@ -1152,7 +1372,7 @@ async function submitBatchAdd(){
     todo.push(a);
   });
   if(dups.length){
-    lines.push('检测到 '+dups.length+' 条重复账号，已剔除：');
+    lines.push('Phát hiện '+dups.length+' tài khoản bị trùng lặp, đã tự động loại bỏ:');
     lines.push(...dups);
     res.textContent=lines.join('\n');
   }
@@ -1160,7 +1380,7 @@ async function submitBatchAdd(){
     const a=todo[i];
     try{
       await api('/api/admin/accounts',{method:'POST',body:a});
-      lines.push('✓ '+a.name+' '+a.email+' 已提交');
+      lines.push('✓ '+a.name+' '+a.email+' Đã gửi thành công');
     }catch(e){
       lines.push('✗ '+a.name+' '+a.email+': '+e.message);
     }
@@ -1168,8 +1388,8 @@ async function submitBatchAdd(){
     await new Promise(r=>setTimeout(r,800));
   }
   btn.disabled=false;
-  if(!todo.length)lines.push('未提交任何新账号');
-  else lines.push('完成：新提交 '+todo.length+' 条');
+  if(!todo.length)lines.push('Không có tài khoản mới nào được nạp');
+  else lines.push('Hoàn tất: Đã nạp mới '+todo.length+' tài khoản');
   res.textContent=lines.join('\n');
   refresh();
 }
@@ -1181,8 +1401,9 @@ function nextAccName(){
 }
 function addModeSwitch(){
   return `<div style="display:flex;gap:8px;margin-bottom:14px">
-    <button class="btn ${addMode==='google'?'btn-p':''}" onclick="setAddMode('google')">Google 登录</button>
-    <button class="btn ${addMode==='cookie'?'btn-p':''}" onclick="setAddMode('cookie')">Cookie 导入</button>
+    <button class="btn ${addMode==='google'?'btn-p':''}" onclick="setAddMode('google')">Đăng nhập Google</button>
+    <button class="btn ${addMode==='facebook'?'btn-p':''}" onclick="setAddMode('facebook')">Đăng nhập Facebook</button>
+    <button class="btn ${addMode==='cookie'?'btn-p':''}" onclick="setAddMode('cookie')">Nạp bằng Cookie</button>
   </div>`;
 }
 function setAddMode(m){addMode=m;renderAddAccountForm();}
@@ -1190,37 +1411,55 @@ function openAddAccount(){addMode='google';renderAddAccountForm();}
 function renderAddAccountForm(){
   const def=nextAccName();
   const sw=addModeSwitch();
-  if(addMode==='cookie'){
-    showDlg(`<h2>添加账号</h2>${sw}
-      <label>账号名</label><input id="f_name" value="${def}">
-      <label>Cookie JSON</label>
-      <textarea id="f_cookies" rows="13" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-top:4px" placeholder='{"format":"...","cookies":[{"name":"sessionid",...}]}'></textarea>
-      <div class="hint" style="margin-top:6px">粘贴 Cookie-Editor / EditThisCookie 等扩展导出的完整 JSON。</div>
-      <label style="margin-top:10px;display:flex;align-items:flex-start;gap:6px;color:var(--sub)">
-        <input type="checkbox" id="f_skip" style="margin-top:2px;width:auto">
-        <span>跳过在线验证：服务器没有 JP/KR 代理时 dola 会地区限制；勾选后可先导入账号，配好代理后在账号列表点“验证”。</span>
-      </label>
-      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitAddCookie()">导入账号</button></div>`);
+  if(addMode==='facebook'){
+    showDlg(`<h2>Thêm tài khoản mới</h2>${sw}
+      <label>Tên tài khoản</label><input id="f_name" value="${def}">
+      <label>Dữ liệu Clone Facebook hoặc Cookie Facebook</label>
+      <textarea id="f_fb" rows="6" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-top:4px" placeholder="Dán dòng tài khoản MMO: UID|Pass|Cookie|Token|Email
+Hoặc chỉ dán chuỗi cookie: c_user=...; xs=...; fr=...; datr=..."></textarea>
+      <div class="hint" style="margin-top:6px">Hệ thống sẽ chạy Chromium ngầm, tự động kết nối Facebook OAuth của Dola, vượt qua xác nhận tuổi và cấp mã phiên Dola vĩnh viễn.</div>
+      <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button><button class="btn btn-p" onclick="submitAddFacebook()">Bắt đầu đăng nhập Facebook</button></div>`);
     return;
   }
-  showDlg(`<h2>添加账号</h2>${sw}
-    <label>账号名</label><input id="f_name" value="${def}">
-    <label>Google 邮箱</label><input id="f_email" placeholder="xxx@yy.asia">
-    <label>密码</label><input id="f_pass" type="password">
-    <label>TOTP 密钥</label><input id="f_totp" placeholder="2FA secret">
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitAddAccount()">开始登录</button></div>`);
+  if(addMode==='cookie'){
+    showDlg(`<h2>Thêm tài khoản mới</h2>${sw}
+      <label>Tên tài khoản</label><input id="f_name" value="${def}">
+      <label>Cookie JSON</label>
+      <textarea id="f_cookies" rows="13" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-top:4px" placeholder='{"format":"...","cookies":[{"name":"sessionid",...}]}'></textarea>
+      <div class="hint" style="margin-top:6px">Dán toàn bộ mã JSON xuất từ tiện ích Cookie-Editor hoặc EditThisCookie.</div>
+      <label style="margin-top:10px;display:flex;align-items:flex-start;gap:6px;color:var(--sub)">
+        <input type="checkbox" id="f_skip" style="margin-top:2px;width:auto">
+        <span>Bỏ qua kiểm tra trực tuyến: Giúp nạp tài khoản ngay cả khi chưa gắn Proxy quốc tế. Sau khi gán Proxy xong có thể bấm "Kiểm tra" trong danh sách.</span>
+      </label>
+      <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button><button class="btn btn-p" onclick="submitAddCookie()">Nạp tài khoản</button></div>`);
+    return;
+  }
+  showDlg(`<h2>Thêm tài khoản mới</h2>${sw}
+    <label>Tên tài khoản</label><input id="f_name" value="${def}">
+    <label>Email Google</label><input id="f_email" placeholder="xxx@yy.asia">
+    <label>Mật khẩu</label><input id="f_pass" type="password">
+    <label>Mã bảo mật TOTP (2FA Secret)</label><input id="f_totp" placeholder="2FA secret">
+    <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button><button class="btn btn-p" onclick="submitAddAccount()">Bắt đầu đăng nhập</button></div>`);
 }
 async function submitAddAccount(){
   const body={name:q('#f_name').value.trim(),email:q('#f_email').value.trim(),password:q('#f_pass').value,totp:q('#f_totp').value.trim()};
-  if(!body.name||!body.email||!body.password)return alert('请填写账号名/邮箱/密码');
+  if(!body.name||!body.email||!body.password)return alert('Vui lòng điền đầy đủ Tên tài khoản, Email và Mật khẩu');
   try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(e.message);}
+  hide('dlg');refresh();
+}
+async function submitAddFacebook(){
+  const name=q('#f_name').value.trim();
+  const fb=q('#f_fb').value.trim();
+  if(!name)return alert('Vui lòng nhập Tên tài khoản');
+  if(!fb)return alert('Vui lòng dán chuỗi tài khoản hoặc Cookie Facebook');
+  try{await api('/api/admin/accounts',{method:'POST',body:{name,facebook:fb}});}catch(e){return alert(e.message);}
   hide('dlg');refresh();
 }
 async function submitAddCookie(){
   const body={name:q('#f_name').value.trim(),email:'',password:'',totp:'',cookies:q('#f_cookies').value.trim(),cookie_skip_verify:q('#f_skip').checked};
-  if(!body.name)return alert('请填写账号名');
-  if(!body.cookies)return alert('请粘贴 Cookie JSON');
-  try{JSON.parse(body.cookies);}catch(e){return alert('Cookie JSON 解析失败：'+e.message);}
+  if(!body.name)return alert('Vui lòng nhập Tên tài khoản');
+  if(!body.cookies)return alert('Vui lòng dán chuỗi JSON Cookie');
+  try{JSON.parse(body.cookies);}catch(e){return alert('Lỗi cú pháp Cookie JSON: '+e.message);}
   try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(e.message);}
   hide('dlg');refresh();
 }
@@ -1231,8 +1470,8 @@ function proxyProtocolOptions(sel){
     `<option value="${p}" ${p===sel?'selected':''}>${p.toUpperCase()}</option>`).join('');
 }
 function proxyModeOptions(sel){
-  return [['static','静态IP（一条记录 = 一个固定出口）'],
-          ['extract','动态IP（出口由节点池提供，一个节点 = 一个出口 IP）']].map(([v,t])=>
+  return [['static','IP Tĩnh (Static IP - Cố định 1 IP Thoát)'],
+          ['extract','IP Động xoay (Dynamic Pool - Mỗi Node là 1 IP Thoát riêng)']].map(([v,t])=>
     `<option value="${v}" ${v===sel?'selected':''}>${t}</option>`).join('');
 }
 // 动态IP 的取节点方式：提取链接 / 直接粘贴 / 隧道网关
@@ -1243,9 +1482,9 @@ function proxyKindOf(p){
   return 'paste';
 }
 function proxyKindRadios(sel){
-  return [['url','提取链接（调接口拿一批节点）'],
-          ['paste','直接粘贴节点（每行 host:port:user:pass，可批量）'],
-          ['tunnel','隧道/旋转网关（每号一个 session，需要填网关地址）']].map(([v,t])=>
+  return [['url','API trích xuất (Gọi API bên thứ ba lấy danh sách Node)'],
+          ['paste','Dán Node thủ công (host:port:user:pass, hỗ trợ hàng loạt)'],
+          ['tunnel','Cổng xoay Gateway / Rotating Proxy (Mỗi nick gán một session riêng qua Host/Port)']].map(([v,t])=>
     `<label style="display:flex;align-items:center;gap:8px;font-weight:400;margin:4px 0">
        <input type="radio" name="f_pkind" value="${v}" ${v===sel?'checked':''} onchange="onProxyKindChange()"> ${t}</label>`).join('');
 }
@@ -1273,26 +1512,26 @@ let proxyProbeCache={};
 async function loadProxies(){
   const r=await api('/api/admin/proxies');
   proxyCache=r.proxies||[];
-  const dp=q('#defaultProxyShow');if(dp)dp.textContent=r.default_proxy?'（'+r.default_proxy+'）':'（未设置）';
+  const dp=q('#defaultProxyShow');if(dp)dp.textContent=r.default_proxy?'（'+r.default_proxy+'）':'(Chưa thiết lập)';
   q('#proxiesTable').innerHTML=table(
-    ['名称','类型','协议','地址','端口','用户名','已绑账号','出口IP','备注','操作'],
+    ['Tên Proxy','Loại Proxy','Giao thức','Host / IP','Cổng (Port)','Username','Tài khoản đã gán','IP Thoát hiện tại','Ghi chú','Thao tác'],
     proxyCache.map(p=>[
       esc(p.name),
-      p.mode==='extract'?(p.extract_url?'<span class="badge b-blue">提取链接</span>'
-                                        :'<span class="badge b-blue">粘贴节点</span>')
-        :p.is_dynamic?'<span class="badge b-blue">隧道</span>':'<span class="tiny">静态</span>',
+      p.mode==='extract'?(p.extract_url?'<span class="badge b-blue">API Pool</span>'
+                                        :'<span class="badge b-blue">Node List</span>')
+        :p.is_dynamic?'<span class="badge b-blue">Gateway Xoay</span>':'<span class="tiny">IP Tĩnh</span>',
       esc(p.protocol),
-      p.host?esc(p.host):'<span class="tiny">（节点池）</span>',
+      p.host?esc(p.host):'<span class="tiny">(Node Pool)</span>',
       p.port?p.port:'<span class="tiny">—</span>',
       p.username?esc(p.username):'<span class="tiny">—</span>',
       p.account_count||0,
       (proxyProbeCache[p.id]?esc(proxyProbeCache[p.id]):'<span class="tiny">—</span>')+
-        ` <button class="btn" onclick="probeProxy('${p.id}',this)">探测</button>`,
+        ` <button class="btn" onclick="probeProxy('${p.id}',this)">Kiểm tra IP</button>`,
       esc(p.remark||'')||'<span class="tiny">—</span>',
-      `<button class="btn" style="margin-right:6px" onclick="openEditProxy('${p.id}')">编辑</button>
-       ${p.mode==='extract'?`<button class="btn" style="margin-right:6px" onclick="showNodes('${p.id}')">节点池</button>`:''}
-       ${p.is_dynamic||p.mode==='extract'?`<button class="btn" style="margin-right:6px" onclick="rotateProxy('${p.id}')">换IP</button>`:''}
-       <button class="btn btn-danger" onclick="delProxy('${p.id}')">删除</button>`
+      `<button class="btn" style="margin-right:6px" onclick="openEditProxy('${p.id}')">Sửa</button>
+       ${p.mode==='extract'?`<button class="btn" style="margin-right:6px" onclick="showNodes('${p.id}')">Danh sách Node</button>`:''}
+       ${p.is_dynamic||p.mode==='extract'?`<button class="btn" style="margin-right:6px" onclick="rotateProxy('${p.id}')">Đổi IP</button>`:''}
+       <button class="btn btn-danger" onclick="delProxy('${p.id}')">Xóa</button>`
     ])
   );
 }
@@ -1306,68 +1545,68 @@ async function showNodes(id){
     n.id,
     esc(n.host+':'+n.port),
     esc(n.username||'')||'<span class="tiny">—</span>',
-    n.dead?'<span class="badge b-red">已废弃</span>'
-      :(n.expires_at&&n.expires_at<=now)?'<span class="tiny">已过期</span>'
-      :'<span class="badge b-green">可用</span>',
+    n.dead?'<span class="badge b-red">Hỏng (Dead)</span>'
+      :(n.expires_at&&n.expires_at<=now)?'<span class="tiny">Hết hạn</span>'
+      :'<span class="badge b-green">Hoạt động</span>',
     n.expires_at?fmt(n.expires_at):'—',
     esc(n.last_exit_ip||'')||'<span class="tiny">—</span>',
     n.fail_count||0
   ]);
-  showDlg('<h2>节点池 — '+esc(p?p.name:id)+'</h2>'+
-    '<div class="tiny" style="margin-bottom:8px">共 '+r.total+' 个，可用 '+r.alive+' 个，废弃 '+r.dead+' 个</div>'+
-    '<div style="max-height:45vh;overflow:auto">'+table(['#','地址','用户名','状态','过期时间','出口IP','失败次数'],rows)+'</div>'+
-    '<div class="row">'+(p&&p.extract_url?'<button class="btn" onclick="refreshNodes(\''+id+'\')">补一批节点（提取）</button>':'')+
-    '<button class="btn" onclick="pasteNodes(\''+id+'\')">粘贴补节点</button>'+
-    '<button class="btn" onclick="pruneNodes(\''+id+'\')">清理过期/废节点</button>'+
-    '<button class="btn" onclick="hide(\'dlg\')">关闭</button></div>');
+  showDlg('<h2>Chi tiết Node Pool — '+esc(p?p.name:id)+'</h2>'+
+    '<div class="tiny" style="margin-bottom:8px">Tổng cộng: '+r.total+' Node, Hoạt động: '+r.alive+' Node, Hỏng: '+r.dead+' Node</div>'+
+    '<div style="max-height:45vh;overflow:auto">'+table(['#','Host : Port','Username','Trạng thái','Hạn dùng','IP Thoát','Số lần lỗi'],rows)+'</div>'+
+    '<div class="row">'+(p&&p.extract_url?'<button class="btn" onclick="refreshNodes(\''+id+'\')">Nạp thêm Node mới (Gọi API trích xuất)</button>':'')+
+    '<button class="btn" onclick="pasteNodes(\''+id+'\')">Dán thêm Node thủ công</button>'+
+    '<button class="btn" onclick="pruneNodes(\''+id+'\')">Dọn dẹp Node hết hạn / hỏng</button>'+
+    '<button class="btn" onclick="hide(\'dlg\')">Đóng</button></div>');
 }
 function pasteNodes(id){
   const p=proxyCache.find(x=>x.id===id);
-  showDlg('<h2>粘贴节点 — '+esc(p?p.name:id)+'</h2>'+
-    '<div class="tiny" style="margin-bottom:6px">一行一个 <code>host:port:user:pass</code>，可批量粘贴'+
-    '（也认 <code>user:pass@host:port</code>、<code>host:port</code>）；已存在的节点会自动跳过。</div>'+
+  showDlg('<h2>Dán Node thủ công — '+esc(p?p.name:id)+'</h2>'+
+    '<div class="tiny" style="margin-bottom:6px">Mỗi dòng một <code>host:port:user:pass</code>, hỗ trợ dán hàng loạt'+
+    '(hỗ trợ cả <code>user:pass@host:port</code> hoặc <code>host:port</code>); Node đã tồn tại sẽ tự động bỏ qua.</div>'+
     '<textarea id="f_pnodes2" rows="8" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:monospace"></textarea>'+
-    '<div class="row"><button class="btn" onclick="hide(\'dlg\')">取消</button>'+
-    '<button class="btn btn-p" onclick="submitPasteNodes(\''+id+'\')">加入节点池</button></div>');
+    '<div class="row"><button class="btn" onclick="hide(\'dlg\')">Hủy</button>'+
+    '<button class="btn btn-p" onclick="submitPasteNodes(\''+id+'\')">Thêm vào Node Pool</button></div>');
 }
 async function submitPasteNodes(id){
   const text=q('#f_pnodes2').value.trim();
-  if(!text)return alert('请粘贴节点');
+  if(!text)return alert('Vui lòng dán danh sách Node');
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/nodes',{method:'POST',body:{text}});
-    alert(`已加入 ${r.added} 个节点（解析到 ${r.parsed} 行）`);
+    alert(`Đã thêm thành công ${r.added} Node (từ ${r.parsed} dòng)`);
   }catch(e){return alert(e.message);}
   showNodes(id);loadProxies();
 }
 async function refreshNodes(id){
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/refresh-nodes',{method:'POST'});
-    alert(r.ok?('提取成功，新增 '+r.added+' 个节点'):('提取失败：'+(r.error||'未知错误')));
+    alert(r.ok?('Trích xuất từ API thành công, đã thêm '+r.added+' Node'):('Trích xuất từ API thất bại: '+(r.error||'Lỗi không xác định')));
   }catch(e){return alert(e.message);}
   showNodes(id);loadProxies();
 }
 async function pruneNodes(id){
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/prune-nodes',{method:'POST'});
-    alert('已清理 '+r.removed+' 个节点');
+    alert('Đã dọn dẹp '+r.removed+' Node');
   }catch(e){return alert(e.message);}
   showNodes(id);loadProxies();
 }
 async function probeProxy(id,btn){
-  const old=btn.textContent;btn.disabled=true;btn.textContent='探测中…';
+  const old=btn.textContent;btn.disabled=true;btn.textContent='Đang kiểm tra IP...';
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/probe',{method:'POST'});
-    if(!r.ok)alert('探测失败：'+(r.error||'未知错误'));
+    if(!r.ok)alert('Kiểm tra IP thất bại: '+(r.error||'Lỗi không xác định'));
     else proxyProbeCache[id]=r.ip+(r.country?`（${r.country}${r.isp?' / '+r.isp:''}）`:'');
   }catch(e){alert(e.message);}
   btn.disabled=false;btn.textContent=old;loadProxies();
 }
 async function rotateProxy(id){
   const p=proxyCache.find(x=>x.id===id);
-  if(!confirm('给绑定在「'+(p?p.name:id)+'」上的所有号换出口 IP？'))return;
+  if(!confirm('Bạn có chắc chắn muốn đổi IP Thoát cho toàn bộ tài khoản đang gắn với Proxy "'+(p?p.name:id)+'"?'))return;
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/rotate',{method:'POST'});
-    alert(`已换 IP：${r.rotated.length} 个\n跳过：${r.skipped.length} 个${r.skipped.length?'（未到最小换IP间隔）':''}`);
+    alert(`Đổi IP thành công cho: ${r.rotated.length} tài khoản\nBỏ qua: ${r.skipped.length} tài khoản${r.skipped.length?' (chưa hết thời gian cooldown đổi IP)':''}`);
   }catch(e){return alert(e.message);}
   loadProxies();loadAccounts();
 }
@@ -1379,55 +1618,55 @@ async function rotateIp(name){
 async function probeIp(name){
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/probe-ip',{method:'POST'});
-    if(!r.ok)return alert('探测失败：'+(r.error||'未知错误'));
-    alert(`${name}\n出口 IP：${r.ip}\n归属：${r.country||'—'} ${r.region||''}\nISP：${r.isp||'—'}`);
+    if(!r.ok)return alert('Kiểm tra IP thất bại: '+(r.error||'Lỗi không xác định'));
+    alert(`${name}\nIP Thoát: ${r.ip}\nKhu vực: ${r.country||'—'} ${r.region||''}\nNhà mạng ISP: ${r.isp||'—'}`);
   }catch(e){return alert(e.message);}
   loadAccounts();
 }
 function proxyDialog(p){
   const isEdit=!!p;
-  const oldPw=p&&p.has_password?'（原密码已保存，留空保持不变）':'';
+  const oldPw=p&&p.has_password?' (Mật khẩu cũ đã lưu, để trống nếu không đổi)':'';
   // 隧道型（旧的 dynamic）在面板上归到「动态IP + 隧道」这一档
   const mode=p?((p.mode==='dynamic')?'extract':(p.mode||'static')):'static';
   const kind=proxyKindOf(p);
   // 提取链接 / 粘贴节点 两种动态方式不需要网关地址，直接把 IP、端口那一行收起来
   const showGw=(mode!=='extract'||kind==='tunnel');
-  showDlg(`<h2>${isEdit?'编辑代理':'添加代理'}</h2>
-    <label>名称</label><input id="f_pname" value="${p?esc(p.name):''}" placeholder="例如：日本主代理">
-    <label>协议</label><select id="f_pprotocol" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${proxyProtocolOptions(p?p.protocol:'http')}</select>
-    <label>出口类型</label><select id="f_pmode" onchange="onProxyModeChange()" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${proxyModeOptions(mode)}</select>
+  showDlg(`<h2>${isEdit?'Chỉnh sửa cấu hình Proxy':'Thêm cấu hình Proxy mới'}</h2>
+    <label>Tên nhận diện Proxy</label><input id="f_pname" value="${p?esc(p.name):''}" placeholder="Ví dụ: Singapore Cloudflare Relay / Residential Proxy">
+    <label>Giao thức kết nối</label><select id="f_pprotocol" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${proxyProtocolOptions(p?p.protocol:'http')}</select>
+    <label>Chế độ Proxy (Proxy Mode)</label><select id="f_pmode" onchange="onProxyModeChange()" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${proxyModeOptions(mode)}</select>
     <div id="dynBox" style="display:${mode==='extract'?'block':'none'};border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0">
-      <div class="tiny" style="margin-bottom:6px">动态IP：不用填 IP、端口，出口由节点池里的节点决定（<b>一个节点只给一个号用</b>）。</div>
+      <div class="tiny" style="margin-bottom:6px">IP Động xoay: Không cần nhập IP/Port cố định, IP kết nối sẽ do danh sách Node trong pool cung cấp (<b>Mỗi Node gán riêng cho một tài khoản</b>).</div>
       ${proxyKindRadios(kind)}
       <div id="extractBox" style="display:${mode==='extract'&&kind==='url'?'block':'none'};margin-top:8px">
-        <label>提取链接</label><input id="f_pexturl" value="${p?esc(p.extract_url||''):''}" placeholder="https://api.provider.com/...GetIpByGenerateLink?id=xxx">
-        <label>提取限流间隔（秒）</label><input id="f_pextint" type="number" value="${p?p.extract_interval:'60'}" placeholder="60 = 距上次提取不足该秒数就不再调">
-        <div class="tiny">服务端按这个链接拿一批可直接使用的节点分给各个号。注意：这类接口通常<b>按调用次数计费</b>，间隔不要设太小；池子里还有可用节点时不会去调。</div>
+        <label>API URL trích xuất danh sách Node</label><input id="f_pexturl" value="${p?esc(p.extract_url||''):''}" placeholder="https://api.provider.com/...GetIpByGenerateLink?id=xxx">
+        <label>Khoảng cách giữa các lần gọi API (giây)</label><input id="f_pextint" type="number" value="${p?p.extract_interval:'60'}" placeholder="60 = Khoảng cách tối thiểu giữa 2 lần gọi API">
+        <div class="tiny">Hệ thống sẽ gọi API này để lấy danh sách Node cấp phát cho tài khoản. Lưu ý: API bên thứ ba thường <b>tính phí theo lượt gọi</b>, không nên đặt khoảng cách quá nhỏ; khi Pool còn Node sống hệ thống sẽ không gọi lại.</div>
       </div>
       <div id="pasteBox" style="display:${mode==='extract'&&kind==='paste'?'block':'none'};margin-top:8px">
-        <label>节点列表${isEdit?'（追加到节点池，可留空）':''}</label>
+        <label>Danh sách Node${isEdit?' (thêm vào Pool, có thể để trống)':''}</label>
         <textarea id="f_pnodes" rows="6" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:monospace" placeholder="gate1.ipweb.cc:7778:100378695217-qRhvVmkl:f761d19a7fdb8498f69e43de6bd1de31&#10;gate1.ipweb.cc:7778:100378695217-rF4EnjPm:c021f9128d837d95409f3d5c6f9522c2"></textarea>
-        <div class="tiny">一行一个 <code>host:port:user:pass</code>，可批量粘贴（也认 <code>user:pass@host:port</code>、<code>host:port</code>）。粘进来的凭据默认<b>不过期</b>；带 <code>sessiontime-N</code> 的行按 N 分钟算。在“节点池”里可以继续补、清理。</div>
+        <div class="tiny">Mỗi dòng một <code>host:port:user:pass</code>, hỗ trợ dán hàng loạt(hỗ trợ cả <code>user:pass@host:port</code> hoặc <code>host:port</code>). Node nạp thủ công mặc định <b>không hết hạn</b>; dòng có chứa <code>sessiontime-N</code> tính theo thời hạn N phút. Có thể nạp thêm hoặc dọn dẹp trong mục Danh sách Node.</div>
       </div>
       <div id="tunnelBox" style="display:${mode==='extract'&&kind==='tunnel'?'block':'none'};margin-top:8px">
-        <div class="tiny" style="margin-bottom:6px">隧道/旋转网关：服务端把 <b>{session}</b> 拼进用户名，每个号一个独立 session（= 独立出口 IP），互不干扰。</div>
-        <label>用户名模板</label><input id="f_ptpl" value="${p?esc(p.session_template||''):''}" placeholder="{user}-{session}（默认）">
+        <div class="tiny" style="margin-bottom:6px">Cổng xoay Gateway: Hệ thống tự động ghép mã <b>{session}</b> vào Username, mỗi tài khoản sở hữu 1 session kết nối độc lập (= IP Thoát riêng biệt).</div>
+        <label>Mẫu Username (Template)</label><input id="f_ptpl" value="${p?esc(p.session_template||''):''}" placeholder="{user}-{session} (Mặc định)">
         <div style="display:flex;gap:10px">
-          <div style="flex:1"><label>session 有效期（秒）</label><input id="f_pttl" type="number" value="${p?p.sticky_ttl:'0'}" placeholder="0 = 不过期"></div>
-          <div style="flex:1"><label>最小换IP间隔（秒）</label><input id="f_pminint" type="number" value="${p?p.rotate_min_interval:'60'}" placeholder="防刷IP"></div>
+          <div style="flex:1"><label>Thời hạn Session (giây)</label><input id="f_pttl" type="number" value="${p?p.sticky_ttl:'0'}" placeholder="0 = Không hết hạn"></div>
+          <div style="flex:1"><label>Khoảng cách tối thiểu giữa 2 lần đổi IP (giây)</label><input id="f_pminint" type="number" value="${p?p.rotate_min_interval:'60'}" placeholder="Chống spam đổi IP liên tục"></div>
         </div>
-        <label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input type="checkbox" id="f_prisk" ${!p||p.rotate_on_risk?'checked':''}> 被风控时自动换出口 IP</label>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input type="checkbox" id="f_prisk" ${!p||p.rotate_on_risk?'checked':''}> Tự động đổi IP Thoát khi tài khoản bị nghi vấn kiểm soát / checkpoint IP</label>
       </div>
     </div>
     <div id="gwBox" style="display:${showGw?'block':'none'}">
-      <div style="display:flex;gap:10px"><div style="flex:2"><label>地址</label><input id="f_phost" value="${p?esc(p.host):''}" placeholder="IP 或域名"></div>
-        <div style="flex:1"><label>端口</label><input id="f_pport" type="number" value="${p&&p.port?p.port:'3128'}"></div></div>
-      <div style="display:flex;gap:10px"><div style="flex:1"><label>用户名（可选）</label><input id="f_puser" value="${p?esc(p.username||''):''}"></div>
-        <div style="flex:1"><label>密码（可选）</label><input id="f_ppass" type="password" placeholder="${oldPw}"></div></div>
+      <div style="display:flex;gap:10px"><div style="flex:2"><label>Host / Địa chỉ IP</label><input id="f_phost" value="${p?esc(p.host):''}" placeholder="Địa chỉ IP hoặc tên miền Host"></div>
+        <div style="flex:1"><label>Cổng (Port)</label><input id="f_pport" type="number" value="${p&&p.port?p.port:'3128'}"></div></div>
+      <div style="display:flex;gap:10px"><div style="flex:1"><label>Username (Tùy chọn)</label><input id="f_puser" value="${p?esc(p.username||''):''}"></div>
+        <div style="flex:1"><label>Mật khẩu (Tùy chọn)</label><input id="f_ppass" type="password" placeholder="${oldPw}"></div></div>
     </div>
-    <label>备注</label><input id="f_premark" value="${p?esc(p.remark||''):''}">
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
-      <button class="btn btn-p" onclick="submitProxy('${p?p.id:''}')">${isEdit?'保存':'添加'}</button></div>`);
+    <label>Ghi chú</label><input id="f_premark" value="${p?esc(p.remark||''):''}">
+    <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button>
+      <button class="btn btn-p" onclick="submitProxy('${p?p.id:''}')">${isEdit?'Lưu thay đổi':'Thêm Proxy'}</button></div>`);
 }
 function openAddProxy(){proxyDialog(null);}
 function openEditProxy(id){const p=proxyCache.find(x=>x.id===id);if(p)proxyDialog(p);}
@@ -1438,13 +1677,13 @@ async function submitProxy(id){
   const nodes=q('#f_pnodes')?q('#f_pnodes').value.trim():'';
   const body={name:q('#f_pname').value.trim(),protocol:q('#f_pprotocol').value,
     remark:q('#f_premark').value.trim()};
-  if(!body.name)return alert('请填写名称');
+  if(!body.name)return alert('Vui lòng nhập tên nhận diện Proxy');
   if(mode==='static'||kind==='tunnel'){
     body.mode=mode==='static'?'static':'dynamic';
     body.host=q('#f_phost').value.trim();
     body.port=Number(q('#f_pport').value||0);
     body.username=q('#f_puser').value;
-    if(!body.host||!body.port)return alert('请填写地址和端口');
+    if(!body.host||!body.port)return alert('Vui lòng điền đầy đủ Host và Port');
   }else{
     // 提取链接 / 粘贴节点：出口由节点池决定，不需要网关地址
     body.mode='extract';
@@ -1458,9 +1697,9 @@ async function submitProxy(id){
   if(body.mode==='extract'){
     body.extract_url=kind==='url'?q('#f_pexturl').value.trim():'';
     body.extract_interval=kind==='url'?Number(q('#f_pextint').value||0):0;
-    if(kind==='url'&&!body.extract_url)return alert('请填提取链接');
+    if(kind==='url'&&!body.extract_url)return alert('Vui lòng điền URL gọi API trích xuất Node');
     if(kind==='paste'){
-      if(!id&&!nodes)return alert('请粘贴节点，一行一个 host:port:user:pass');
+      if(!id&&!nodes)return alert('Vui lòng dán danh sách Node, mỗi dòng một host:port:user:pass');
       if(nodes&&!id)body.nodes_text=nodes;
     }
   }
@@ -1473,7 +1712,7 @@ async function submitProxy(id){
       if(nodes){
         const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/nodes',
           {method:'POST',body:{text:nodes}});
-        alert(`已追加 ${r.added} 个节点（解析到 ${r.parsed} 行）`);
+        alert(`Đã thêm thành công ${r.added} Node (từ ${r.parsed} dòng)`);
       }
     }else await api('/api/admin/proxies',{method:'POST',body});
   }catch(e){return alert(e.message);}
@@ -1481,71 +1720,9 @@ async function submitProxy(id){
 }
 async function delProxy(id){
   const p=proxyCache.find(x=>x.id===id);
-  if(!confirm('删除代理「'+(p?p.name:id)+'」？已绑定该代理的账号会改回默认代理。'))return;
+  if(!confirm('Bạn có chắc chắn muốn xóa Proxy "'+(p?p.name:id)+'"? Các tài khoản đang dùng Proxy này sẽ tự động chuyển về Proxy mặc định.'))return;
   try{await api('/api/admin/proxies/'+encodeURIComponent(id),{method:'DELETE'});}catch(e){return alert(e.message);}
   loadProxies();
-}
-
-/* ---- 用户管理 ---- */
-async function loadUsers(){
-  const r=await api('/api/admin/users');
-  const me=r.current_username||'';
-  q('#usersTable').innerHTML=table(
-    ['用户名','角色','状态','创建时间','操作'],
-    r.users.map(u=>[
-      esc(u.username)+(u.username===me?' <span class="badge b-blue">当前</span>':''),
-      u.role==='owner'?'<span class="badge b-green">主管理员</span>':'<span class="badge b-blue">管理员</span>',
-      u.enabled?'<span class="badge b-green">启用</span>':'<span class="badge b-red">停用</span>',
-      fmt(u.created_at),
-      `<button class="btn" style="margin-right:6px" onclick="openEditUser('${esc(u.username)}')">修改</button>`+
-      `<button class="btn ${u.username===me?'btn':''}" ${u.username===me?'disabled':''} style="margin-right:6px" onclick="delUser('${esc(u.username)}')">删除</button>`
-    ])
-  );
-}
-function openAddUser(){
-  showDlg(`<h2>新增管理员</h2>
-    <label>用户名</label><input id="f_uname" placeholder="仅字母/数字/_/-，最多32位">
-    <label>密码</label><input id="f_upass" type="password" placeholder="初始密码">
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
-      <button class="btn btn-p" onclick="submitUser('')">新增</button></div>`);
-}
-function openEditUser(username){
-  (async()=>{
-    const r=await api('/api/admin/users');
-    const u=r.users.find(x=>x.username===username);
-    if(!u)return alert('用户不存在');
-    const owner=u.role==='owner';
-    showDlg(`<h2>修改账号：${esc(u.username)}</h2>
-      <label>用户名</label><input id="f_uname" value="${esc(u.username)}" ${owner?'disabled':''} ${owner?'title="主管理员不允许改名"':''}>
-      <label>新密码（留空保持不变）</label><input id="f_upass" type="password" placeholder="留空则不修改">
-      ${owner?'':'<label style="margin-top:8px;display:flex;align-items:center;gap:6px;color:var(--sub)"><input type="checkbox" id="f_uenabled" style="width:auto" '+(u.enabled?'checked':'')+'>启用该账号</label>'}
-      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
-        <button class="btn btn-p" onclick="submitUser('${esc(u.username)}')">保存</button></div>`);
-  })();
-}
-async function submitUser(orig){
-  const name=q('#f_uname').value.trim();
-  const pw=q('#f_upass').value;
-  const body={};
-  if(!orig){
-    if(!name||!pw)return alert('请填写用户名和密码');
-    if(!/^[A-Za-z0-9_-]{1,32}$/.test(name))return alert('用户名只能包含字母/数字/_/-，且不超过32位');
-    body.username=name;body.password=pw;
-    try{await api('/api/admin/users',{method:'POST',body});}catch(e){return alert(e.message);}
-  }else{
-    if(!name)return alert('用户名不能为空');
-    if(name!==orig)body.username=name;
-    if(pw)body.password=pw;
-    const eb=q('#f_uenabled');
-    if(eb)body.enabled=eb.checked;
-    try{await api('/api/admin/users/'+encodeURIComponent(orig),{method:'PATCH',body});}catch(e){return alert(e.message);}
-  }
-  hide('dlg');loadUsers();
-}
-async function delUser(username){
-  if(!confirm('确定删除管理员 '+username+'？'))return;
-  try{await api('/api/admin/users/'+encodeURIComponent(username),{method:'DELETE'});}catch(e){return alert(e.message);}
-  loadUsers();
 }
 
 /* ---- 任务列表 ---- */
@@ -1556,7 +1733,7 @@ function accChain(t){
   if(!arr.length)return '-';
   const txt=arr.join(' → ');
   return arr.length>1
-    ?'<span class="tiny" title="换号顺序：'+esc(txt)+'">'+arr.map(esc).join('<span style="color:var(--gray)"> → </span>')+'</span>'
+    ?'<span class="tiny" title="Thứ tự luân chuyển nick: '+esc(txt)+'">'+arr.map(esc).join('<span style="color:var(--gray)"> → </span>')+'</span>'
     :esc(arr[0]);
 }
 let TASK_MAP={};
@@ -1564,19 +1741,19 @@ async function loadTasks(){
   const r=await api('/api/admin/tasks?limit=50');
   TASK_MAP={};
   r.tasks.forEach(t=>{TASK_MAP[t.id]=t;});
-  const sb={'queued':'<span class="badge b-gray">排队中</span>','processing':'<span class="badge b-blue">生成中</span>','completed':'<span class="badge b-green">完成</span>','failed':'<span class="badge b-red">失败</span>','风控':'<span class="badge b-orange">风控</span>'};
+  const sb={'queued':'<span class="badge b-gray">Đang chờ (Queued)</span>','processing':'<span class="badge b-blue">Đang sinh video (Generating)</span>','completed':'<span class="badge b-green">Hoàn thành (Done)</span>','failed':'<span class="badge b-red">Thất bại (Failed)</span>','风控':'<span class="badge b-orange">Kiểm soát (Risk)</span>'};
   const rows=r.tasks.map(t=>[
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
     '<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>'
-      +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">查看</button>',
+      +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">Xem Prompt</button>',
     refCell(t),
     accChain(t),
     t.api_key_name||'—',
-    (t.duration||10)+'秒',
+    (t.duration||10)+'s',
     sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
     fmt(t.created_at),
     t.video_url
-      ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">打开</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">预览</button></div>'
+      ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">Xem link</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">Xem trước</button></div>'
       :'—',
     // 报错原文完整展示（含换行）：不再 slice(0,30)，上游「内容审核不合规 / 肖像保护 / 侵权」
     // 这类话术要能一眼看全。
@@ -1585,7 +1762,7 @@ async function loadTasks(){
       :'<span class="tiny">—</span>'
   ]);
   q('#tasksTable').innerHTML=table(
-    ['ID','提示词','参考图','账号','客户','时长','状态','创建时间','视频','报错/备注'],rows);
+    ['Mã Task','Prompt / Câu lệnh','Ảnh tham chiếu','Tài khoản thực hiện','Khách hàng / API Key','Thời lượng','Trạng thái','Thời gian gửi','Video','Chi tiết / Lỗi'],rows);
 }
 
 function refThumbs(t){
@@ -1594,24 +1771,24 @@ function refThumbs(t){
 /** 参考图缩略图：原图在任务结束时已清理，这里显示的是服务端留存的缩略图。 */
 function refCell(t){
   const list=refThumbs(t);
-  if(!list.length)return '<span class="tiny">无</span>';
+  if(!list.length)return '<span class="tiny">Không</span>';
   const url='/thumbs/'+encodeURIComponent(list[0]);
-  return '<img class="thumb" src="'+url+'" title="点击放大" onclick="showThumb(\''+esc(url)+'\')">'
+  return '<img class="thumb" src="'+url+'" title="Bấm để xem ảnh lớn" onclick="showThumb(\''+esc(url)+'\')">'
     +(list.length>1?'<span class="tiny">+'+(list.length-1)+'</span>':'');
 }
 function showThumb(url){q('#thumbImg').src=url;show('thumbModal');}
 
 function openPrompt(id){
   const t=TASK_MAP[id]||{};
-  q('#promptMeta').textContent=id+' · '+(t.model||'-')+' · '+(t.duration||10)+'秒 · '
-    +(t.api_key_name?('客户 '+t.api_key_name):'');
-  q('#promptBody').textContent=(t.prompt&&String(t.prompt).length)?t.prompt:'（空提示词）';
-  q('#promptCopyBtn').textContent='复制';
+  q('#promptMeta').textContent=id+' · '+(t.model||'-')+' · '+(t.duration||10)+'s · '
+    +(t.api_key_name?('Khách hàng: '+t.api_key_name):'');
+  q('#promptBody').textContent=(t.prompt&&String(t.prompt).length)?t.prompt:'(Prompt trống)';
+  q('#promptCopyBtn').textContent='Sao chép';
   show('promptModal');
 }
 function copyPrompt(){
   const txt=q('#promptBody').textContent||'';
-  const done=()=>{const b=q('#promptCopyBtn');b.textContent='已复制';setTimeout(()=>b.textContent='复制',1200);};
+  const done=()=>{const b=q('#promptCopyBtn');b.textContent='Đã chép!';setTimeout(()=>b.textContent='Sao chép',1200);};
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(done,done);}
   else{const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();
        try{document.execCommand('copy');}catch(e){}document.body.removeChild(ta);done();}
@@ -1631,27 +1808,28 @@ function fmtSize(b){
 }
 function fmtDur(s){
   if(!s||s<=0)return '-';
-  if(s<60)return Math.round(s)+' 秒';
+  if(s<60)return Math.round(s)+'s';
   const m=Math.floor(s/60);const sec=Math.round(s%60);
-  return m+' 分 '+sec+' 秒';
+  return m+'m '+sec+'s';
 }
 async function loadVideos(){
   const r=await api('/api/admin/videos');
   const total=r.total||0;
   const avail=r.available||0;
-  q('#videoStat').textContent=`视频总数：${total}（正常 ${avail} / 已删除 ${total-avail}）`;
+  q('#videoStat').textContent=`Tổng số video: ${total} (Sẵn sàng: ${avail} / Đã xóa: ${total-avail})`;
   allVideoIds=(r.videos||[]).map(v=>v.id);
   const rows=(r.videos||[]).map(v=>{
+    v.video_url=localVideoUrl(v.video_url);
     const size=fmtSize(v.video_size||v.file_size);
     const dur=fmtDur(v.video_duration||v.duration);
     const dim=(v.video_width&&v.video_height)?v.video_width+'×'+v.video_height
       :(v.ratio&&v.ratio!=='default'?v.ratio:'-');
     const state=v.video_url
-      ?(v.file_exists===false?'<span class="badge b-orange">文件缺失</span>':'<span class="badge b-green">正常</span>')
-      :'<span class="badge b-gray">文件已删</span>';
+      ?(v.file_exists===false?'<span class="badge b-orange">Mất file gốc</span>':'<span class="badge b-green">Sẵn sàng</span>')
+      :'<span class="badge b-gray">Đã xóa trên đĩa</span>';
     const ops='<div class="video-wrap">'
-      +(v.video_url?'<button class="btn" style="margin-right:6px" onclick="playVideo(&quot;'+esc(v.video_url)+'&quot;)">预览</button><button class="btn" style="margin-right:6px" onclick="copyLink(&quot;'+esc(v.video_url)+'&quot;)">复制链接</button>':'')
-      +'<button class="btn btn-danger" onclick="delVideo(\''+v.id+'\')">删除</button></div>';
+      +(v.video_url?'<button class="btn" style="margin-right:6px" onclick="playVideo(&quot;'+esc(v.video_url)+'&quot;)">Xem trước</button><button class="btn" style="margin-right:6px" onclick="copyLink(&quot;'+esc(v.video_url)+'&quot;)">Sao chép liên kết</button>':'')
+      +'<button class="btn btn-danger" onclick="delVideo(\''+v.id+'\')">Xóa</button></div>';
     return [
       `<input type="checkbox" ${selVideos.has(v.id)?'checked':''} onchange="toggleVideoSel('${v.id}',this.checked)">`,
       fmt(v.created_at),
@@ -1666,10 +1844,10 @@ async function loadVideos(){
     ];
   });
   q('#videosTable').innerHTML=table(
-    ['<input type="checkbox" id="selAllV" onchange="toggleAllVideos(this.checked)" title="全选/取消全选">',
-     '生成时间','时长','尺寸','大小','账号','模型','状态','提示词','操作'],rows);
+    ['<input type="checkbox" id="selAllV" onchange="toggleAllVideos(this.checked)" title="Chọn tất cả / Bỏ chọn">',
+     'Thời gian tạo','Thời lượng','Độ phân giải','Dung lượng','Tài khoản','Mô hình video','Trạng thái','Mô tả cảnh','Thao tác'],rows);
   const b=q('#btnDelVideos');b.disabled=selVideos.size===0;
-  b.textContent=selVideos.size?`删除选中（${selVideos.size}）`:'删除选中';
+  b.textContent=selVideos.size?`Xóa đã chọn (${selVideos.size})`:'Xóa đã chọn';
   const selAll=q('#selAllV');
   if(selAll){
     selAll.checked=selVideos.size>0&&selVideos.size===allVideoIds.length;
@@ -1679,7 +1857,7 @@ async function loadVideos(){
 function toggleVideoSel(id,on){
   if(on)selVideos.add(id);else selVideos.delete(id);
   const b=q('#btnDelVideos');b.disabled=selVideos.size===0;
-  b.textContent=selVideos.size?`删除选中（${selVideos.size}）`:'删除选中';
+  b.textContent=selVideos.size?`Xóa đã chọn (${selVideos.size})`:'Xóa đã chọn';
   const selAll=q('#selAllV');
   if(selAll){
     selAll.checked=selVideos.size>0&&selVideos.size===allVideoIds.length;
@@ -1692,7 +1870,7 @@ function toggleAllVideos(on){
   loadVideos();
 }
 async function delVideo(id){
-  if(!confirm('确定删除该视频？视频文件与任务记录将一并删除，不可恢复。'))return;
+  if(!confirm('Bạn có chắc chắn muốn xóa video này? File video và lịch sử tác vụ sẽ bị xóa vĩnh viễn không thể khôi phục.'))return;
   try{await api('/api/admin/videos/'+id,{method:'DELETE'});}catch(e){alert(e.message);}
   selVideos.delete(id);
   refresh();
@@ -1700,121 +1878,35 @@ async function delVideo(id){
 async function delSelectedVideos(){
   const list=[...selVideos];
   if(!list.length)return;
-  if(!confirm(`确定删除选中的 ${list.length} 个视频？文件与任务记录将一并删除，不可恢复。`))return;
+  if(!confirm(`Bạn có chắc chắn muốn xóa ${list.length} video đã chọn? File video và bản ghi tác vụ sẽ bị xóa vĩnh viễn không thể phục hồi.`))return;
   let ok=0;
   for(const id of list){
     try{await api('/api/admin/videos/'+id,{method:'DELETE'});ok++;}
-    catch(e){alert(id+' 删除失败：'+e.message);}
+    catch(e){alert(id+' Xóa thất bại: '+e.message);}
   }
   selVideos.clear();
   refresh();
-  if(ok)alert(`已删除 ${ok} 个视频（文件与记录）`);
+  if(ok)alert(`Đã xóa thành công ${ok} video (gồm cả file trên đĩa và lịch sử tác vụ)`);
 }
 async function copyLink(url){
   await copy(url);
-  alert('链接已复制');
+  alert('Đã sao chép link video vào clipboard!');
 }
-
-/* ---- API 密钥 ---- */
-async function loadKeys(){
-  const r=await api('/api/admin/keys');
-  // 允许时长由后端下发（随 DOLA_NATIVE_DURATION_MAX 变化），不再前端硬编码。
-  if(Array.isArray(r.supported_durations)&&r.supported_durations.length)SUPPORTED_DURATIONS=r.supported_durations;
-  const mask=k=>'sk-'+k.slice(3,9)+'…'+k.slice(-4);
-  const rows=r.keys.map(k=>[
-    '<span style="font-family:monospace">'+mask(k.key)+'</span>',
-    k.name||'—',
-    (k.allowed_durations||[]).join(' / ')+' 秒',
-    (k.daily_limit?`${k.today_total} / ${k.daily_limit}`:`${k.today_total} / 不限`),
-    (k.concurrency_limit?`${k.today_active} / ${k.concurrency_limit}`:`${k.today_active} / 不限`)+(k.today_queued?` <span class=\"tiny\">排队 ${k.today_queued}</span>`:''),
-    `<label class="sw"><input type="checkbox" ${k.enabled?'checked':''} onchange="setKey('${k.key}',this.checked)"><i></i></label>`,
-    fmt(k.last_used_at),
-    `<button class="btn" style="margin-right:6px" onclick="copyKey('${k.key}')">复制</button><button class="btn" style="margin-right:6px" onclick="openEditKey('${k.key}')">设置</button><button class="btn btn-danger" onclick="delKey('${k.key}')">删除</button>`
-  ]);
-  q('#keysTable').innerHTML=table(['Key','名称','允许时长','今日任务','并发','启用','最近使用','操作'],rows)
-    +(r.env_keys>0?`<div class="hint" style="margin-top:10px">另有 ${r.env_keys} 个环境变量 key（永久有效，面板只读）</div>`:'');
-}
-async function setKey(key,on){
-  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{enabled:on}});}catch(e){alert(e.message);}refresh();
-}
-async function copyKey(key){
-  await copy(key);
-  alert('已复制 '+(key.slice(0,8)+'…'+key.slice(-4)));
-}
-async function delKey(key){
-  if(!confirm('删除该密钥？调用方将立即失效。'))return;
-  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'DELETE'});}catch(e){alert(e.message);}refresh();
-}
-// 仅作接口返回前的占位默认值；真实档位由 /api/admin/keys 下发（随 DOLA_NATIVE_DURATION_MAX 变化）。
-let SUPPORTED_DURATIONS=[5,10,15,30];
-function durationChecks(values){
-  values=values||SUPPORTED_DURATIONS;
-  return SUPPORTED_DURATIONS.map(v=>`<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px"><input type="checkbox" id="f_d${v}" ${values.includes(v)?'checked':''}>${v}秒</label>`).join('');
-}
-function openCreateKey(){
-  showDlg(`<h2>创建 API 密钥</h2>
-    <label>名称（可选）</label><input id="f_kname" placeholder="例如：客户A">
-    <label>每日任务上限（0 = 不限）</label><input id="f_daily" type="number" min="0" value="0">
-    <label>同时生成上限（0 = 不限）</label><input id="f_conc" type="number" min="0" value="0">
-    <label>允许的视频时长</label><div style="padding:8px 0">${durationChecks()}</div>
-    <label>过期时间戳（可选，留空 = 永久）</label><input id="f_exp" type="number" min="0" placeholder="Unix 时间戳">
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitCreateKey()">创建</button></div>`);
-}
-function selectedDurations(){return SUPPORTED_DURATIONS.filter(v=>q('#f_d'+v)?.checked);}
-async function submitCreateKey(){
-  const name=q('#f_kname').value.trim();
-  const allowed=selectedDurations();
-  if(!allowed.length)return alert('至少选择一个视频时长');
-  const body={name,daily_limit:Number(q('#f_daily').value||0),concurrency_limit:Number(q('#f_conc').value||0),allowed_durations:allowed};
-  const exp=q('#f_exp').value.trim();if(exp)body.expires_at=Number(exp);
-  try{
-    const r=await api('/api/admin/keys',{method:'POST',body});
-    const k=r.created.key;
-    hide('dlg');
-    showDlg(`<h2>创建成功，请保存密钥</h2>
-      <div class="tiny">完整 key 只在此显示一次：</div>
-      <div class="keyfull" id="newKey">${esc(k)}</div>
-      <div class="row"><button class="btn" onclick="copyFromNewKey()">复制</button><button class="btn btn-p" onclick="hide('dlg');loadKeys()">完成</button></div>`);
-  }catch(e){alert(e.message);}
-}
-async function openEditKey(key){
-  const r=await api('/api/admin/keys');const k=r.keys.find(x=>x.key===key);if(!k)return;
-  showDlg(`<h2>设置 API 密钥</h2>
-    <div class="tiny" style="margin-bottom:8px">${esc(k.name||key)}</div>
-    <label>每日任务上限（0 = 不限）</label><input id="f_daily" type="number" min="0" value="${k.daily_limit}">
-    <label>同时生成上限（0 = 不限）</label><input id="f_conc" type="number" min="0" value="${k.concurrency_limit}">
-    <label>允许的视频时长</label><div style="padding:8px 0">${durationChecks(k.allowed_durations)}</div>
-    <label>过期时间戳（0 = 永久）</label><input id="f_exp" type="number" min="0" value="${k.expires_at||0}">
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitEditKey('${key}')">保存</button></div>`);
-}
-async function submitEditKey(key){
-  const allowed=selectedDurations();if(!allowed.length)return alert('至少选择一个视频时长');
-  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{daily_limit:Number(q('#f_daily').value||0),concurrency_limit:Number(q('#f_conc').value||0),allowed_durations:allowed,expires_at:Number(q('#f_exp').value||0)}});hide('dlg');refresh();}catch(e){alert(e.message);}
-}
-function copyFromNewKey(){copy(q('#newKey').textContent.trim());}
-async function copy(text){
-  try{await navigator.clipboard.writeText(text);}catch(e){
-    const t=document.createElement('textarea');t.value=text;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();
-  }
-}
-
-function showDlg(html){q('#dlgBox').innerHTML=html;show('dlg');}
 
 /* ---- 压力测试 ---- */
 let stressPollTimer=null;
 function stopStressPoll(){if(stressPollTimer){clearInterval(stressPollTimer);stressPollTimer=null;}}
 function openStress(){
-  showDlg(`<h2>压力测试</h2>
-    <p class="tiny" style="line-height:1.7;margin-bottom:10px">模拟“多个账号/视频任务同时拉起浏览器”：服务器会从 1 个开始，
-    逐级同时拉起 1、2、3…N 个 headed Chromium（临时 profile，使用与账号登录相同的浏览器参数；
-    不访问 Google/dola，不消耗任何号池额度），并统计操作系统里真实拉起的浏览器主进程数、
-    Chromium 总进程数、内存峰值和系统剩余内存，得出当前可稳定并发的浏览器数。</p>
-    <label>最大测试级数（默认 8，最大 12）</label>
+  showDlg(`<h2>Kiểm tra tải đồng thời (Browser Stress Test)</h2>
+    <p class="tiny" style="line-height:1.7;margin-bottom:10px">Mô phỏng trường hợp mở đồng thời nhiều tiến trình trình duyệt Chromium khi có nhiều tác vụ sinh video song song:
+    Hệ thống sẽ chạy thử nghiệm từng cấp độ 1, 2, 3...N trình duyệt Chromium ngầm (dùng Profile tạm, không tiêu hao điểm quota và không gửi request lên Dola),
+    sau đó đo đạc lượng tiêu thụ RAM thực tế, số lượng tiến trình và dung lượng bộ nhớ trống của máy chủ để tìm ra ngưỡng Concurrency tối đa an toàn nhất.</p>
+    <label>Cấp độ kiểm tra tối đa (Mặc định: 8, Tối đa: 12 trình duyệt)</label>
     <input id="stressMax" type="number" min="1" max="12" value="8">
-    <div class="hint" style="margin-top:4px">测试期间请不要同时进行真实账号登录/视频任务。</div>
+    <div class="hint" style="margin-top:4px">Khuyến cáo: Không nên chạy tác vụ tạo video thật trong quá trình kiểm tra tải này.</div>
     <div id="stressOut" class="tiny log-pane" style="margin-top:10px"></div>
-    <div class="row"><button class="btn" onclick="stopStressPoll();hide('dlg')">关闭</button>
-      <button class="btn btn-p" id="stressStartBtn" onclick="startStress()">开始压测</button></div>`);
+    <div class="row"><button class="btn" onclick="stopStressPoll();hide('dlg')">Đóng</button>
+      <button class="btn btn-p" id="stressStartBtn" onclick="startStress()">Bắt đầu kiểm tra tải</button></div>`);
   loadStressStatus(true);
 }
 async function loadStressStatus(showLogs){
@@ -1822,20 +1914,20 @@ async function loadStressStatus(showLogs){
     const st=await api('/api/admin/stress');
     const out=q('#stressOut');if(!out)return;
     const lines=[];
-    if(st.busy_tasks>0)lines.push('⚠ 当前有 '+st.busy_tasks+' 个视频任务在排队/运行，压测会被拒绝，建议等空闲后再试。');
-    if(st.running_jobs>0)lines.push('⚠ 当前有账号登录任务进行中，压测会被拒绝。');
+    if(st.busy_tasks>0)lines.push('⚠ Hiện đang có '+st.busy_tasks+' tác vụ video đang xử lý trong hàng đợi. Bài test tải bị từ chối, vui lòng đợi hoàn tất.');
+    if(st.running_jobs>0)lines.push('⚠ Hiện đang có tiến trình đăng nhập tài khoản. Bài test tải bị từ chối.');
     if(st.status==='running'){
-      lines.push('压测运行中，正在逐级拉起浏览器…请稍候');
+      lines.push('Đang tiến hành kiểm tra tải, lần lượt khởi chạy các phiên Chromium... Vui lòng đợi trong giây lát.');
       if(st.logs&&st.logs.length)lines.push('---\n'+st.logs.join('\n'));
       const btn=q('#stressStartBtn');if(btn)btn.disabled=true;
     }else{
       if(stressPollTimer){clearInterval(stressPollTimer);stressPollTimer=null;}
       const btn=q('#stressStartBtn');if(btn)btn.disabled=false;
       if(st.status==='completed'){
-        lines.push('✅ 推荐并发：'+st.recommended+' 个浏览器');
+        lines.push('✅ Ngưỡng Concurrency tối ưu khuyến nghị: '+st.recommended+' luồng trình duyệt đồng thời');
         if(st.logs&&st.logs.length)lines.push('---\n'+st.logs.join('\n'));
       }else if(st.status==='failed'){
-        if(st.logs&&st.logs.length)lines.push('压测失败：\n'+st.logs.join('\n'));
+        if(st.logs&&st.logs.length)lines.push('Kiểm tra tải thất bại:\n'+st.logs.join('\n'));
       }else if(showLogs&&st.logs&&st.logs.length){
         lines.push(st.logs.join('\n'));
       }
@@ -1848,17 +1940,453 @@ async function startStress(){
   const n=Math.min(12,Math.max(1,parseInt(q('#stressMax').value||'8',10)));
   try{
     await api('/api/admin/stress',{method:'POST',body:{max_concurrency:n,hold_seconds:5}});
-    q('#stressOut').textContent='压测已开始：1→'+n+' 个浏览器逐级同时拉起…';
+    q('#stressOut').textContent='Bắt đầu kiểm tra tải: Lần lượt khởi chạy từ 1 đến '+n+' luồng trình duyệt đồng thời...';
     stressPollTimer=setInterval(()=>loadStressStatus(false),2500);
   }catch(e){alert(e.message);btn.disabled=false;}
 }
 
+/* ---- STUDIO TẠO VIDEO & CẤU HÌNH AI ---- */
+let selectedImages = [];
+let currentPreflight = null;
+let currentActiveTaskId = null;
+let studioPollTimer = null;
+let activeAiProvider = null;
+let clearKeyFlags = { gemini: false, openai: false };
+
+let studioInitialized=false;
+async function initGenerateTab(){if(studioInitialized)return;studioInitialized=true;await restoreStudioDraft();onModelChange();}
+
+function onModelChange(){
+  const m = q('#gen_model')?.value || 'seedance-2.5';
+  const durSel = q('#gen_duration');
+  if(!durSel) return;
+  const prevVal = durSel.value;
+  if(m === 'seedance-2.0'){
+    durSel.innerHTML = '<option value="15">15 giây</option><option value="10">10 giây</option><option value="5">5 giây</option>';
+    durSel.value = (prevVal === '10' || prevVal === '5' || prevVal === '15') ? prevVal : '15';
+  } else {
+    durSel.innerHTML = '<option value="30">30 giây</option><option value="15">15 giây</option><option value="10">10 giây</option><option value="5">5 giây</option>';
+    durSel.value = (prevVal === '5' || prevVal === '10' || prevVal === '15' || prevVal === '30') ? prevVal : '30';
+  }
+}
+
+let promptVersion=0, rewriteVersion=0, preflightVersion=0;
+let rewriteHistory=[], rewriteVersions=[], draftOriginal='', rewriteBase='', pendingRequestId='', pendingSnapshot='';
+const DRAFT_KEY='dola-studio-draft-v1';
+function studioMessage(text){q('#gen_action_msg').textContent=text;}
+function saveStudioDraft(){
+  try{localStorage.setItem(DRAFT_KEY,JSON.stringify({prompt:q('#gen_prompt').value,original:draftOriginal,
+    instructions:q('#gen_rewrite_instructions').value,history:rewriteHistory.slice(-20),versions:rewriteVersions.slice(-20),
+    suggestion:q('#gen_rewrite_draft').value,before:q('#gen_rewrite_before').value,
+    requestId:pendingRequestId,requestSnapshot:pendingSnapshot,suggestionVisible:q('#gen_rewrite_box').style.display!=='none',
+    model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,taskId:currentActiveTaskId,
+    mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,batchId:currentBatchId}));}
+  catch(e){studioMessage('Không lưu được bản nháp trên trình duyệt; hãy sao chép prompt trước khi đóng trang.');}
+}
+async function imageDraftStore(files){
+  return new Promise((resolve,reject)=>{const request=indexedDB.open('dola-studio-images',1);
+    request.onupgradeneeded=()=>request.result.createObjectStore('draft');request.onerror=()=>reject(request.error);
+    request.onsuccess=()=>{const db=request.result;const tx=db.transaction('draft',files?'readwrite':'readonly');
+      const op=files?tx.objectStore('draft').put(files,'images'):tx.objectStore('draft').get('images');
+      tx.oncomplete=()=>{db.close();resolve(op.result);};tx.onerror=()=>{db.close();reject(tx.error);};};});
+}
+async function restoreStudioDraft(){
+  try{const d=JSON.parse(localStorage.getItem(DRAFT_KEY)||'{}');q('#gen_prompt').value=d.prompt||'';
+    draftOriginal=d.original||'';rewriteHistory=d.history||[];rewriteVersions=d.versions||[];renderRewriteHistory();pendingRequestId=d.requestId||'';pendingSnapshot=d.requestSnapshot||'';q('#gen_rewrite_instructions').value=d.instructions||'';
+    q('#gen_rewrite_draft').value=d.suggestion||'';q('#gen_rewrite_before').value=d.before||'';rewriteBase=d.before||'';
+    if(d.suggestionVisible)show('gen_rewrite_box');if(d.model)q('#gen_model').value=d.model;
+    onModelChange();if(d.duration)q('#gen_duration').value=d.duration;if(d.ratio)q('#gen_ratio').value=d.ratio;
+    q('#gen_mode').value=d.mode||'single';q('#gen_copies').value=d.copies||'1';q('#gen_batch_prompts').value=d.batchPrompts||'';currentBatchId=d.batchId||'';renderBatchInputs();
+    q('#prompt_char_count').textContent=q('#gen_prompt').value.length;
+    const files=await imageDraftStore();if(files&&!selectedImages.length){selectedImages=files;renderImagePreviews();}
+    if(d.taskId)trackStudioJob(d.taskId);
+  }catch(e){studioMessage('Không khôi phục được toàn bộ bản nháp; bạn có thể tiếp tục nhập ý tưởng.');}
+}
+function onPromptInput(){
+  promptVersion++;rewriteVersion++;preflightVersion++;
+  q('#prompt_char_count').textContent=q('#gen_prompt').value.length;
+  studioMessage('');currentPreflight=null;renderPreflightBanner(null);hide('gen_rewrite_box');q('#gen_rewrite_draft').value='';
+  batchPreflight=null;renderBatchInputs();saveStudioDraft();
+}
+function renderRewriteHistory(){q('#gen_original').value=draftOriginal;
+  q('#gen_history').innerHTML='<option value="">Chọn bản đề xuất trước</option>'+rewriteVersions.map((v,i)=>`<option value="${i}">Lần ${i+1}: ${esc((v.instructions||'Chỉnh mô tả').slice(0,70))}</option>`).join('');}
+function chooseRewriteHistory(index){if(index==='')return;const v=rewriteVersions[Number(index)];if(!v)return;
+  rewriteVersion++;q('#gen_rewrite_before').value=v.before;q('#gen_rewrite_draft').value=v.after;show('gen_rewrite_box');saveStudioDraft();}
+function restoreOriginalPrompt(){if(!draftOriginal)return;rewriteHistory.push(q('#gen_prompt').value);q('#gen_prompt').value=draftOriginal;onPromptInput();}
+function undoPrompt(){
+  if(!rewriteHistory.length)return studioMessage('Chưa có thay đổi để hoàn tác.');
+  q('#gen_prompt').value=rewriteHistory.pop();onPromptInput();studioMessage('Đã hoàn tác thay đổi prompt.');
+}
+
+function handleImageSelection(files){
+  if(!files) return;
+  for(let i=0; i<files.length; i++){
+    const f = files[i];
+    const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase();
+    if(!['.jpg', '.jpeg', '.png', '.webp'].includes(ext)){
+      alert(`Tệp ${f.name} không phải định dạng ảnh hợp lệ (chỉ hỗ trợ JPG, PNG, WEBP).`);
+      continue;
+    }
+    if(f.size > 15 * 1024 * 1024){
+      alert(`Ảnh ${f.name} vượt quá dung lượng cho phép 15MB.`);
+      continue;
+    }
+    selectedImages.push(f);
+  }
+  renderImagePreviews();
+  document.body.dataset.imagesSaved='pending';
+  imageDraftStore(selectedImages).then(()=>document.body.dataset.imagesSaved='saved').catch(()=>{document.body.dataset.imagesSaved='failed';studioMessage('Không lưu được ảnh nháp; cần chọn lại ảnh sau khi tải lại trang.');});
+}
+
+function removeImage(idx){
+  selectedImages.splice(idx, 1);
+  renderImagePreviews();
+  document.body.dataset.imagesSaved='pending';
+  imageDraftStore(selectedImages).then(()=>document.body.dataset.imagesSaved='saved').catch(()=>{document.body.dataset.imagesSaved='failed';studioMessage('Không lưu được ảnh nháp; cần chọn lại ảnh sau khi tải lại trang.');});
+}
+
+function renderImagePreviews(){
+  const box = q('#gen_image_previews');
+  if(!box) return;
+  box.innerHTML = '';
+  selectedImages.forEach((f, idx)=>{
+    const item = document.createElement('div');
+    item.className = 'image-preview-item';
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(f);
+    img.onload=()=>URL.revokeObjectURL(img.src);
+    img.alt='Ảnh tham chiếu: '+f.name;
+    img.title = f.name + ' (' + fmtSize(f.size) + ')';
+    const rm = document.createElement('button');
+    rm.className = 'rm-btn';
+    rm.setAttribute('aria-label','Bỏ ảnh '+f.name);
+    rm.innerHTML = '&times;';
+    rm.onclick = (e)=>{ e.stopPropagation(); removeImage(idx); };
+    item.appendChild(img);
+    item.appendChild(rm);
+    box.appendChild(item);
+  });
+}
+
+async function doRewritePrompt(){
+  const original=(q('#gen_rewrite_box').style.display!=='none'?q('#gen_rewrite_draft').value:q('#gen_prompt').value).trim();
+  if(!original)return studioMessage('Nhập ý tưởng trước khi chỉnh prompt.');
+  if(!draftOriginal)draftOriginal=q('#gen_prompt').value;
+  const version=++rewriteVersion, pv=promptVersion, instructions=q('#gen_rewrite_instructions').value;
+  q('#btn_rewrite').disabled=true;studioMessage('AI đang chỉnh prompt theo yêu cầu của bạn…');
+  try{const res=await api('/api/admin/prompts/rewrite',{method:'POST',body:{prompt:original,instructions,
+    model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value}});
+    if(version!==rewriteVersion||pv!==promptVersion||instructions!==q('#gen_rewrite_instructions').value)return;
+    rewriteVersions.push({before:original,after:res.rewritten_prompt,instructions});rewriteVersions=rewriteVersions.slice(-20);renderRewriteHistory();
+    rewriteBase=original;q('#gen_rewrite_before').value=original;q('#gen_rewrite_draft').value=res.rewritten_prompt;
+    show('gen_rewrite_box');saveStudioDraft();studioMessage('Xem bản đề xuất; chỉ áp dụng khi bạn chọn.');
+  }catch(e){if(version===rewriteVersion)studioMessage('Không chỉnh được prompt: '+e.message);}
+  finally{q('#btn_rewrite').disabled=false;}
+}
+function applyRewrittenPrompt(){
+  const value=q('#gen_rewrite_draft').value.trim();if(!value)return;
+  rewriteHistory.push(q('#gen_prompt').value);q('#gen_prompt').value=value;onPromptInput();studioMessage('Đã áp dụng. Bạn có thể hoàn tác hoặc sửa tiếp.');
+}
+function dismissRewrite(){rewriteVersion++;hide('gen_rewrite_box');q('#gen_rewrite_draft').value='';saveStudioDraft();studioMessage('Đã bỏ đề xuất; prompt đang dùng được giữ nguyên.');}
+async function doPreflightCheck(){
+  if(isBatchGeneration())return checkBatchPrompts();
+  const original=q('#gen_prompt').value.trim();if(!original){studioMessage('Nhập ý tưởng trước khi tạo video.');return null;}
+  const version=++preflightVersion,pv=promptVersion;
+  q('#btn_preflight').disabled=true;studioMessage('Đang kiểm tra nội dung…');
+  try{const res=await api('/api/admin/prompts/preflight',{method:'POST',body:{prompt:original}});
+    if(version!==preflightVersion||pv!==promptVersion||original!==q('#gen_prompt').value.trim())return null;
+    currentPreflight={...res,prompt:original};renderPreflightBanner(res);studioMessage('');return currentPreflight;
+  }catch(e){if(version===preflightVersion)studioMessage('Không kiểm tra được nội dung: '+e.message);return null;}
+  finally{q('#btn_preflight').disabled=false;}
+}
+
+function renderPreflightBanner(res){
+  const box = q('#gen_preflight_alert');
+  if(!box) return;
+  if(!res){
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = 'block';
+  if(res.status === 'allow'){
+    box.className = 'alert-box alert-allow';
+    box.innerHTML = '<strong>Đã kiểm tra nội dung:</strong> Không phát hiện vấn đề rõ ràng. Dola vẫn có thể từ chối yêu cầu.';
+  } else if(res.status === 'review'){
+    box.className = 'alert-box alert-review';
+    box.innerHTML = `<strong>Cần bạn xem xét:</strong> ${esc(res.reason || 'Nội dung có yếu tố cần xác nhận')}<br>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer;font-weight:600">
+      <input type="checkbox" id="gen_confirm_review" style="width:auto">
+      <span>Tôi đã xem xét nội dung trên và xác nhận tiếp tục gửi</span>
+    </label>`;
+  } else if(res.status === 'block'){
+    box.className = 'alert-box alert-block';
+    let html = `<strong>Cần chỉnh sửa nội dung:</strong> ${esc(res.reason || 'Nội dung vi phạm chính sách kiểm duyệt')}`;
+    if(res.suggestions){
+      html += `<br><span style="opacity:0.9">💡 <strong>Gợi ý tuân thủ:</strong> ${esc(res.suggestions)}</span>`;
+    }
+    box.innerHTML = html;
+  }
+}
+
+let batchPreflight=null,currentBatchId='';
+function isBatchGeneration(){return q('#gen_mode').value==='list'||Number(q('#gen_copies').value)!==1;}
+function batchPromptList(){return q('#gen_mode').value==='list'?q('#gen_batch_prompts').value.replace(/^\uFEFF/,'').split(/\r?\n/).map(p=>p.trim()).filter(Boolean):[q('#gen_prompt').value.trim()].filter(Boolean);}
+function renderBatchInputs(){
+  const list=q('#gen_mode').value==='list';q('#gen_batch_editor').style.display=list?'block':'none';q('#gen_single_editor').style.display=list?'none':'block';
+  const total=batchPromptList().length*Number(q('#gen_copies').value);
+  q('#gen_batch_summary').textContent=isBatchGeneration()?batchPromptList().length+' prompt × '+q('#gen_copies').value+' bản = '+total+' video. Mỗi video có thể dùng điểm Dola.':'';
+}
+function batchInputsChanged(){batchPreflight=null;preflightVersion++;q('#gen_batch_check').innerHTML='';renderBatchInputs();saveStudioDraft();}
+async function importPromptTxt(input){
+  const file=input.files?.[0];if(!file)return;
+  try{if(!file.name.toLowerCase().endsWith('.txt')||file.size>1024*1024)throw new Error('Chọn file TXT tối đa 1 MB.');
+    const text=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer());q('#gen_batch_prompts').value=text;q('#gen_mode').value='list';batchInputsChanged();
+  }catch(e){studioMessage('Không đọc được TXT: '+e.message);}finally{input.value='';}
+}
+async function checkBatchPrompts(){
+  const prompts=batchPromptList(),copies=Number(q('#gen_copies').value),snapshot=generationSnapshot();
+  if(!prompts.length||!Number.isInteger(copies)||copies<1||copies>10||prompts.length*copies>50){studioMessage('Nhập prompt và chọn 1–10 bản mỗi prompt, tối đa 50 video mỗi mẻ.');return false;}
+  const checked=new Map(),entries=[];q('#gen_batch_check').textContent='Đang kiểm tra danh sách; chưa gửi video…';
+  try{for(let i=0;i<prompts.length;i++){
+    const prompt=prompts[i];let result=checked.get(prompt);
+    if(!result){result=await api('/api/admin/prompts/preflight',{method:'POST',body:{prompt}});checked.set(prompt,result);}
+    if(snapshot!==generationSnapshot())return false;
+    entries.push({prompt,...result});q('#gen_batch_check').textContent='Đã kiểm tra '+(i+1)+'/'+prompts.length+' prompt; chưa gửi video…';
+  }
+  if(snapshot!==generationSnapshot())return false;
+  batchPreflight={snapshot,entries};const blocked=entries.some(e=>e.status==='block'),review=entries.some(e=>e.status==='review');
+  q('#gen_batch_check').innerHTML='<strong>Đã kiểm tra '+entries.length+' prompt</strong><ol>'+entries.map(e=>`<li>${esc(e.prompt.slice(0,100))} — ${esc({allow:'Có thể gửi',review:'Cần xem xét',block:'Cần chỉnh sửa'}[e.status]||'Kiểm tra chưa thành công')}${e.reason?': '+esc(e.reason):''}${e.suggestions?'<br>'+esc(e.suggestions):''}</li>`).join('')+'</ol>'+(blocked?'<p>Mẻ chưa được gửi. Chỉnh các prompt bị chặn rồi kiểm tra lại.</p>':review?'<label><input id="gen_batch_review" type="checkbox"> Tôi đã xem các lý do và xác nhận gửi các prompt cần xem xét.</label>':'');
+  return !blocked&&entries.every(e=>['allow','review'].includes(e.status));
+  }catch(e){if(snapshot===generationSnapshot()){batchPreflight=null;q('#gen_batch_check').textContent='Kiểm tra nội dung lỗi; mẻ chưa được gửi: '+e.message;}return false;}
+}
+async function submitVideoBatch(){
+  const btn=q('#btn_submit_gen');if(btn.disabled)return;btn.disabled=true;
+  const snapshot=generationSnapshot();
+  try{
+    if(!batchPreflight||batchPreflight.snapshot!==snapshot||batchPreflight.entries.some(e=>e.expires_at*1000<Date.now()))if(!await checkBatchPrompts())return;
+    if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại mẻ.');
+    if(!batchPreflight||batchPreflight.entries.some(e=>!['allow','review'].includes(e.status)))return;
+    const review=batchPreflight.entries.some(e=>e.status==='review');if(review&&!q('#gen_batch_review')?.checked)return studioMessage('Xem lý do và xác nhận nội dung trước khi gửi mẻ.');
+    const copies=Number(q('#gen_copies').value),total=batchPreflight.entries.length*copies;
+    if(!confirm('Tạo '+total+' video? Mỗi video có thể dùng thêm điểm Dola. Các video là những kết quả riêng, không tự ghép.'))return;
+    if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
+    const fd=new FormData();fd.append('batch',JSON.stringify({request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
+      prompts:batchPreflight.entries.map(e=>({prompt:e.prompt,preflight_token:e.token,confirm_review:review}))}));for(const image of selectedImages)fd.append('images',image);
+    btn.textContent='Đang gửi mẻ…';const resp=await fetch('/api/admin/videos/batches',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await resp.json();
+    if(!resp.ok){const error=new Error(typeof data.detail==='string'?data.detail:'Không nhận được mẻ');error.status=resp.status;throw error;}
+    currentBatchId=data.batch_id;if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');pendingRequestId='';pendingSnapshot='';saveStudioDraft();switchTab('videos');
+    studioMessage('Đã nhận mẻ gồm '+data.tasks.length+' video. Bạn có thể đóng trang; hàng đợi được lưu ở backend.');
+  }catch(e){
+    if(e.status===409){pendingRequestId='';pendingSnapshot='';saveStudioDraft();studioMessage(e.message+'. Bấm lại và xác nhận nếu bạn muốn tạo một mẻ mới.');}
+    else if([400,401,403,413,422,429,503].includes(e.status)){batchPreflight=null;studioMessage('Mẻ chưa được nhận: '+e.message+'. Bản nháp được giữ để chỉnh sửa hoặc thử lại.');}
+    else studioMessage('Chưa xác định trạng thái mẻ: '+e.message+'. Kiểm tra Video của tôi; thử lại cùng bản nháp dùng cùng mã mẻ.');
+  }
+  finally{btn.disabled=false;btn.textContent='Tạo video';}
+}
+function generationSnapshot(){return JSON.stringify({prompt:q('#gen_prompt').value.trim(),model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,images:selectedImages.map(f=>[f.name,f.size,f.lastModified]),mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value});}
+async function doSubmitGenerate(){
+  if(isBatchGeneration())return submitVideoBatch();
+  const btn=q('#btn_submit_gen');if(btn.disabled)return;
+  const prompt=q('#gen_prompt').value.trim();if(!prompt)return studioMessage('Nhập ý tưởng trước khi tạo video.');
+  btn.disabled=true;const snapshot=generationSnapshot();
+  if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
+  try{
+    if(!currentPreflight||currentPreflight.prompt!==prompt)await doPreflightCheck();
+    if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại trước khi gửi.');
+    if(!currentPreflight)return;
+    if(currentPreflight.status==='block')return studioMessage('Chỉnh nội dung theo gợi ý trước khi tạo.');
+    const reviewed=currentPreflight.status==='review';
+    if(reviewed&&!q('#gen_confirm_review')?.checked)return studioMessage('Xem lý do phía trên, xác nhận rồi bấm Tạo video.');
+    btn.textContent='Đang gửi…';const fd=new FormData();fd.append('prompt',prompt);
+    fd.append('model',q('#gen_model').value);fd.append('duration',q('#gen_duration').value);fd.append('ratio',q('#gen_ratio').value);
+    fd.append('request_id',pendingRequestId);fd.append('preflight_token',currentPreflight.token||'');if(reviewed)fd.append('confirm_review','true');
+    for(const image of selectedImages)fd.append('images',image);
+    const resp=await fetch('/api/admin/videos/generations',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});
+    const data=await resp.json();if(!resp.ok){currentPreflight=null;throw new Error(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu');}
+    pendingRequestId='';pendingSnapshot='';currentBatchId='';trackStudioJob(data.id);studioMessage('Đã gửi. Bạn có thể đóng trang và xem lại trong Video của tôi.');
+  }catch(e){studioMessage('Chưa xác định trạng thái gửi: '+e.message+'. Kiểm tra Video của tôi; gửi lại cùng bản nháp sẽ dùng cùng mã yêu cầu.');}
+  finally{btn.disabled=false;btn.textContent='Tạo video';}
+}
+function trackStudioJob(taskId){
+  currentActiveTaskId=taskId;show('gen_job_card');if(studioPollTimer)clearInterval(studioPollTimer);
+  studioPollTimer=setInterval(()=>pollStudioJob(taskId),3000);saveStudioDraft();pollStudioJob(taskId);
+}
+async function pollStudioJob(taskId){
+  if(!taskId)return;try{const res=await api('/api/admin/tasks/'+encodeURIComponent(taskId));
+    if(taskId!==currentActiveTaskId)return;q('#gen_job_content .poll-error')?.remove();renderStudioJobCard(res);
+    if(['completed','failed','unknown'].includes(res.status)){clearInterval(studioPollTimer);studioPollTimer=null;}
+  }catch(e){if(taskId===currentActiveTaskId){const el=q('#gen_job_content');let notice=el.querySelector('.poll-error');if(!notice){notice=document.createElement('p');notice.className='poll-error';notice.setAttribute('role','status');el.prepend(notice);}notice.textContent='Mất kết nối với Studio. Đang thử lấy trạng thái; không gửi video mới.';}}
+}
+const phaseLabels={waiting:'Chờ tài khoản',sending:'Đang gửi yêu cầu',generating:'Dola đang tạo video',downloading:'Đang tải video',done:'Hoàn tất',uncertain:'Chưa rõ kết quả'};
+function taskLabel(t){return t.status==='unknown'?'Chưa rõ kết quả':t.status==='failed'?'Không tạo được video':phaseLabels[t.phase]||({queued:'Chờ tài khoản',processing:'Dola đang tạo video',completed:'Hoàn tất'}[t.status]||t.status);}
+function localVideoUrl(url){try{const path=new URL(url,location.href).pathname;return path.startsWith('/videos/')?path:url;}catch(e){return url;}}
+function jobProgressMarkup(t){
+  let updates=[];try{updates=JSON.parse(t.upstream_updates||'[]');}catch(e){}
+  const latest=updates.at(-1)||{};
+  const steps=['waiting','sending','generating','downloading','done'];
+  const phase=t.status==='completed'?'done':t.phase||'waiting';
+  const index=steps.indexOf(phase),active=['queued','processing'].includes(t.status);
+  const elapsed=Math.max(0,Math.floor(Date.now()/1000-(t.submission_started_at||t.created_at||Date.now()/1000)));
+  const elapsedLabel=Math.floor(elapsed/60)+' phút '+elapsed%60+' giây';
+  const checked=t.last_poll_at?new Date(t.last_poll_at*1000).toLocaleTimeString('vi-VN'):'Chưa có';
+  let html=`<div class="job-progress" aria-label="Tiến độ tạo video"><ol class="job-steps">${steps.map((step,i)=>`<li class="${i<=index?'reached':''} ${i===index?'current':''}" ${i===index?'aria-current="step"':''}>${esc(phaseLabels[step])}</li>`).join('')}</ol>`;
+  if(active||t.status==='completed')html+=`<progress max="100" ${t.status==='completed'?'value="100"':''} aria-label="${esc(taskLabel(t))}"></progress>`;
+  html+=`<p class="tiny">${active?'Đã chờ '+elapsedLabel+' · ':''}Kiểm tra gần nhất: ${esc(checked)}. ${active?'Studio cập nhật mỗi 3 giây; thông tin Dola được lấy qua polling định kỳ.':''}</p>`;
+  if(active)html+='<p class="tiny">Dola chưa cung cấp phần trăm dựng video. Thanh chờ thể hiện tác vụ đang được theo dõi.</p>';
+  if(latest.connection==='interrupted')html+='<p role="status">Tạm mất kết nối với Dola. Đang kiểm tra lại conversation cũ; thông tin bên dưới là cập nhật đã nhận trước đó.</p>';
+  if(latest.texts?.length)html+=`<strong>Thông báo từ Dola · ${esc(new Date(latest.at*1000).toLocaleTimeString('vi-VN'))}</strong><div class="dola-message">${esc(latest.texts.join('\n'))}</div><p class="tiny">Nội dung gốc từ Dola; có thể khác ngôn ngữ giao diện.</p>`;
+  else if(active)html+='<p class="tiny">Chưa nhận được thông báo từ Dola.</p>';
+  if(latest.wait_minutes)html+=`<p>Thời gian chờ Dola dự kiến: ${esc(latest.wait_minutes)} (có thể thay đổi).</p>`;
+  if(latest.failure_reasons?.length)html+=`<p class="dola-message">Dola báo: ${esc(latest.failure_reasons.join('\n'))}</p>`;
+  if(latest.creation_statuses?.length)html+=`<p class="tiny">Trạng thái Dola: ${esc(latest.creation_statuses.join(' · '))}</p>`;
+  if(updates.length)html+=`<details class="dola-history"><summary>Lịch sử cập nhật Dola (${updates.length})</summary>${updates.slice().reverse().map(u=>`<div class="dola-message"><strong>${esc(new Date(u.at*1000).toLocaleTimeString('vi-VN'))} · ${esc(u.connection==='interrupted'?'Kết nối gián đoạn':u.status||'Đã nhận phản hồi')}</strong>\n${esc((u.texts||[]).join('\n'))}</div>`).join('')}</details>`;
+  return html+'</div>';
+}
+function renderJobInto(el,t){
+  const fingerprint=JSON.stringify([t.id,t.status,t.phase,t.video_url,t.file_exists,t.error,t.continuation_task_id,t.video_duration]);
+  const progress=el.querySelector('.job-progress');
+  const open=!!el.querySelector('.dola-history[open]');
+  if(el.dataset.jobFingerprint===fingerprint&&progress)progress.outerHTML=jobProgressMarkup(t);
+  else{el.innerHTML=taskMarkup(t);el.dataset.jobFingerprint=fingerprint;}
+  if(open&&el.querySelector('.dola-history'))el.querySelector('.dola-history').open=true;
+}
+function taskMarkup(t){
+  t={...t,video_url:localVideoUrl(t.video_url)};
+  const target=t.target_duration||t.duration;
+  let html=`<div class="job-heading"><strong>${esc(taskLabel(t))}</strong><span class="tiny">${esc(t.model||'')} · Mong muốn ${esc(target||'')} giây</span></div>`;
+  if(t.batch_id)html+=`<p class="tiny">Mẻ ${esc(t.batch_id.slice(-8))} · Video ${esc(t.batch_index)}</p>`;
+  html+=jobProgressMarkup(t);
+  if(t.video_url&&t.file_exists!==false){html+=`<video controls preload="metadata" src="${esc(t.video_url)}" class="studio-video"></video><p class="tiny">Thời lượng thực: ${Number(t.video_duration||0).toFixed(1)} giây${t.video_width?' · '+t.video_width+'×'+t.video_height:''}. Video Dola trả về; không cam kết 1080p native.</p><a class="btn btn-p" href="${esc(t.video_url)}" download>Tải video</a>`;
+    if(t.video_duration&&t.video_duration<target*0.9)html+=`<p>Dola trả video ngắn hơn yêu cầu. Bạn có thể dùng bản này hoặc tạo thêm đoạn rồi ghép.</p><button class="btn" onclick="continueVideo('${esc(t.id)}')">${t.continuation_task_id?'Xem đoạn tiếp':'Tạo tiếp và ghép'}</button>`;
+  }
+  if(t.video_url&&t.file_exists===false)html+='<p>File video không còn trên máy. Thông tin prompt vẫn được giữ.</p>';
+  if(t.status==='unknown')html+='<p>Chưa lấy được kết quả — có thể Dola vẫn đang tạo. Tool không tự gửi lại yêu cầu.</p>';
+  if(['unknown','failed'].includes(t.status)&&t.can_check_result)html+=`<button class="btn btn-p" onclick="checkVideoResult('${esc(t.id)}')">Kiểm tra lại kết quả</button>`;
+  if(t.status==='failed')html+='<p>Không tạo được video. Xem chi tiết để điều chỉnh hoặc kiểm tra tài khoản.</p>';
+  if(t.error)html+=`<details><summary>Chi tiết kỹ thuật</summary><pre class="technical-error">${esc(t.error)}</pre></details>`;
+  html+=`<div class="job-actions"><button class="btn" onclick="useTaskPrompt('${esc(t.id)}')">Dùng lại prompt</button><button class="btn" onclick="switchTab('generate');trackStudioJob('${esc(t.id)}')">Theo dõi</button></div>`;
+  return html;
+}
+function renderStudioJobCard(t){renderJobInto(q('#gen_job_content'),t);}
+async function checkVideoResult(id){try{await api('/api/admin/tasks/'+encodeURIComponent(id)+'/check-result',{method:'POST'});switchTab('generate');trackStudioJob(id);}catch(e){studioMessage(e.message);}}
+async function continueVideo(id){
+  const parent=await api('/api/admin/tasks/'+encodeURIComponent(id));
+  if(parent.continuation_task_id){switchTab('generate');trackStudioJob(parent.continuation_task_id);return;}
+  if(!confirm('Tạo thêm đoạn có thể dùng thêm điểm Dola. Các cảnh có thể không liền mạch. Bạn muốn tiếp tục?'))return;
+  try{const result=await api('/api/admin/tasks/'+encodeURIComponent(id)+'/continue',{method:'POST',body:{confirm_cost:true}});switchTab('generate');trackStudioJob(result.id);}
+  catch(e){if(e.message.includes('review')&&confirm('Nội dung cần xem xét. Bạn xác nhận tiếp tục tạo đoạn bổ sung?')){const result=await api('/api/admin/tasks/'+encodeURIComponent(id)+'/continue',{method:'POST',body:{confirm_cost:true,confirm_review:true}});switchTab('generate');trackStudioJob(result.id);}else alert(e.message);}
+}
+async function useTaskPrompt(id){const t=await api('/api/admin/tasks/'+encodeURIComponent(id));q('#gen_mode').value='single';q('#gen_copies').value='1';batchInputsChanged();rewriteHistory.push(q('#gen_prompt').value);q('#gen_prompt').value=t.prompt||'';if(t.model)q('#gen_model').value=t.model;onModelChange();if(t.duration)q('#gen_duration').value=t.duration;if(t.ratio&&t.ratio!=='default')q('#gen_ratio').value=t.ratio;onPromptInput();switchTab('generate');}
+let videosLoading=false;
+async function loadMyVideos(){
+  if(videosLoading)return;videosLoading=true;
+  try{const batchId=currentBatchId;
+    const r=await api(batchId?'/api/admin/videos/batches/'+encodeURIComponent(batchId):'/api/admin/tasks?limit=100');if(curTab!=='videos'||batchId!==currentBatchId)return;
+    q('#myBatchClear').style.display=batchId?'inline-block':'none';if(!batchId)q('#myBatchSummary').textContent='';
+    const container=q('#myVideoJobs'),tasks=r.tasks||[],ids=new Set(tasks.map(t=>t.id));
+    if(container.firstElementChild?.tagName==='P')container.innerHTML='';
+    const members=currentBatchId?tasks.filter(t=>t.batch_id===currentBatchId):[];
+    if(currentBatchId)q('#myBatchSummary').textContent='Mẻ đang theo dõi: '+members.length+' video · '+members.filter(t=>t.status==='completed').length+' hoàn tất · '+members.filter(t=>['queued','processing'].includes(t.status)).length+' đang chờ/tạo · '+members.filter(t=>t.status==='unknown').length+' chưa rõ kết quả · '+members.filter(t=>t.status==='failed').length+' thất bại';
+    for(const el of container.querySelectorAll('[data-task-id]'))if(!ids.has(el.dataset.taskId))el.remove();
+    if(!tasks.length){container.innerHTML='<p>Chưa có video. Bắt đầu với ý tưởng đầu tiên của bạn.</p>';return;}
+    for(const t of tasks){let el=Array.from(container.children).find(el=>el.dataset.taskId===t.id);
+      if(!el){el=document.createElement('article');el.className='video-job';el.dataset.taskId=t.id;container.append(el);}
+      renderJobInto(el,{...t,can_check_result:!!(t.conversation_id&&t.account)});
+    }
+  }finally{videosLoading=false;}
+}
+
+/* ---- CẤU HÌNH AI PROVIDER ---- */
+async function loadAiSettings(clearMsg = true){
+  clearKeyFlags = { gemini: false, openai: false };
+  if(clearMsg && q('#ai_save_msg')) q('#ai_save_msg').textContent = '';
+  try {
+    const st = await api('/api/admin/ai-settings');
+    activeAiProvider = st.active_provider;
+    updateAiProviderButtons();
+
+    q('#ai_gemini_model').value = st.gemini.model || 'gemini-2.5-flash';
+    q('#ai_gemini_key').value = '';
+    q('#ai_gemini_key').placeholder = st.gemini.has_api_key ? 'Đã lưu (Bỏ trống để giữ nguyên)' : 'Nhập Gemini API Key';
+    q('#ai_gemini_key_status').textContent = st.gemini.has_api_key ? '✓ Đã cấu hình API Key' : 'Chưa có API Key';
+    q('#ai_gemini_clear_row').style.display = st.gemini.has_api_key ? 'block' : 'none';
+
+    q('#ai_openai_base').value = st.openai.base_url || 'https://api.openai.com/v1';
+    q('#ai_openai_model').value = st.openai.model || 'gpt-4o-mini';
+    q('#ai_openai_key').value = '';
+    q('#ai_openai_key').placeholder = st.openai.has_api_key ? 'Đã lưu (Bỏ trống để giữ nguyên)' : 'Nhập OpenAI API Key';
+    q('#ai_openai_key_status').textContent = st.openai.has_api_key ? '✓ Đã cấu hình API Key' : 'Chưa có API Key';
+    q('#ai_openai_clear_row').style.display = st.openai.has_api_key ? 'block' : 'none';
+  } catch(e){
+    q('#ai_save_msg').innerHTML = `<span style="color:#ff9a9a">Lỗi tải cấu hình AI: ${esc(e.message)}</span>`;
+  }
+}
+
+function selectAiProvider(prov){
+  activeAiProvider = prov;
+  updateAiProviderButtons();
+}
+
+function updateAiProviderButtons(){
+  q('#btn_ai_gemini')?.classList.toggle('btn-p', activeAiProvider === 'gemini');
+  q('#btn_ai_openai')?.classList.toggle('btn-p', activeAiProvider === 'openai');
+  q('#btn_ai_none')?.classList.toggle('btn-p', activeAiProvider === null);
+}
+
+function clearAiKey(prov){
+  if(!confirm(`Bạn có chắc chắn muốn xóa API Key đã lưu cho ${prov.toUpperCase()}?`)) return;
+  clearKeyFlags[prov] = true;
+  if(prov === 'gemini'){
+    q('#ai_gemini_key').value = '';
+    q('#ai_gemini_key').placeholder = 'Sẽ xóa key sau khi bấm Lưu';
+    q('#ai_gemini_key_status').textContent = 'Đã chọn xóa key (Hãy bấm Lưu cấu hình)';
+  } else if(prov === 'openai'){
+    q('#ai_openai_key').value = '';
+    q('#ai_openai_key').placeholder = 'Sẽ xóa key sau khi bấm Lưu';
+    q('#ai_openai_key_status').textContent = 'Đã chọn xóa key (Hãy bấm Lưu cấu hình)';
+  }
+}
+
+async function saveAiSettings(){
+  const msg = q('#ai_save_msg');
+  msg.textContent = 'Đang lưu cấu hình...';
+  msg.style.color = 'var(--sub)';
+
+  const payload = {
+    active_provider: activeAiProvider,
+    gemini: {
+      model: q('#ai_gemini_model')?.value?.trim() || 'gemini-2.5-flash',
+      api_key: q('#ai_gemini_key')?.value?.trim() || '',
+      clear_api_key: clearKeyFlags.gemini,
+    },
+    openai: {
+      base_url: q('#ai_openai_base')?.value?.trim() || 'https://api.openai.com/v1',
+      model: q('#ai_openai_model')?.value?.trim() || 'gpt-4o-mini',
+      api_key: q('#ai_openai_key')?.value?.trim() || '',
+      clear_api_key: clearKeyFlags.openai,
+    }
+  };
+
+  try {
+    await api('/api/admin/ai-settings', {
+      method: 'PUT',
+      body: payload
+    });
+    await loadAiSettings(false);
+    msg.innerHTML = '<span style="color:#5cf0bb">✅ Đã lưu cấu hình AI an toàn!</span>';
+  } catch(e){
+    msg.innerHTML = `<span style="color:#ff9a9a">❌ Lỗi lưu cấu hình: ${esc(e.message)}</span>`;
+  }
+}
+
 /* 启动：探测鉴权，401 才弹登录遮罩（ADMIN_KEY 留空时免登录） */
 (async function boot(){
-  try{ await api('/api/admin/accounts'); hide('loginMask'); refresh(); }
+  try{ await api('/api/admin/accounts'); hide('loginMask'); switchTab('generate'); }
   catch(e){ /* 401 已在 api() 内触发 showLogin */ }
 })();
 timer=setInterval(()=>{if(autoRefresh)refresh();},10000);
+setInterval(()=>{if(autoRefresh&&curTab==='videos'&&q('#loginMask').style.display==='none')loadMyVideos().catch(()=>{});},3000);
 </script>
 </body>
 </html>

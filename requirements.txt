@@ -10,3 +10,4 @@ python-dotenv
 pillow
 pycryptodome
 cryptography
+httpx

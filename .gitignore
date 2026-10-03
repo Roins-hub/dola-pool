@@ -49,3 +49,4 @@ dola.env
 # cred_store.py 的加密密钥（用来解密 accounts/<号>/ 里的 cookie）；泄漏 = 号全丢
 /cred.key
 *.key
+*.enc

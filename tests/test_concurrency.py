@@ -160,7 +160,7 @@ def test_progress_payload_survives_unlimited_workers(tmp_path, monkeypatch):
             status="queued", created_at=time.time(), duration=10)
         assert payload["workers"] == 0          # 0 = 不限
         assert payload["eta_seconds"] > 0
-        assert payload["message"].startswith("排队中，预计")
+        assert payload["message"].startswith("Chờ tài khoản")
 
     _run(scenario())
 
@@ -216,7 +216,7 @@ def test_limited_concurrency_keeps_waiting_tasks_queued(tmp_path, monkeypatch):
             await asyncio.sleep(0.05)
             if all(v != "queued" for v in _statuses(server, ids).values()):
                 break
-        assert set(_statuses(server, ids).values()) == {"failed"}, _statuses(server, ids)
+        assert set(_statuses(server, ids).values()) == {"unknown"}, _statuses(server, ids)
         assert len(calls) == 3, calls
 
     _run(scenario())

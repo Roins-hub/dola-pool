@@ -52,6 +52,8 @@ class TaskStore:
                     deadline_at REAL,
                     last_poll_at REAL,
                     failure_code TEXT,
+                    failure_group TEXT,
+                    upstream_request_id TEXT,
                     reference_images TEXT,
                     api_key_hash TEXT,
                     api_key_name TEXT,
@@ -62,12 +64,15 @@ class TaskStore:
                 """
             )
             # 旧库兼容：逐列补齐任务恢复、客户用量和耗时统计字段。
+            self._conn.execute("CREATE TABLE IF NOT EXISTS video_batches (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, created_at REAL)")
             for column, definition in (
                 ("account", "TEXT"),
                 ("conversation_id", "TEXT"),
                 ("deadline_at", "REAL"),
                 ("last_poll_at", "REAL"),
                 ("failure_code", "TEXT"),
+                ("failure_group", "TEXT"),
+                ("upstream_request_id", "TEXT"),
                 ("reference_images", "TEXT"),
                 ("reference_thumbs", "TEXT"),
                 ("api_key_hash", "TEXT"),
@@ -82,6 +87,15 @@ class TaskStore:
                 ("video_bitrate", "INTEGER"),
                 ("attempt", "INTEGER DEFAULT 0"),
                 ("attempted_accounts", "TEXT"),
+                ("phase", "TEXT"),
+                ("submission_started_at", "REAL"),
+                ("continuation_task_id", "TEXT"),
+                ("parent_task_id", "TEXT"),
+                ("accounting_done", "INTEGER DEFAULT 0"),
+                ("upstream_updates", "TEXT"),
+                ("batch_id", "TEXT"),
+                ("batch_index", "INTEGER"),
+                ("batch_fingerprint", "TEXT"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -259,9 +273,66 @@ class TaskStore:
             self._conn.execute(f"UPDATE tasks SET {cols} WHERE id=?", vals)
             self._conn.commit()
 
+    def batch_tasks(self, batch_id):
+        with _LOCK:
+            return [dict(r) for r in self._conn.execute("SELECT * FROM tasks WHERE batch_id=? ORDER BY batch_index", (batch_id,)).fetchall()]
+
+    def batch_fingerprint(self, batch_id):
+        with _LOCK:
+            row = self._conn.execute("SELECT fingerprint FROM video_batches WHERE id=?", (batch_id,)).fetchone()
+            return row[0] if row else None
+
+    def create_batch(self, batch_id, fingerprint, jobs, max_pending=0):
+        """Persist the entire batch before any worker can submit to Dola."""
+        with _LOCK:
+            existing = self._conn.execute("SELECT * FROM tasks WHERE batch_id=? ORDER BY batch_index", (batch_id,)).fetchall()
+            receipt = self._conn.execute("SELECT fingerprint FROM video_batches WHERE id=?", (batch_id,)).fetchone()
+            if receipt:
+                if receipt[0] != fingerprint:
+                    raise ValueError("Mã mẻ đã được dùng cho nội dung khác")
+                # A deleted video remains deleted; never regenerate missing batch rows on retry.
+                return [dict(row) for row in existing], False
+            pending = self._conn.execute("SELECT COUNT(*) FROM tasks WHERE status IN ('queued','processing')").fetchone()[0]
+            if max_pending > 0 and pending + len(jobs) > max_pending:
+                raise PendingTaskLimitExceeded(f"Hàng đợi chỉ còn {max(0,max_pending-pending)} chỗ; mẻ có {len(jobs)} video")
+            now = time.time()
+            rows = [{**job, "batch_id": batch_id, "batch_index": i+1,
+                     "batch_fingerprint": fingerprint, "status": "queued", "phase": "waiting",
+                     "created_at": now, "updated_at": now} for i,job in enumerate(jobs)]
+            columns = list(rows[0])
+            with self._conn:
+                self._conn.execute("INSERT INTO video_batches VALUES (?,?,?)", (batch_id,fingerprint,now))
+                self._conn.executemany("INSERT INTO tasks ("+",".join(columns)+") VALUES ("+",".join("?" for _ in columns)+")",
+                                       [[row[c] for c in columns] for row in rows])
+            return rows, True
+
+    def record_poll(self, task_id, now, update=None):
+        with _LOCK:
+            row = self._conn.execute("SELECT upstream_updates FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if not row:
+                return
+            history = json.loads(row[0] or "[]")
+            fields = {"last_poll_at": now}
+            if isinstance(update, str):
+                fields["phase"] = update
+            elif isinstance(update, dict):
+                previous = {k:v for k,v in (history[-1] if history else {}).items() if k != "at"}
+                current = {**previous, **update}
+                if current != previous:
+                    history.append({**current, "at": now})
+                    fields["upstream_updates"] = json.dumps(history[-20:], ensure_ascii=False)
+            fields["updated_at"] = time.time()
+            self._conn.execute("UPDATE tasks SET "+", ".join(f"{k}=?" for k in fields)+" WHERE id=?", [*fields.values(),task_id])
+            self._conn.commit()
+
     def get(self, task_id):
         with _LOCK:
             row = self._conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+    def continuation_parent(self, task_id):
+        with _LOCK:
+            row = self._conn.execute("SELECT * FROM tasks WHERE continuation_task_id=? LIMIT 1", (task_id,)).fetchone()
         return dict(row) if row else None
 
     def delete_task(self, task_id: str) -> bool:
@@ -355,7 +426,7 @@ class TaskStore:
         with _LOCK:
             rows = self._conn.execute(
                 "SELECT * FROM tasks WHERE status IN ('queued','processing') "
-                "AND (conversation_id IS NULL OR account IS NULL OR account='') "
+                "AND conversation_id IS NULL AND COALESCE(phase,'') != 'sending' AND submission_started_at IS NULL "
                 "ORDER BY created_at"
             ).fetchall()
         return [dict(r) for r in rows]
@@ -479,28 +550,30 @@ class TaskStore:
         return claimed
 
     def recover_runtime_jobs(self) -> list:
-        """崩溃重启恢复：把 processing 任务回退为 queued。
-
-        已拿到 conversation_id 的保留 account + conversation_id（后续只轮询不重发）；
-        未拿到的清空 account，等待重新派号。
-        """
-        recovered: list[str] = []
+        """Never re-submit an interrupted or historically accepted conversation."""
+        recovered = []
         with _LOCK:
-            rows = self._conn.execute(
-                "SELECT id, conversation_id FROM tasks WHERE status='processing'"
-            ).fetchall()
+            rows = self._conn.execute("SELECT * FROM tasks WHERE status='processing'").fetchall()
             for row in rows:
-                if row["conversation_id"]:
-                    self._conn.execute(
-                        "UPDATE tasks SET status='queued', updated_at=? WHERE id=?",
-                        (time.time(), row["id"]),
-                    )
+                if row["conversation_id"] and row["account"]:
+                    status, phase = "queued", "generating"
+                elif row["conversation_id"] or row["submission_started_at"] or row["account"]:
+                    status, phase = "unknown", "uncertain"
                 else:
-                    self._conn.execute(
-                        "UPDATE tasks SET status='queued', account=NULL, updated_at=? WHERE id=?",
-                        (time.time(), row["id"]),
-                    )
+                    status, phase = "queued", "waiting"
+                self._conn.execute("UPDATE tasks SET status=?,phase=?,updated_at=? WHERE id=?",
+                                   (status, phase, time.time(), row["id"]))
                 recovered.append(row["id"])
+            # Legacy interrupted rows lost account; recover it only from one unambiguous attempt.
+            for row in self._conn.execute("SELECT * FROM tasks WHERE status='queued' AND conversation_id IS NOT NULL AND (account IS NULL OR account='')").fetchall():
+                try:
+                    accounts = json.loads(row["attempted_accounts"] or "[]")
+                except (ValueError, TypeError):
+                    accounts = []
+                if len(set(accounts)) == 1:
+                    self._conn.execute("UPDATE tasks SET account=? WHERE id=?", (accounts[-1], row["id"]))
+                else:
+                    self._conn.execute("UPDATE tasks SET status='unknown',phase='uncertain' WHERE id=?", (row["id"],))
             self._conn.commit()
         return recovered
 

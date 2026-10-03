@@ -16,7 +16,8 @@ def _load_local_env():
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-_load_local_env()
+if os.getenv("DOLA_SKIP_LOCAL_ENV") != "1":
+    _load_local_env()
 # 监听地址由 uvicorn 命令行给（--host/--port）；这里的 PORT 只用于 PUBLIC_BASE 的默认值。
 PORT = int(os.getenv("DOLA_PORT", "8000"))
 
@@ -32,9 +33,9 @@ MAX_CONCURRENCY = int(os.getenv("DOLA_MAX_CONCURRENCY", "0"))
 MAX_PENDING_TASKS = int(os.getenv("DOLA_MAX_PENDING_TASKS", "100"))
 
 # 视频生成超时（秒）
-VIDEO_TIMEOUT = int(os.getenv("DOLA_VIDEO_TIMEOUT", "300"))
+VIDEO_TIMEOUT = int(os.getenv("DOLA_VIDEO_TIMEOUT", "1800"))
 # 单个任务的总时限（秒）：在此时间内持续换号调度，超时即判定生成失败。
-TASK_DEADLINE = int(os.getenv("DOLA_TASK_DEADLINE", "600"))
+TASK_DEADLINE = int(os.getenv("DOLA_TASK_DEADLINE", "1800"))
 # 单个任务最多尝试的账号次数；0 表示不限次数，只受 TASK_DEADLINE 约束。
 VIDEO_MAX_ATTEMPTS = int(os.getenv("DOLA_VIDEO_MAX_ATTEMPTS", "0"))
 
@@ -242,5 +243,13 @@ PURE_API_PC_VERSION = os.getenv("DOLA_PURE_PC_VERSION", "3.33.11")
 # 是否走无水印（第三方 nowatermark 解析）。
 PURE_API_REMOVE_WATERMARK = os.getenv("DOLA_PURE_REMOVE_WATERMARK", "1") == "1"
 # 纯 API 出片轮询/下载目录（复用 DOWNLOAD_DIR）。
-PURE_API_TIMEOUT = int(os.getenv("DOLA_PURE_TIMEOUT", "900"))
-PURE_API_POLL_INTERVAL = int(os.getenv("DOLA_PURE_POLL_INTERVAL", "30"))
+PURE_API_TIMEOUT = int(os.getenv("DOLA_PURE_TIMEOUT", "1800"))
+PURE_API_POLL_INTERVAL = int(os.getenv("DOLA_PURE_POLL_INTERVAL", "10"))
+
+# Studio: persisted observation window, independent of legacy per-request timeouts.
+OBSERVATION_SECONDS = int(os.getenv("DOLA_OBSERVATION_SECONDS", "1800"))
+
+# Preserve the existing relay route explicitly. Proxy mode uses selected account proxies.
+TRANSPORT_MODE = os.getenv("DOLA_TRANSPORT_MODE", "relay")
+if TRANSPORT_MODE not in ("relay", "proxy"):
+    raise ValueError("DOLA_TRANSPORT_MODE phải là relay hoặc proxy")

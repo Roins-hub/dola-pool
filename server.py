@@ -1,3 +1,4 @@
+from urllib.parse import urlparse
 """dola-pool OpenAI 兼容视频服务（FastAPI）+ 管理面板后端。
 
 对外协议（异步两段式）：
@@ -7,10 +8,12 @@
 
 管理面板：GET / -> web/index.html；管理接口 /api/admin/*。
 """
+
 import asyncio
 import aiohttp
 import base64
 import hashlib
+import io
 import json
 import os
 import re
@@ -19,6 +22,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from pure_api_gen import ConfirmedVideoFailure
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -30,10 +34,30 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import config
+if config.TRANSPORT_MODE == "relay":
+    import cf_hook
 import cred_store
 import failure_text
 import proxy_store
 from add_account import add_account_flow
+from add_fb_account import add_fb_account_flow
+from ai_settings import (
+    get_public_settings,
+    update_settings,
+    AiSettingsError,
+    AiSettingsDecryptError,
+)
+from ai_provider import (
+    rewrite_prompt_text,
+    preflight_check_prompt,
+    AiProviderError,
+    AiProviderNotConfiguredError,
+    AiProviderCallError,
+)
+from ai_preflight import (
+    record_preflight_result,
+    validate_preflight_gate,
+)
 from cookie_login import import_cookie_account, import_cookie_accounts_from_text
 from credential_import import allocate_credentials, parse_account_text
 from browser_pool import (
@@ -48,7 +72,9 @@ from browser_pool import (
     GROUP_RISK,
     AllAccountsLimitedError,
     AllAccountsQuotaBlockedError,
+    ContentRefusalError,
     BrowserPool,
+    classify_upstream_failure,
 )
 from media import (
     cleanup_local_references,
@@ -304,15 +330,15 @@ def _auth(authorization):
 
 def _admin_auth(x_admin_key: str | None):
     if not x_admin_key:
-        raise HTTPException(401, "请先登录")
+        raise HTTPException(401, "Please login first")
     session = ADMIN_SESSIONS.get(x_admin_key)
     if not session or session.get("expires_at", 0) < time.time():
         ADMIN_SESSIONS.pop(x_admin_key, None)
-        raise HTTPException(401, "登录已过期，请重新登录")
+        raise HTTPException(401, "Session expired, please login again")
     user = user_get(session.get("username", ""))
     if not user or not user.get("enabled"):
         ADMIN_SESSIONS.pop(x_admin_key, None)
-        raise HTTPException(401, "账号不可用，请重新登录")
+        raise HTTPException(401, "Account unavailable, please login again")
 
 
 def _normalize_allowed_durations(values) -> list[int]:
@@ -321,7 +347,7 @@ def _normalize_allowed_durations(values) -> list[int]:
     try:
         normalized = sorted({int(value) for value in values})
     except (TypeError, ValueError):
-        raise HTTPException(422, f"allowed_durations 必须是 {list(SUPPORTED_DURATIONS)} 的数组")
+        raise HTTPException(422, f"allowed_durations must be an array of {list(SUPPORTED_DURATIONS)}")
     if not normalized or any(value not in SUPPORTED_DURATIONS for value in normalized):
         raise HTTPException(
             422, f"allowed_durations 只能包含 {list(SUPPORTED_DURATIONS)}，且至少选择一个"
@@ -379,45 +405,15 @@ def _eta_text(seconds: int) -> str:
 
 
 def _progress_payload(*, status: str, created_at: float | None, duration: int | None) -> dict:
-    """把排队情况翻译成客户端能直接显示的一句话 + 结构化字段。"""
     info = store.queue_progress(created_at=created_at, duration=duration)
-    ahead = info["ahead"]
-    running = info["running"]
-    typical = max(30, int(info["typical_seconds"]))
-    workers = int(config.MAX_CONCURRENCY or 0)   # 0 = 不限并发
-    if status == "queued":
-        # 有并发槽时按槽位折算等待；不限并发时任务之间不互相排队
-        batches = (ahead // workers) + 1 if workers > 0 else 1
-        eta = batches * typical
-        message = f"排队中，预计{_eta_text(eta)}"
-        if ahead:
-            message += f"（前面还有 {ahead} 个任务）"
-        else:
-            message += "（等待账号空闲）"
-        state = "queued"
-    elif status == "processing":
-        eta = typical
-        message = f"生成中，预计{_eta_text(eta)}"
-        state = "running"
-    elif status == "completed":
-        eta = 0
-        message = "已完成"
-        state = "done"
-    else:
-        eta = 0
-        message = "生成失败"
-        state = "failed"
-    return {
-        "state": state,
-        "position": ahead + 1 if state == "queued" else None,
-        "ahead": ahead,
-        "running": running,
-        "workers": workers,
-        "typical_seconds": typical,
-        "eta_seconds": int(eta),
-        "eta_text": _eta_text(int(eta)) if eta else "",
-        "message": message,
-    }
+    labels = {"queued": "Chờ tài khoản", "processing": "Dola đang tạo video",
+              "completed": "Hoàn tất", "unknown": "Chưa lấy được kết quả — có thể Dola vẫn đang tạo",
+              "failed": "Không tạo được video"}
+    return {**info, "workers": int(config.MAX_CONCURRENCY or 0),
+            "eta_seconds": info["typical_seconds"] if status == "queued" else None,
+            "state": {"processing":"running", "completed":"done"}.get(status,status), "position": info["ahead"] + 1 if status == "queued" else None,
+            "percent": 100 if status == "completed" else None,
+            "message": labels.get(status, status)}
 
 
 def _resolve_ratio(size, ratio):
@@ -602,7 +598,61 @@ def _map_ark_ratio(ratio) -> str | None:
     return value if value in {"16:9", "9:16", "1:1", "4:3", "3:4"} else None
 
 
+ACTIVE_STUDIO_JOBS: set[str] = set()
+
+
+def _uncertain_task(task_id, error="Chưa lấy được kết quả — có thể Dola vẫn đang tạo"):
+    store.update(task_id, status="unknown", phase="uncertain", error=error, finished_at=None)
+
+
+def _task_file_exists(row):
+    return bool(row.get("video_url") and (Path(config.DOWNLOAD_DIR) / Path(urlparse(row["video_url"]).path).name).is_file())
+
+
+def _target_duration(row):
+    seen = set()
+    target = row.get("duration") or 30
+    while row.get("parent_task_id") and row["parent_task_id"] not in seen:
+        seen.add(row["parent_task_id"])
+        row = store.get(row["parent_task_id"]) or {}
+        target = row.get("duration") or target
+    return target
+
+
+async def _save_video_result(task_id, result):
+    row = store.get(task_id) or {}
+    path = Path(result["local_path"])
+    # Reservation is persisted before child creation; repair a crash between create/link.
+    if not row.get("parent_task_id"):
+        parent = store.continuation_parent(task_id)
+        if parent:
+            row["parent_task_id"] = parent["id"]
+            store.update(task_id, parent_task_id=parent["id"])
+    if row.get("parent_task_id"):
+        parent = store.get(row["parent_task_id"])
+        first = Path(config.DOWNLOAD_DIR) / Path(urlparse(parent["video_url"]).path).name
+        if not first.is_file():
+            raise RuntimeError("Video đầu đã mất; giữ đoạn mới, chưa thể ghép")
+        from pure_api_gen import _concat_videos
+        merged = Path(config.DOWNLOAD_DIR) / f"{task_id}_merged.mp4"
+        path = await asyncio.to_thread(_concat_videos, [first, path], merged)
+    meta = await asyncio.to_thread(_video_metadata, str(path), row.get("duration"), row.get("ratio"))
+    store.update(task_id, status="completed", phase="done", accounting_done=1,
+                 video_url=f"{config.PUBLIC_BASE}/videos/{path.name}",
+                 account=result.get("account") or row.get("account"),
+                 last_poll_at=time.time(), finished_at=time.time(), error="", **meta)
+
+
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client):
+    if task_id in ACTIVE_STUDIO_JOBS:
+        return
+    row = store.get(task_id)
+    if row and row.get("conversation_id"):
+        return await _resume_task(row)
+    if row and (row.get("submission_started_at") or row.get("status") == "unknown"):
+        _uncertain_task(task_id, "Chưa xác định Dola đã nhận yêu cầu hay chưa; không tự gửi lại")
+        return
+    ACTIVE_STUDIO_JOBS.add(task_id)
     api_key_hash = client.get("api_key_hash")
     acquired = False
     reference_root = None
@@ -610,7 +660,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 重新受理：排队时钟（updated_at）与上一轮的报错一起清零。看门狗按「最后一次状态
         # 变化」算排队时长，不清零的话刚被重启捞回来的任务会带着旧的 updated_at 立刻被判
         # 「排队超时」——把刚修好的恢复路径又堵死。
-        store.update(task_id, status="queued", error="")
+        store.update(task_id, status="queued", phase="waiting", error="")
         await key_limiter.acquire(api_key_hash, client.get("concurrency_limit", 0))
         acquired = True
         # 这里不能急着标 processing：接下来 pool.generate_video 还可能在全局并发槽 /
@@ -619,18 +669,18 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
 
         def on_conversation_id(account, conversation_id, deadline_at):
             store.update(task_id, status="processing", account=account,
-                         conversation_id=conversation_id, deadline_at=deadline_at,
+                         conversation_id=conversation_id, phase="generating", deadline_at=deadline_at,
                          last_poll_at=time.time())
 
-        def on_poll(now):
-            store.update(task_id, last_poll_at=now)
+        def on_poll(now, phase=None):
+            store.record_poll(task_id, now, phase)
 
         tried_accs: list[str] = []
 
         def on_account_try(account, attempt):
             # 拿到账号即拿到并发槽 —— 此刻才算真正开始生成（等待期间保持 queued）。
             tried_accs.append(account)
-            fields = dict(status="processing", account=account, attempt=attempt,
+            fields = dict(status="processing", phase="sending", submission_started_at=time.time(), account=account, attempt=attempt,
                           attempted_accounts=json.dumps(tried_accs, ensure_ascii=False),
                           last_poll_at=time.time())
             if len(tried_accs) == 1:
@@ -648,47 +698,70 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                 store.update(task_id, reference_thumbs=json.dumps(thumbs))
         # 任务总时限内持续换号；到点不再派发新尝试。兜底超时额外留一次完整出片的等待时间，
         # 避免把已经在 Dola 端生成中的那一次强行中断（会白扣额度）。
-        task_deadline = time.time() + config.TASK_DEADLINE
-        try:
-            result = await asyncio.wait_for(pool.generate_video(
-                prompt, ratio, duration, model,
-                on_conversation_id=on_conversation_id, on_poll=on_poll,
-                reference_image_paths=reference_paths,
-                on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
-                deadline=task_deadline),
-                timeout=config.TASK_DEADLINE + config.VIDEO_TIMEOUT + 60)
-        except asyncio.TimeoutError:
-            chain = "、".join(tried_accs) or "无"
-            raise RuntimeError(
-                f"超过 {config.TASK_DEADLINE} 秒仍未生成成功，任务失败（已尝试账号: {chain}）")
-        public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
-        # ffprobe 是同步子进程（几十~几百毫秒），必须在事件循环外跑：
-        # 高并发下每完成一条就卡一次 loop，会把所有轮询/接口/健康检查一起拖住。
-        meta = await asyncio.to_thread(_video_metadata, result["local_path"], duration, ratio)
-        store.update(task_id, status="completed", video_url=public_url,
-                     account=result.get("account"), last_poll_at=time.time(),
-                     finished_at=time.time(), **meta)
+        task_deadline = time.time() + config.OBSERVATION_SECONDS
+        result = await pool.generate_video(
+            prompt, ratio, duration, model,
+            on_conversation_id=on_conversation_id, on_poll=on_poll,
+            reference_image_paths=reference_paths,
+            on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
+            deadline=task_deadline)
+        store.update(task_id, phase="downloading")
+        await _save_video_result(task_id, result)
         # 出片目录超限就从旧到新删，避免磁盘被撑满（同样是同步目录遍历）
         await asyncio.to_thread(_prune_downloads)
     except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
         store.update(task_id, status="failed", error=failure_text.summarize(str(e)),
                      failure_code="429", finished_at=time.time())
+    except ContentRefusalError as e:
+        store.update(
+            task_id,
+            status="failed",
+            error=failure_text.summarize(str(e)),
+            failure_code=e.failure_code or "",
+            failure_group=e.failure_group or "content_refusal",
+            upstream_request_id=e.upstream_request_id or "",
+            finished_at=time.time(),
+        )
     except asyncio.CancelledError:
-        # 服务重启/任务被取消：CancelledError 不是 Exception，别把它吞了，
-        # 但也别把行留在 processing —— 退回 queued，下次启动或看门狗会重新派发。
-        store.update(task_id, status="queued", account=None, last_poll_at=0,
-                     error="任务被中断（服务重启），已重新排队")
+        row = store.get(task_id) or {}
+        if row.get("conversation_id"):
+            store.update(task_id, status="queued", phase="generating", last_poll_at=0)
+        elif row.get("submission_started_at"):
+            _uncertain_task(task_id, "Yêu cầu bị gián đoạn khi gửi; không tự gửi lại")
+        else:
+            store.update(task_id, status="queued", phase="waiting")
         raise
+    except ConfirmedVideoFailure as e:
+        store.update(task_id, status="failed", phase="failed", error=str(e), finished_at=time.time())
+    except TimeoutError as e:
+        _uncertain_task(task_id)
     except Exception as e:
-        store.update(task_id, status="failed", error=failure_text.summarize(str(e)),
-                     finished_at=time.time())
+        msg = str(e)
+        kind = classify_upstream_failure(msg)
+        code = getattr(e, "error_code", None) or getattr(e, "status_code", None) or ""
+        req_id = getattr(e, "request_id", None) or getattr(e, "upstream_request_id", None) or ""
+        group = failure_text.label_for(msg) or ("content_refusal" if kind == "content" else "")
+        row = store.get(task_id) or {}
+        if kind != "content" and (row.get("conversation_id") or row.get("submission_started_at")):
+            _uncertain_task(task_id)
+            return
+        store.update(
+            task_id,
+            status="failed",
+            error=failure_text.summarize(msg),
+            failure_code=str(code) if code else "",
+            failure_group=str(group) if group else "",
+            upstream_request_id=str(req_id) if req_id else "",
+            finished_at=time.time(),
+        )
     finally:
+        ACTIVE_STUDIO_JOBS.discard(task_id)
         if reference_root:
             shutil.rmtree(reference_root, ignore_errors=True)
         # 落盘的参考图只在任务**走到终态**时清理：任务被取消/服务重启时它还要留给
         # resume 用（库里存的是路径，文件删早了恢复时就报「参考图文件已丢失」）。
         row = store.get(task_id)
-        if row and row.get("status") in ("completed", "failed"):
+        if row and (row.get("status") == "failed" or (row.get("status") == "completed" and not (row.get("video_duration") and row["video_duration"] < (row.get("duration") or 0) * 0.9))):
             cleanup_local_references(reference_images or [])
             store.update(task_id, reference_images="[]")
         if acquired:
@@ -698,21 +771,17 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
 async def _resume_task(row: dict):
     task_id = row["id"]
     account = row.get("account")
-    # cookie 号（纯 API）重启后不该去调浏览器 resume —— 本机没有可用 Chromium，
-    # 只会报 `Connection closed while reading from the driver` 把任务判死。
-    # 直接按原参数重新受理一次（参考图落盘文件已保留，不会丢）。
-    if account and pool.is_pure_account(account):
-        ratio = None if row.get("ratio") == "default" else row.get("ratio")
-        print(f"[resume] {task_id}（{account}）走纯 API 重新受理", flush=True)
-        await _run_task(
-            task_id, row["model"], row["prompt"], ratio, row.get("duration"),
-            _task_reference_images(row.get("reference_images")), _task_client(row),
-        )
+    if task_id in ACTIVE_STUDIO_JOBS:
         return
-    deadline = row.get("deadline_at") or (
-        time.time() + (1800 if row.get("duration") == 30 else config.VIDEO_TIMEOUT)
-    )
+    if not account or not row.get("conversation_id"):
+        _uncertain_task(task_id, "Thiếu thông tin phục hồi; không tự gửi lại")
+        return
+    deadline = row.get("deadline_at") or (time.time() + config.OBSERVATION_SECONDS)
+    if deadline <= time.time():
+        _uncertain_task(task_id)
+        return
     remaining = max(1, int(deadline - time.time()))
+    ACTIVE_STUDIO_JOBS.add(task_id)
     api_key_hash = row.get("api_key_hash")
     acquired = False
     try:
@@ -723,24 +792,24 @@ async def _resume_task(row: dict):
         store.update(task_id, status="processing", last_poll_at=time.time(),
                      started_at=row.get("started_at") or time.time())
 
-        def on_poll(now):
-            store.update(task_id, last_poll_at=now)
+        def on_poll(now, phase=None):
+            store.record_poll(task_id, now, phase)
 
         result = await pool.resume_video(
             row["account"], row["conversation_id"], remaining, on_poll=on_poll,
             duration=row.get("duration"),
             ratio=None if row.get("ratio") == "default" else row.get("ratio"),
-            cost=_duration_cost(row.get("model"), row.get("duration") or 10))
-        public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
-        meta = await asyncio.to_thread(
-            _video_metadata, result["local_path"], row.get("duration"), row.get("ratio"))
-        store.update(task_id, status="completed", video_url=public_url,
-                     account=result.get("account"), last_poll_at=time.time(),
-                     finished_at=time.time(), **meta)
+            cost=0 if row.get("accounting_done") else _duration_cost(row.get("model"), row.get("duration") or 10))
+        await _save_video_result(task_id, result)
+    except asyncio.CancelledError:
+        store.update(task_id, status="queued", phase="generating", last_poll_at=0)
+        raise
+    except ConfirmedVideoFailure as e:
+        store.update(task_id, status="failed", phase="failed", error=str(e), finished_at=time.time())
     except Exception as e:
-        store.update(task_id, status="failed", error=failure_text.summarize(str(e)),
-                     finished_at=time.time())
+        _uncertain_task(task_id)
     finally:
+        ACTIVE_STUDIO_JOBS.discard(task_id)
         if acquired:
             await key_limiter.release(api_key_hash)
 
@@ -888,14 +957,17 @@ def _watchdog_plan() -> list[dict]:
         task_id = row["id"]
         if task_id in failed_ids:
             continue
-        if task_id in WATCHDOG_DISPATCHED:
+        if task_id in WATCHDOG_DISPATCHED or task_id in ACTIVE_STUDIO_JOBS:
+            continue
+        full = store.get(task_id) or {}
+        if not full.get("conversation_id") and (full.get("submission_started_at") or full.get("account")):
+            _uncertain_task(task_id, "Chưa xác định Dola đã nhận yêu cầu hay chưa; không tự gửi lại")
             continue
         tries = WATCHDOG_RETRIES.get(task_id, 0) + 1
         WATCHDOG_RETRIES[task_id] = tries
         if tries > 3:
             print(f"[watchdog] {task_id} 已重派 {tries - 1} 次仍无进展，判失败", flush=True)
-            store.update(task_id, status="failed", finished_at=time.time(),
-                         error="任务多次中断（服务重启/上游限流），请重新提交")
+            _uncertain_task(task_id)
             WATCHDOG_RETRIES.pop(task_id, None)
             continue
         full = store.get(task_id)
@@ -1092,7 +1164,7 @@ async def create_video_vinted_alias(request: Request,
     return await create_video(request, authorization)
 
 
-async def _submit_task(client, model, prompt, ratio, duration, reference_images):
+async def _submit_task(client, model, prompt, ratio, duration, reference_images, task_id=None):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
     resolved = _resolve_model_for_duration(model, duration)
     if resolved is None:
@@ -1112,8 +1184,14 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images)
             f"seedance-2.0 仅支持 {list(config.V20_DURATIONS)} 秒）",
         )
     model = resolved
+    if task_id:
+        existing = store.get(task_id)
+        if existing:
+            if (existing["prompt"], existing["model"], existing["duration"], existing["ratio"]) != (prompt, model, duration, ratio or "default"):
+                raise HTTPException(409, "Yêu cầu đã có nhưng bản nháp khác; hãy tạo yêu cầu mới")
+            return TaskResponse(**{k: existing.get(k) for k in ("id","status","model","prompt","video_url","error")})
     if duration not in client["allowed_durations"]:
-        raise HTTPException(422, f"当前 API Key 不允许生成 {duration} 秒视频")
+        raise HTTPException(422, f"Current API key does not allow {duration}s video generation")
     try:
         reference_images = await validate_reference_urls(reference_images)
     except ValueError as exc:
@@ -1127,15 +1205,19 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images)
     # 账号暂时忙时允许任务进入 queued，由 BrowserPool 的全局并发控制实际排队。
     # 只有明确全部达到每日上限/积分不足时才立即拒绝。
     if not pool.available and pool.all_accounts_limited:
-        raise HTTPException(429, "账号限流：所有已开启调度的账号均已达到 Dola 每日视频上限，请明天再试")
+        raise HTTPException(429, "Rate limit: All scheduled accounts have reached Dola daily limit. Please try again tomorrow.")
     if not pool.available and pool.all_accounts_quota_blocked:
-        raise HTTPException(429, "积分不足：所有已开启调度的账号都没有足够积分，请等待额度刷新")
+        raise HTTPException(429, "Insufficient credits: All scheduled accounts have insufficient points. Please wait for quota reset.")
     if not pool.accounts:
         raise HTTPException(503, "no account in pool")
-    task_id = "video_" + uuid.uuid4().hex
+    task_id = task_id or "video_" + uuid.uuid4().hex
     if len(prompt or "") > config.MAX_PROMPT_CHARS:
         raise HTTPException(
             422, f"提示词过长（上限 {config.MAX_PROMPT_CHARS} 字符，收到 {len(prompt)}）")
+    existing = store.get(task_id)
+    if existing:
+        cleanup_local_references(reference_images)
+        return TaskResponse(**{k: existing.get(k) for k in ("id","status","model","prompt","video_url","error")})
     try:
         store.create(
             task_id,
@@ -1165,9 +1247,17 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images)
 
 
 @app.get("/v1/videos/{task_id}", response_model=TaskResponse)
-async def get_video(task_id: str, authorization: str | None = Header(default=None)):
-    client = _auth(authorization)
-    row = store.get_for_client(task_id, client["api_key_hash"])
+async def get_video(
+    task_id: str,
+    authorization: str | None = Header(default=None),
+    x_admin_key: str | None = Header(default=None),
+):
+    if x_admin_key:
+        _admin_auth(x_admin_key)
+        row = store.get(task_id)
+    else:
+        client = _auth(authorization)
+        row = store.get_for_client(task_id, client["api_key_hash"])
     if not row:
         raise HTTPException(404, "task not found")
     return TaskResponse(
@@ -1249,7 +1339,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
     reference_images = list(dict.fromkeys(reference_images + _deep_image_urls(body)))
     prompt = "\n".join(prompt_parts).strip()
     if not prompt:
-        raise HTTPException(422, "content 中缺少 text 提示词")
+        raise HTTPException(422, "Missing text prompt in content")
     requested_model = body.get("model")
     ratio = _map_ark_ratio(body.get("ratio"))
     if reference_images:
@@ -1479,6 +1569,25 @@ class AccountAdd(BaseModel):
     totp: str = ""
     cookies: str = ""
     cookie_skip_verify: bool = False
+    facebook: str = ""
+
+
+class AiSettingsUpdate(BaseModel):
+    active_provider: str | None = None
+    gemini: dict[str, Any] | None = None
+    openai: dict[str, Any] | None = None
+
+
+class PromptRewriteRequest(BaseModel):
+    prompt: str
+    instructions: str = Field(default="", max_length=4000)
+    duration: int | None = None
+    ratio: str | None = None
+    model: str | None = None
+
+
+class PromptPreflightRequest(BaseModel):
+    prompt: str
 
 
 class KeyCreate(BaseModel):
@@ -1502,7 +1611,7 @@ class KeyPatch(BaseModel):
 async def admin_login(body: AdminLogin):
     user = user_verify(body.username.strip(), body.password)
     if not user:
-        raise HTTPException(401, "用户名或密码错误")
+        raise HTTPException(401, "Invalid username or password")
     token = secrets.token_urlsafe(32)
     ADMIN_SESSIONS[token] = {
         "username": user["username"],
@@ -1600,7 +1709,7 @@ async def admin_stress_start(body: StressRequest,
                              x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     if STRESS_RUN.get("status") == "running":
-        raise HTTPException(409, "压力测试正在进行中，请等待完成")
+        raise HTTPException(409, "Stress test in progress, please wait until complete")
     busy = store.pending_task_count()
     if busy:
         raise HTTPException(
@@ -1653,7 +1762,7 @@ async def admin_account_recover(name: str, body: RecoverBody,
     if name not in pool.accounts:
         raise HTTPException(404, "account not found")
     if body.kind not in ("risk", "abnormal"):
-        raise HTTPException(400, "kind 只能是 risk 或 abnormal")
+        raise HTTPException(400, "kind must be either risk or abnormal")
     result = pool.recover_account(name, body.kind)
     return {**result, "account": _account_row(name)}
 
@@ -1713,7 +1822,7 @@ async def admin_account_verify(name: str, x_admin_key: str | None = Header(defau
     except Exception as e:
         # 验证流程里浏览器/playwright/SQLite 等其它异常不再冒泡成 500：
         # 统一转 409 并给出原因（不落地 login_ok，避免误标，非破坏）。
-        raise HTTPException(409, f"验证失败（服务器异常）: {str(e)[:200]}")
+        raise HTTPException(409, f"Verification failed (server exception): {str(e)[:200]}")
     return result
 
 
@@ -1899,13 +2008,13 @@ async def admin_batch_recover(body: RecoverBody,
     _admin_auth(x_admin_key)
     kind = body.kind or "risk"
     if kind not in ("risk", "abnormal"):
-        raise HTTPException(400, "kind 只能是 risk 或 abnormal")
+        raise HTTPException(400, "kind must be either risk or abnormal")
     names = _clean_batch_names(body.names)
     if not names:
-        raise HTTPException(400, "没有要恢复的账号（先勾选，或用分组按钮筛出一批）")
+        raise HTTPException(400, "No accounts to recover. Please select accounts first.")
     running = [jid for jid, item in BATCH_JOBS.items() if item.get("status") == "running"]
     if running:
-        raise HTTPException(409, "已有批量任务在进行中，请等待完成")
+        raise HTTPException(409, "Another batch task is already in progress, please wait")
     job_id = "batch_" + uuid.uuid4().hex[:12]
     BATCH_JOBS[job_id] = {
         "kind": "recover",
@@ -1932,10 +2041,10 @@ async def admin_batch_probe_hello(body: BatchAccountsBody,
     _admin_auth(x_admin_key)
     names = _clean_batch_names(body.names)
     if not names:
-        raise HTTPException(400, "没有要探测的账号（先勾选，或用分组按钮筛出一批）")
+        raise HTTPException(400, "No accounts to probe. Please select accounts first.")
     running = [jid for jid, item in BATCH_JOBS.items() if item.get("status") == "running"]
     if running:
-        raise HTTPException(409, "已有批量任务在进行中，请等待完成")
+        raise HTTPException(409, "Another batch task is already in progress, please wait")
     job_id = "batch_" + uuid.uuid4().hex[:12]
     BATCH_JOBS[job_id] = {
         "kind": "probe",
@@ -1962,10 +2071,10 @@ async def admin_batch_verify(body: BatchAccountsBody,
     _admin_auth(x_admin_key)
     names = _clean_batch_names(body.names)
     if not names:
-        raise HTTPException(400, "请先勾选账号")
+        raise HTTPException(400, "Please select at least one account")
     running = [jid for jid, job in BATCH_JOBS.items() if job.get("status") == "running"]
     if running:
-        raise HTTPException(409, "已有批量验证在进行中，请等待完成")
+        raise HTTPException(409, "Batch verification already in progress, please wait")
     job_id = "batch_" + uuid.uuid4().hex[:12]
     BATCH_JOBS[job_id] = {
         "kind": "verify",
@@ -1989,7 +2098,7 @@ async def admin_batch_status(job_id: str, x_admin_key: str | None = Header(defau
     _admin_auth(x_admin_key)
     job = BATCH_JOBS.get(job_id)
     if not job:
-        raise HTTPException(404, "批量任务不存在或已过期")
+        raise HTTPException(404, "Batch task not found or expired")
     return job
 
 
@@ -2000,9 +2109,9 @@ async def admin_batch_proxy(body: BatchProxyBody,
     _admin_auth(x_admin_key)
     names = _clean_batch_names(body.names)
     if not names:
-        raise HTTPException(400, "请先勾选账号")
+        raise HTTPException(400, "Please select at least one account")
     if body.proxy_id and body.proxy_id not in {p["id"] for p in list_proxies()}:
-        raise HTTPException(400, "代理不存在")
+        raise HTTPException(400, "Proxy not found")
     busy = {acc["name"] for acc in pool.list_accounts() if acc.get("busy")}
     updated: list[str] = []
     failed: list[dict] = []
@@ -2038,7 +2147,7 @@ async def admin_test_generate(name: str, body: TestGenRequest,
     if name not in pool.accounts:
         raise HTTPException(404, "account not found")
     if JOBS.get(name, {}).get("status") == "running":
-        raise HTTPException(409, "该账号正在执行任务，稍后再试")
+        raise HTTPException(409, "Account is currently busy executing a task. Please try again later.")
     task_id = "test_" + uuid.uuid4().hex
     TEST_JOBS[task_id] = {
         "account": name,
@@ -2170,7 +2279,7 @@ async def admin_import_cookies(body: ImportTextBody,
     """
     _admin_auth(x_admin_key)
     if not (body.text or "").strip():
-        raise HTTPException(400, "text 不能为空")
+        raise HTTPException(400, "text cannot be empty")
     try:
         result = await import_cookie_accounts_from_text(
             pool, body.text, require_login=not body.skip_verify
@@ -2183,41 +2292,70 @@ async def admin_import_cookies(body: ImportTextBody,
 @app.post("/api/admin/accounts/import-accounts")
 async def admin_import_accounts(body: ImportTextBody,
                                 x_admin_key: str | None = Header(default=None)):
-    """多行账号凭据批量登录导入（对齐 api-pool 的 server.login）。
-
-    支持 email----password----totp / | / , / : 及 JSON 数组；按 email 去重、自动命名 acc<N>，
-    逐个走 Google OAuth 自动登录并写入 profile。
-    """
+    """多行账号凭据批量登录导入（支持 Google 与 Facebook 两种格式）。"""
     _admin_auth(x_admin_key)
-    if not (body.text or "").strip():
-        raise HTTPException(400, "text 不能为空")
-    records = parse_account_text(body.text)
-    if not records:
-        raise HTTPException(400, "未解析到有效账号（需 email----password 或 JSON 数组）")
-    pairs = allocate_credentials(records, pool.accounts, name_prefix="acc")
+    raw_text = (body.text or "").strip()
+    if not raw_text:
+        raise HTTPException(400, "text cannot be empty")
+
     created: list[str] = []
     failed: list[str] = []
     errors: list[str] = []
+
+    # Phân loại dòng Facebook vs Google
+    fb_lines: list[str] = []
+    gg_lines: list[str] = []
+    for line in raw_text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "c_user=" in line:
+            fb_lines.append(line)
+        else:
+            gg_lines.append(line)
+
     try:
         async with ADD_ACCOUNT_SEM:
-            for name, cred in pairs:
-                dups = pool.find_accounts_by_email(cred.email)
-                if dups:
-                    failed.append(name)
-                    errors.append(f"{name}: 邮箱已存在于 {','.join(dups)}")
-                    continue
-                try:
-                    await add_account_flow(name, cred.email, cred.password, cred.totp)
-                    pool.ensure_account(name)
-                    pool.set_email(name, cred.email)
-                    pool.set_source(name, "login")
-                    pool.set_login_status(name, True)
-                    if cred.email:
-                        cred_store.store(name, cred.email, cred.password, cred.totp)
-                    created.append(name)
-                except Exception as exc:
-                    failed.append(name)
-                    errors.append(f"{name}: {str(exc)[:150]}")
+            # Xử lý các dòng Facebook
+            if fb_lines:
+                existing = set(pool.accounts)
+                next_num = 1
+                for f_line in fb_lines:
+                    while f"fb{next_num}" in existing:
+                        next_num += 1
+                    name = f"fb{next_num}"
+                    existing.add(name)
+                    next_num += 1
+                    try:
+                        res = await add_fb_account_flow(name, f_line)
+                        created.append(name)
+                    except Exception as exc:
+                        failed.append(name)
+                        errors.append(f"{name} (Facebook): {str(exc)[:150]}")
+
+            # Xử lý các dòng Google
+            if gg_lines:
+                records = parse_account_text("\n".join(gg_lines))
+                if records:
+                    pairs = allocate_credentials(records, pool.accounts, name_prefix="acc")
+                    for name, cred in pairs:
+                        dups = pool.find_accounts_by_email(cred.email)
+                        if dups:
+                            failed.append(name)
+                            errors.append(f"{name}: 邮箱已存在于 {','.join(dups)}")
+                            continue
+                        try:
+                            await add_account_flow(name, cred.email, cred.password, cred.totp)
+                            pool.ensure_account(name)
+                            pool.set_email(name, cred.email)
+                            pool.set_source(name, "login")
+                            pool.set_login_status(name, True)
+                            if cred.email:
+                                cred_store.store(name, cred.email, cred.password, cred.totp)
+                            created.append(name)
+                        except Exception as exc:
+                            failed.append(name)
+                            errors.append(f"{name}: {str(exc)[:150]}")
     except Exception as exc:
         raise HTTPException(400, str(exc)[:300]) from exc
     return {"ok": True, "created": created, "failed": failed, "errors": errors}
@@ -2308,7 +2446,7 @@ async def admin_proxy_add_nodes(proxy_id: str, body: ProxyNodesIn,
     result = await asyncio.to_thread(
         proxy_store.add_nodes_from_text, proxy_id, body.text, body.ttl)
     if not result.get("ok"):
-        raise HTTPException(400, result.get("error", "添加节点失败"))
+        raise HTTPException(400, result.get("error", "Failed to add nodes"))
     return result
 
 
@@ -2339,7 +2477,7 @@ async def admin_account_rotate_ip(name: str,
     # 把 pool_usage.db 的写锁焊死（实测会让所有写操作 15s 超时 database is locked）。
     result = pool.rotate_account_ip(name, force=True)
     if not result.get("rotated"):
-        raise HTTPException(400, result.get("reason", "轮换失败"))
+        raise HTTPException(400, result.get("reason", "Rotation failed"))
     return result
 
 
@@ -2410,7 +2548,7 @@ async def admin_user_delete(username: str,
     _admin_auth(x_admin_key)
     session = ADMIN_SESSIONS.get(x_admin_key or "", {})
     if session.get("username") == username:
-        raise HTTPException(400, "不能删除当前登录的账号")
+        raise HTTPException(400, "Cannot delete currently logged-in account")
     try:
         user_delete(username)
     except ValueError as exc:
@@ -2419,12 +2557,22 @@ async def admin_user_delete(username: str,
 
 
 async def _run_add_job(name: str, email: str, password: str, totp: str,
-                       cookies: str = "", cookie_skip_verify: bool = False) -> None:
-    JOBS[name] = {"kind": "add", "status": "running", "email": email,
+                       cookies: str = "", cookie_skip_verify: bool = False,
+                       facebook: str = "") -> None:
+    JOBS[name] = {"kind": "add", "status": "running", "email": email or "facebook",
                   "error": "", "started_at": time.time()}
     try:
         async with ADD_ACCOUNT_SEM:
-            if cookies:
+            if facebook or ("c_user=" in cookies) or ("c_user=" in email):
+                fb_line = facebook or cookies or email
+                res = await add_fb_account_flow(name, fb_line)
+                pool.ensure_account(name)
+                pool.set_sessionid(name, res["sessionid"])
+                pool.set_source(name, "facebook")
+                pool.set_login_status(name, True)
+                if res.get("email"):
+                    pool.set_email(name, res["email"])
+            elif cookies:
                 result = await import_cookie_account(
                     name, json.loads(cookies),
                     require_login=not cookie_skip_verify,
@@ -2493,33 +2641,35 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
     if not NAME_RE.match(body.name):
         raise HTTPException(400, "invalid account name")
     if body.name in pool.accounts:
-        raise HTTPException(409, "账号名已存在：" + body.name)
+        raise HTTPException(409, "Account name already exists: " + body.name)
     if JOBS.get(body.name, {}).get("status") == "running":
         raise HTTPException(409, "add job running")
     email = (body.email or "").strip()
     cookies = (body.cookies or "").strip()
-    if not email and not cookies:
-        raise HTTPException(400, "邮箱不能为空")
-    if email:
+    facebook = (body.facebook or "").strip()
+    if not email and not cookies and not facebook:
+        raise HTTPException(400, "Vui lòng nhập Email, Cookie hoặc thông tin tài khoản Facebook")
+    if email and not facebook and "c_user=" not in email:
         cred_store.store(body.name, email, body.password, body.totp)
         dups = pool.find_accounts_by_email(email)
         if dups:
-            raise HTTPException(409, "该邮箱已存在于账号 " + "、".join(dups) + "，请勿重复添加")
+            raise HTTPException(409, "Email already exists in account(s): " + ", ".join(dups))
         norm = email.lower()
         for n, job in JOBS.items():
             if (job.get("kind") == "add" and job.get("status") == "running"
                     and (job.get("email") or "").strip().lower() == norm):
-                raise HTTPException(409, "该邮箱正在添加中（" + n + "），请勿重复提交")
-    if cookies:
+                raise HTTPException(409, "Email is currently being added (" + n + "), please do not submit duplicates")
+    if cookies and not facebook and "c_user=" not in cookies:
         try:
             json.loads(cookies)
         except Exception:
-            raise HTTPException(422, "cookie JSON 格式错误")
-    JOBS[body.name] = {"kind": "add", "status": "running", "email": email,
+            raise HTTPException(422, "Invalid cookie JSON format")
+    JOBS[body.name] = {"kind": "add", "status": "running", "email": email or "facebook",
                        "error": "", "started_at": time.time()}
     asyncio.create_task(_run_add_job(
         body.name, email, body.password, body.totp,
         cookies=cookies, cookie_skip_verify=body.cookie_skip_verify,
+        facebook=facebook,
     ))
     return {"ok": True, "job": "running"}
 
@@ -2533,7 +2683,110 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
 @app.get("/api/admin/tasks")
 async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"tasks": store.recent_tasks(min(max(limit, 1), 200))}
+    return {"tasks": [{**row, "target_duration": _target_duration(row), "file_exists": _task_file_exists(row)} for row in store.recent_tasks(min(max(limit, 1), 200))]}
+
+
+@app.get("/api/admin/tasks/{task_id}")
+async def admin_get_task(task_id: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    row = store.get(task_id)
+    if not row:
+        raise HTTPException(404, "task not found")
+    prog = _progress_payload(status=row["status"], created_at=row["created_at"], duration=row.get("duration", 30))
+    return {
+        "id": row["id"],
+        "status": row["status"],
+        "model": row["model"],
+        "prompt": row["prompt"],
+        "video_url": row["video_url"],
+        "file_exists": _task_file_exists(row),
+        "error": row["error"],
+        "failure_code": row.get("failure_code"),
+        "failure_group": row.get("failure_group"),
+        "upstream_request_id": row.get("upstream_request_id"),
+        "progress": prog,
+        "created_at": row["created_at"],
+        "duration": row.get("duration", 30),
+        "target_duration": _target_duration(row),
+        "ratio": row.get("ratio"),
+        "phase": row.get("phase"),
+        "batch_id": row.get("batch_id"),
+        "batch_index": row.get("batch_index"),
+        "last_poll_at": row.get("last_poll_at"),
+        "submission_started_at": row.get("submission_started_at"),
+        "upstream_updates": row.get("upstream_updates"),
+        "video_duration": row.get("video_duration"),
+        "video_width": row.get("video_width"),
+        "video_height": row.get("video_height"),
+        "continuation_task_id": row.get("continuation_task_id") if store.get(row.get("continuation_task_id") or "") else None,
+        "can_check_result": bool(row.get("conversation_id") and row.get("account")),
+    }
+
+
+@app.post("/api/admin/tasks/{task_id}/check-result")
+async def admin_check_result(task_id: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    row = store.get(task_id)
+    if not row:
+        raise HTTPException(404, "Không tìm thấy video")
+    if task_id in ACTIVE_STUDIO_JOBS or row["status"] == "completed":
+        return {"id": task_id, "status": row["status"]}
+    if not row.get("conversation_id") or not row.get("account"):
+        raise HTTPException(409, "Thiếu conversation hoặc tài khoản; không thể tự gửi lại an toàn")
+    # One user-requested read, with a fresh bounded polling window; no new submission.
+    store.update(task_id, status="processing", phase="generating", error="",
+                 deadline_at=time.time() + config.OBSERVATION_SECONDS)
+    asyncio.create_task(_resume_task(store.get(task_id)))
+    return {"id": task_id, "status": "processing"}
+
+
+class ContinueVideoRequest(BaseModel):
+    confirm_cost: bool = False
+    confirm_review: bool = False
+
+
+@app.post("/api/admin/tasks/{task_id}/continue")
+async def admin_continue_video(task_id: str, body: ContinueVideoRequest,
+                               x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    parent = store.get(task_id)
+    if not parent:
+        raise HTTPException(404, "Không tìm thấy video")
+    if not body.confirm_cost:
+        raise HTTPException(400, "Cần xác nhận dùng thêm điểm để tạo đoạn tiếp")
+    if parent.get("continuation_task_id") and store.get(parent["continuation_task_id"]):
+        child = store.get(parent["continuation_task_id"])
+        return {"id": child["id"], "status": child["status"]}
+    actual = parent.get("video_duration")
+    target = _target_duration(parent)
+    if parent["status"] != "completed" or not actual or actual >= target * 0.9:
+        raise HTTPException(409, "Chỉ tạo tiếp cho video đã nhận nhưng thiếu thời lượng")
+    first = Path(config.DOWNLOAD_DIR) / Path(urlparse(parent["video_url"]).path).name
+    if not first.is_file():
+        raise HTTPException(409, "Không còn file video đầu để ghép")
+    remaining = target - actual
+    options = config.V20_DURATIONS if '2.0' in parent["model"] else config.NATIVE_DURATIONS
+    duration = next((d for d in sorted(options) if d >= remaining), max(options))
+    prompt = parent["prompt"] + "\nTiếp tục hành động của cảnh trước, giữ nhân vật, bối cảnh và ánh sáng; chuyển động nối tiếp tự nhiên."
+    check = await preflight_check_prompt(prompt)
+    if check["status"] == "block":
+        raise HTTPException(422, check.get("reason") or "Nội dung cần chỉnh sửa")
+    if check["status"] == "review" and not body.confirm_review:
+        raise HTTPException(409, {"status": "review", "reason": check.get("reason")})
+    # After await, re-read. No await between reservation/create/dispatch (single process).
+    parent = store.get(task_id)
+    child_id = parent.get("continuation_task_id") or str(uuid.uuid4())
+    if store.get(child_id):
+        return {"id": child_id, "status": store.get(child_id)["status"]}
+    store.update(task_id, continuation_task_id=child_id)
+    client = _task_client(parent)
+    store.create(child_id, parent["model"], prompt, parent["ratio"], duration,
+                 reference_images=parent.get("reference_images") or "[]")
+    store.update(child_id, parent_task_id=task_id)
+    asyncio.create_task(_run_task(child_id, parent["model"], prompt,
+        None if parent["ratio"] == "default" else parent["ratio"], duration,
+        _task_reference_images(parent.get("reference_images")), client))
+    return {"id": child_id, "status": "queued"}
 
 
 @app.get("/api/admin/videos")
@@ -2672,5 +2925,285 @@ async def admin_key_delete(key: str, x_admin_key: str | None = Header(default=No
     return {"ok": True}
 
 
+# ===== AI CẤU HÌNH, REWRITE, PREFLIGHT & TẠO VIDEO ADMIN =====
+
+@app.get("/api/admin/studio-info")
+async def admin_studio_info(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return {"transport_mode": config.TRANSPORT_MODE,
+            "observation_seconds": config.OBSERVATION_SECONDS,
+            "reference_image_max_bytes": config.REFERENCE_IMAGE_MAX_BYTES}
+
+
+@app.get("/api/admin/ai-settings")
+async def admin_get_ai_settings(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    try:
+        return get_public_settings()
+    except AiSettingsDecryptError as exc:
+        raise HTTPException(500, f"Lỗi giải mã cấu hình AI: {exc}")
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.put("/api/admin/ai-settings")
+async def admin_put_ai_settings(body: AiSettingsUpdate, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    try:
+        return update_settings(body.model_dump())
+    except (ValueError, AiSettingsError) as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.post("/api/admin/prompts/rewrite")
+async def admin_prompt_rewrite(body: PromptRewriteRequest, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if not (body.prompt or "").strip():
+        raise HTTPException(422, "Prompt không được để trống")
+    try:
+        rewritten = await rewrite_prompt_text(
+            original_prompt=body.prompt,
+            instructions=body.instructions,
+            duration=body.duration,
+            ratio=body.ratio,
+            model=body.model,
+        )
+        return {
+            "ok": True,
+            "original_prompt": body.prompt,
+            "rewritten_prompt": rewritten,
+        }
+    except AiProviderNotConfiguredError as exc:
+        raise HTTPException(400, str(exc))
+    except AiProviderCallError as exc:
+        raise HTTPException(502, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+def _validate_image_content(data: bytes, filename: str) -> None:
+    """Xác thực magic bytes và tính toàn vẹn của tệp ảnh trước khi lưu trữ."""
+    if len(data) < 12:
+        raise HTTPException(422, f"Tệp {filename} không phải tệp ảnh hợp lệ (kích thước quá nhỏ)")
+    is_png = data.startswith(b"\x89PNG\r\n\x1a\n")
+    is_jpeg = data.startswith(b"\xff\xd8\xff")
+    is_webp = data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WEBP"
+    if not (is_png or is_jpeg or is_webp):
+        raise HTTPException(
+            422,
+            f"Tệp {filename} có phần mở rộng ảnh nhưng nội dung thực tế không phải định dạng JPG, PNG hoặc WEBP hợp lệ"
+        )
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as im:
+            im.verify()
+    except Exception as exc:
+        raise HTTPException(422, f"Tệp ảnh {filename} bị lỗi hoặc không thể giải mã: {exc}")
+
+
+@app.post("/api/admin/prompts/preflight")
+async def admin_prompt_preflight(body: PromptPreflightRequest, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    session_id = hashlib.sha256((x_admin_key or "default").encode("utf-8")).hexdigest()[:24]
+    if not (body.prompt or "").strip():
+        raise HTTPException(422, "Prompt không được để trống")
+    try:
+        result = await preflight_check_prompt(body.prompt)
+        record = record_preflight_result(session_id, body.prompt, result)
+        return {"ok": True, **record}
+    except AiProviderNotConfiguredError as exc:
+        raise HTTPException(400, str(exc))
+    except AiProviderCallError as exc:
+        raise HTTPException(502, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+async def _admin_reference_images(form):
+    refs: list[str] = []
+    for field in ("images", "image", "image[]", "reference_images"):
+        for item in form.getlist(field):
+            if hasattr(item, "read") and hasattr(item, "filename"):
+                filename = getattr(item, "filename", "") or "image.png"
+                ext = Path(filename).suffix.lower()
+                if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+                    raise HTTPException(422, f"Định dạng ảnh không được hỗ trợ ({ext}). Chỉ hỗ trợ JPG, PNG, WEBP.")
+                read_fn = getattr(item, "read")
+                data = await read_fn()
+                if len(data) > config.REFERENCE_IMAGE_MAX_BYTES:
+                    raise HTTPException(422, f"Ảnh {filename} vượt quá giới hạn dung lượng ảnh")
+                if data:
+                    _validate_image_content(data, filename)
+                    refs.append(_data_url_from_upload(filename, data))
+            elif isinstance(item, str) and item.strip():
+                refs.append(item.strip())
+
+    return refs
+
+
+@app.post("/api/admin/videos/generations", response_model=TaskResponse)
+async def admin_create_video(request: Request, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    session_id = hashlib.sha256((x_admin_key or "default").encode("utf-8")).hexdigest()[:24]
+
+    form = await request.form()
+    p_val = form.get("prompt")
+    prompt = str(p_val).strip() if p_val and isinstance(p_val, str) else ""
+    if not prompt:
+        raise HTTPException(422, "Prompt không được để trống")
+    if len(prompt) > config.MAX_PROMPT_CHARS:
+        raise HTTPException(
+            422, f"Prompt quá dài (tối đa {config.MAX_PROMPT_CHARS} ký tự, nhận được {len(prompt)})"
+        )
+
+    m_val = form.get("model")
+    model = str(m_val).strip() if m_val and isinstance(m_val, str) else "seedance-2.5"
+
+    d_val = form.get("duration")
+    try:
+        duration = int(float(str(d_val))) if d_val else 30
+    except (ValueError, TypeError):
+        duration = 30
+
+    sz = form.get("size")
+    rt = form.get("ratio")
+    size_str = str(sz) if sz and isinstance(sz, str) else None
+    ratio_str = str(rt) if rt and isinstance(rt, str) else "16:9"
+    ratio = _resolve_ratio(size_str, ratio_str)
+
+    pt_val = form.get("preflight_token")
+    preflight_token = str(pt_val).strip() if pt_val and isinstance(pt_val, str) else None
+
+    cr_val = form.get("confirm_review")
+    confirm_review = str(cr_val).lower() in ("true", "1", "yes")
+
+    # Xác thực qua cổng Preflight Gate bắt buộc ở Backend
+    ok, err_msg, status = validate_preflight_gate(
+        session_id=session_id,
+        prompt=prompt,
+        token=preflight_token,
+        confirm_review=confirm_review,
+    )
+    if not ok:
+        raise HTTPException(422, err_msg)
+
+    refs = await _admin_reference_images(form)
+
+    admin_client = {
+        "api_key_hash": f"admin_{session_id}",
+        "api_key_name": f"Admin ({session_id})",
+        "daily_limit": 0,
+        "concurrency_limit": 0,
+        "allowed_durations": list(SUPPORTED_DURATIONS),
+    }
+
+    request_id = str(form.get("request_id") or "").strip()
+    task_id = None
+    if request_id:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id):
+            raise HTTPException(422, "Mã yêu cầu không hợp lệ")
+        username = ADMIN_SESSIONS[x_admin_key]["username"]
+        task_id = "video_" + hashlib.sha256(f"studio:{username}:{request_id}".encode()).hexdigest()[:32]
+    return await _submit_task(admin_client, model, prompt, ratio, duration, refs, task_id=task_id)
+
+
 # 面板单文件前端（放最后，保证上面的路由优先）
+class BatchPrompt(BaseModel):
+    prompt: str = Field(min_length=1, max_length=config.MAX_PROMPT_CHARS)
+    preflight_token: str = ""
+    confirm_review: bool = False
+
+
+class VideoBatch(BaseModel):
+    request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    prompts: list[BatchPrompt] = Field(min_length=1, max_length=50)
+    copies: int = Field(default=1, ge=1, le=10)
+    model: str = "seedance-2.5"
+    duration: int = 30
+    ratio: str = Field(default="16:9", pattern=r"^(16:9|9:16|1:1|4:3|3:4)$")
+
+
+@app.get("/api/admin/videos/batches/{batch_id}")
+async def admin_get_batch(batch_id: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if store.batch_fingerprint(batch_id) is None:
+        raise HTTPException(404,"Không tìm thấy mẻ")
+    return {"batch_id":batch_id,"tasks":[{**row,"target_duration":_target_duration(row),
+        "file_exists":_task_file_exists(row)} for row in store.batch_tasks(batch_id)]}
+
+
+@app.post("/api/admin/videos/batches", status_code=202)
+async def admin_create_batch(request: Request, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    form = await request.form()
+    raw = str(form.get("batch") or "")
+    if len(raw) > 1_100_000:
+        raise HTTPException(422, "Danh sách prompt quá lớn")
+    try:
+        batch = VideoBatch.model_validate_json(raw)
+    except ValueError:
+        raise HTTPException(422, "Mẻ không hợp lệ: tối đa 50 video, 1–10 bản mỗi prompt; kiểm tra model, thời lượng và tỉ lệ")
+    if len(batch.prompts)*batch.copies > 50 or any(not p.prompt.strip() for p in batch.prompts):
+        raise HTTPException(422, "Mỗi mẻ có tối đa 50 video và không được có prompt trống")
+    model = _resolve_model_for_duration(batch.model, batch.duration)
+    if not model:
+        raise HTTPException(422, "Model không hỗ trợ thời lượng đã chọn")
+    refs = await _admin_reference_images(form)
+    fingerprint = hashlib.sha256(json.dumps({"prompts":[p.prompt.strip() for p in batch.prompts],
+        "copies":batch.copies,"model":model,"duration":batch.duration,"ratio":batch.ratio,
+        "references":refs},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+    username = ADMIN_SESSIONS[x_admin_key]["username"]
+    batch_id = "batch_"+hashlib.sha256(f"studio:{username}:{batch.request_id}".encode()).hexdigest()[:32]
+    # Returning a persisted batch is read-only, including after process restart/token expiry.
+    existing = store.batch_tasks(batch_id)
+    saved_fingerprint = store.batch_fingerprint(batch_id)
+    if saved_fingerprint is not None:
+        if saved_fingerprint != fingerprint:
+            raise HTTPException(409, "Mã mẻ đã được dùng cho nội dung khác")
+        return {"batch_id":batch_id,"tasks":[{"id":r["id"],"status":r["status"]} for r in existing]}
+    session_id = hashlib.sha256((x_admin_key or "default").encode()).hexdigest()[:24]
+    for i,prompt in enumerate(batch.prompts):
+        ok,error,_ = validate_preflight_gate(session_id=session_id,prompt=prompt.prompt.strip(),
+            token=prompt.preflight_token,confirm_review=prompt.confirm_review)
+        if not ok:
+            raise HTTPException(422, f"Prompt {i+1}: {error}")
+    if not pool.accounts:
+        raise HTTPException(503, "Chưa có tài khoản Dola")
+    if not pool.available and (pool.all_accounts_limited or pool.all_accounts_quota_blocked):
+        raise HTTPException(429, "Tài khoản đã hết lượt hoặc chưa đủ điểm; mẻ chưa được gửi")
+    try:
+        refs = await validate_reference_urls(refs)
+    except ValueError as exc:
+        raise HTTPException(422,str(exc)) from exc
+    client = {"api_key_hash":f"admin_{session_id}","api_key_name":f"Admin ({session_id})",
+              "daily_limit":0,"concurrency_limit":0,"allowed_durations":list(SUPPORTED_DURATIONS)}
+    jobs=[];created=False
+    try:
+        for prompt in batch.prompts:
+            for _ in range(batch.copies):
+                # Each job owns its references; one finishing must not delete another's input.
+                images = await asyncio.to_thread(materialize_data_urls,refs)
+                jobs.append({"id":"video_"+hashlib.sha256(f"{batch_id}:{len(jobs)}".encode()).hexdigest()[:32],
+                    "model":model,"prompt":prompt.prompt.strip(),"duration":batch.duration,"ratio":batch.ratio,
+                    "reference_images":json.dumps(images,ensure_ascii=False),"api_key_hash":client["api_key_hash"],
+                    "api_key_name":client["api_key_name"],"client_concurrency_limit":0})
+        try:
+            rows,created = store.create_batch(batch_id,fingerprint,jobs,max_pending=config.MAX_PENDING_TASKS)
+        except ValueError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except PendingTaskLimitExceeded as exc:
+            raise HTTPException(429,str(exc)) from exc
+        if created:
+            for row in rows:
+                asyncio.create_task(_run_task(row["id"],model,row["prompt"],batch.ratio,batch.duration,
+                    _task_reference_images(row["reference_images"]),client))
+        return {"batch_id":batch_id,"tasks":[{"id":r["id"],"status":r["status"]} for r in rows]}
+    finally:
+        if not created:
+            for job in jobs:
+                cleanup_local_references(_task_reference_images(job["reference_images"]))
+
+
 app.mount("/", StaticFiles(directory="web", html=True), name="web")

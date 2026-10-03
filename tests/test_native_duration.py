@@ -163,24 +163,19 @@ def _panel_html() -> str:
     return Path("web/index.html").read_text(encoding="utf-8")
 
 
-def test_panel_duration_checkboxes_are_not_hardcoded():
-    """回归：面板原先把允许时长写死成 [5,10,15,30]。
-
-    这样即使后端放开了任意时长（DOLA_NATIVE_DURATION_MAX），面板也勾不到新档位，
-    功能等于从面板上用不了。
-    """
-    html = _panel_html()
-    assert "SUPPORTED_DURATIONS.map(" in html, "时长勾选项应遍历 SUPPORTED_DURATIONS"
-    assert "SUPPORTED_DURATIONS.filter(" in html, "已勾选时长的收集应基于 SUPPORTED_DURATIONS"
-    # 写死的使用点（map/filter）必须已清除；只允许保留一处兜底默认值声明。
-    assert "[5,10,15,30].map(" not in html
-    assert "[5,10,15,30].filter(" not in html
+def test_personal_studio_has_no_client_key_management():
+    from pathlib import Path
+    html=(Path(__file__).resolve().parents[1]/"web"/"index.html").read_text()
+    assert 'id="tab-keys"' not in html
+    assert 'id="gen_duration"' in html
 
 
-def test_panel_takes_durations_from_admin_keys_api():
-    """面板要从 /api/admin/keys 的 supported_durations 更新档位。"""
-    html = _panel_html()
-    assert "r.supported_durations" in html
+def test_studio_native_duration_options_match_backend():
+    from pathlib import Path
+    html=(Path(__file__).resolve().parents[1]/"web"/"index.html").read_text()
+    for d in (5,10,15,30):
+        assert f'<option value="{d}">' in html
+    assert '<option value="4">' not in html
 
 
 def test_admin_keys_response_exposes_supported_durations():

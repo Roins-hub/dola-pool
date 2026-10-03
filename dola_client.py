@@ -9,7 +9,7 @@
 - 视频生成（生成影片前缀 + ability_type:17 + 轮询出片）
 - 多账号轮询（shuffle + 失败换号 + 额度检测）
 """
-
+import cf_hook
 import asyncio
 import binascii
 import hashlib
@@ -724,9 +724,9 @@ class DolaClient:
 
     # ===== 视频生成 =====
 
-    async def generate_video(self, prompt: str, ratio: str = "9:16", duration: int = 5, timeout: int = 300) -> str:
+    async def generate_video(self, prompt: str, ratio: str = "16:9", duration: int = 30, model: str = "seedance_v2.5", timeout: int = 300) -> str:
         """视频生成，返回视频下载 URL"""
-        body = self._build_video_body(prompt, ratio, duration)
+        body = self._build_video_body(prompt, ratio, duration, model=model)
         async with aiohttp.ClientSession(trust_env=True) as session:
             resp = await self._request_chat_completion(session, body, timeout=120)
             async with resp:
@@ -743,7 +743,7 @@ class DolaClient:
         # 轮询出片
         return await self._poll_video(conv_id, timeout)
 
-    def _build_video_body(self, prompt: str, ratio: str, duration: int) -> dict:
+    def _build_video_body(self, prompt: str, ratio: str, duration: int, model: str = "seedance_v2.5") -> dict:
         now_ms = int(time.time() * 1000)
         now_sec = now_ms // 1000
         # ★ 必须加"生成影片："前缀，否则被降级为文生图
@@ -808,7 +808,7 @@ class DolaClient:
             },
             "chat_ability": {
                 "ability_type": 17,
-                "ability_param": json.dumps({"ratio": ratio, "model": "seedance_v2.0", "duration": duration}),
+                "ability_param": json.dumps({"ratio": ratio, "model": model, "duration": duration}),
             },
             "user_context": [],
             "ext": {

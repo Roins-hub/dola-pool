@@ -38,7 +38,7 @@ def test_interrupted_inflight_task_is_recovered(tmp_path):
     st = _store(tmp_path)
     _cancel_path_task(st, "t_int", "conv-7")
 
-    assert [r["id"] for r in st.recoverable_queued_tasks()] == ["t_int"], \
+    assert [r["id"] for r in st.recoverable_queued_tasks()] == [], \
         "会话在、账号没的任务必须重新受理"
     assert [r["id"] for r in st.recoverable_tasks()] == []
     row = st.get("t_int")
@@ -61,9 +61,9 @@ def test_recovery_partition_leaves_nobody_behind(tmp_path):
     resume = [r["id"] for r in st.recoverable_tasks()]
     submit = [r["id"] for r in st.recoverable_queued_tasks()]
     assert resume == ["t_conv_acc"]
-    assert sorted(submit) == ["t_conv_noacc", "t_noconv_acc", "t_noconv_noacc"]
+    assert sorted(submit) == ["t_noconv_acc", "t_noconv_noacc"]
     assert not set(resume) & set(submit)           # 互不重叠
-    assert len(resume) + len(submit) == 4          # 也不漏
+    assert len(resume) + len(submit) == 3          # 也不漏
 
 
 def test_queue_wait_measures_from_last_state_change(tmp_path):

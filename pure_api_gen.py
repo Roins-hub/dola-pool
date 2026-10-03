@@ -34,7 +34,7 @@ NO_ACK_SECONDS = config.NO_ACK_SECONDS
 CONCAT_CONTAINER = "mp4"
 FINAL_POLL_STATUSES = (
     "failed", "rate_limited", "quota_exceeded", "generation_voided",
-    "submit_retry", "conversation_expired",
+    "submit_retry", "conversation_expired", "duration_split",
 )
 
 # 上游回执里的额度口径：官方报价与实际扣点可能不一致（30 秒报价 6 点、实际扣 2 点），
@@ -87,6 +87,14 @@ class _CreditTracker:
 
 class PureApiError(RuntimeError):
     """纯 API 出片失败（含登录态失效/额度/风控等，由调用方决定换号/回退）。"""
+
+
+class ConfirmedVideoFailure(PureApiError):
+    """Upstream explicitly finished without a video; no resubmission."""
+
+
+class PendingResultError(TimeoutError):
+    """Submission/result uncertain: never rotate or submit again automatically."""
 
 
 class PureLoginExpired(PureApiError):
@@ -142,13 +150,13 @@ def _dola():
 
 def _load_state(state_file: Path) -> dict[str, Any]:
     if not state_file or not Path(state_file).exists():
-        raise PureApiError(f"cookie 状态文件不存在: {state_file}")
+        raise PureApiError(f"Cookie state file not found: {state_file}")
     try:
         data = json.loads(Path(state_file).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise PureApiError(f"cookie 状态文件无效: {state_file}") from exc
+        raise PureApiError(f"Invalid cookie state file: {state_file}") from exc
     if not isinstance(data, dict) or not data.get("cookies"):
-        raise PureApiError(f"cookie 状态无 cookies: {state_file}")
+        raise PureApiError(f"Cookie state contains no cookies: {state_file}")
     return data
 
 
@@ -181,7 +189,7 @@ def _upload_reference_images(dola, session, ctx, headers, paths, *,
                     raise PureApiError(
                         f"参考图上传失败（{idx}/{len(imgs)} {img.name}）: {str(exc)[:200]}"
                     ) from exc
-                log.warning("参考图走代理上传失败，改用直连重试（%s）: %s",
+                log.warning("Reference image upload via proxy failed, retrying directly (%s): %s",
                             type(exc).__name__, str(exc)[:160])
                 if fallback is None:
                     fallback = dola.setup_session(
@@ -194,7 +202,7 @@ def _upload_reference_images(dola, session, ctx, headers, paths, *,
                         f"参考图直连上传也失败（{idx}/{len(imgs)} {img.name}）: {str(exc2)[:200]}"
                     ) from exc2
             uploaded.append(info)
-            log.info("参考图 %s/%s 已上传 %s -> %s",
+            log.info("Reference image %s/%s uploaded %s -> %s",
                      idx, len(imgs), img.name, str(info.get("uri"))[:80])
         return uploaded
     finally:
@@ -244,6 +252,21 @@ def _clip_seconds(dola, poll) -> float | None:
     return max(seconds) if seconds else None
 
 
+def upstream_poll_update(poll):
+    """Only expose bounded reply signals, never raw chain data or media URLs."""
+    def clean(value):
+        text = re.sub(r"https?://\S+", "[liên kết]", str(value))
+        return re.sub(r"(?i)(sessionid|mstoken|cookie|authorization|access_token)\s*[:=]\s*[^\s,;]+",
+                      r"\1=[đã ẩn]", text)[:2000]
+    get = poll.get if isinstance(poll, dict) else lambda key, default=None: getattr(poll, key, default)
+    return {"status": clean(get("status", "pending")),
+            "texts": list(dict.fromkeys(clean(t) for t in (get("texts", []) or []) if t))[-10:],
+            "creation_statuses": [clean(s) for s in (get("creation_statuses", []) or [])][-10:],
+            "wait_minutes": clean(get("wait_minutes", "") or "").replace("小时", " giờ ").replace("分钟", " phút"),
+            "failure_reasons": [clean(s) for s in (get("failure_reasons", []) or [])][-5:],
+            "connection": "ok"}
+
+
 def _wait_video_same_conversation(
     *,
     dola,
@@ -265,11 +288,8 @@ def _wait_video_same_conversation(
     2. 先回「视频生成目前支持 4~15 秒」再出 15 秒。
     早先遇到第 2 种就去回一句「拆成两段」，结果上游把第二段当成新的「显式 15 秒请求」
     按 6 点报价，余额不足 6 点直接拒绝，整条 30 秒任务失败。
-    现在统一按上游自己的计划等出片：拿到几秒就是几秒，不足 30 秒由调用方
-    （generate_pure_video 落地后 ffprobe 复核）新开一条对话补一段再本地拼接。
+    等待同一会话；短片仍交付，不自动提交额外片段。
     """
-    ack_deadline = min(deadline, time.time() + NO_ACK_SECONDS)
-    acked = False
     split_noted = False
     errors = 0
     while True:
@@ -278,28 +298,32 @@ def _wait_video_same_conversation(
             errors = 0
         except Exception as exc:
             errors += 1
-            log.info("pure poll: 轮询失败 %s (%s/5): %s", account, errors, str(exc)[:200])
+            if on_poll:
+                try:
+                    on_poll(time.time(), {"connection": "interrupted"})
+                except TypeError:
+                    on_poll(time.time())
+            log.info("pure poll: Poll failed for %s (%s/5): %s", account, errors, str(exc)[:200])
             if errors >= 5 or time.time() >= deadline:
-                raise PureApiError(f"{account} 轮询 Dola 任务失败: {str(exc)[:200]}") from exc
-            time.sleep(poll_interval)
+                raise PendingResultError(f"Polling tạm gián đoạn: {str(exc)[:200]}") from exc
+            time.sleep(min(poll_interval, max(0, deadline - time.time())))
             continue
         status = str(getattr(poll, "status", "") or "")
         texts = [str(item) for item in (getattr(poll, "texts", None) or [])]
         if credits is not None:
             credits.note(texts)
-        if any("视频生成额度" in item for item in texts):
-            acked = True
         if on_poll:
             try:
-                on_poll(time.time())
+                try:
+                    on_poll(time.time(), upstream_poll_update(poll))
+                except TypeError:
+                    on_poll(time.time())
             except Exception:
                 pass
-        if duration < 30:
-            return poll, []
         clip = _clip_seconds(dola, poll)
         if clip is not None and clip >= duration * 0.9:
             # 上游直出完整时长（实测 30.042s / 2 点）：不需要补段与拼接。
-            log.info("pure poll: %s 上游直出 %.1fs 成片", account, clip)
+            log.info("pure poll: %s Upstream generated direct %.1fs video", account, clip)
             return poll, []
         keys = _media_keys(poll)
         if len(keys) >= 2:
@@ -310,16 +334,10 @@ def _wait_video_same_conversation(
         if not split_noted and dola.poll_has_duration_split(poll, job_seconds=duration):
             # 只记录，不再回「拆两段」（那会把第二段抬到 6 点报价）。
             split_noted = True
-            log.info("pure poll: %s 上游称只支持 4~15 秒，不协商拆段，等上游出片后本地补段", account)
-        if not acked and time.time() >= ack_deadline:
-            # 提交成功但上游一直不回话（无额度提示、无状态）：按拍板判【异常】，
-            # 由调用方把该号放进异常组并换号重试。
-            log.info("pure poll: %s 上游 %ds 无任何回执 → 判异常", account, NO_ACK_SECONDS)
-            raise AbnormalNoAckError(
-                f"{ABNORMAL_RETRY_HINT}（提交后 {NO_ACK_SECONDS} 秒内上游没有任何回执）")
+            log.info("pure poll: %s Upstream supports 4-15s, waiting for completion before local stitching", account)
         if time.time() >= deadline:
-            return poll, []
-        time.sleep(poll_interval)
+            raise PendingResultError("Chưa lấy được kết quả — có thể Dola vẫn đang tạo")
+        time.sleep(min(poll_interval, max(0, deadline - time.time())))
 
 
 def _progress_heartbeat(on_poll, *, interval: float | None = None):
@@ -371,7 +389,7 @@ def _await_first_ack(*, dola, session, ctx, account: str, conversation_id: str,
         try:
             poll = dola.inspect_video_once(session, ctx, conversation_id)
         except Exception as exc:
-            log.info("first-ack: %s 轮询异常（继续等）: %s", account, str(exc)[:160])
+            log.info("first-ack: %s Poll exception (retrying): %s", account, str(exc)[:160])
             time.sleep(poll_interval)
             continue
         texts = [str(item) for item in (getattr(poll, "texts", None) or [])]
@@ -482,9 +500,9 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                 timeout_sec=180, video_ability=True,
             )
             if submit.error:
-                raise PureApiError(f"{account} 第 {index} 段提交失败: {str(submit.error)[:200]}")
+                raise PureApiError(f"{account} Segment {index} submission failed: {str(submit.error)[:200]}")
             if not submit.conversation_id:
-                raise PureApiError(f"{account} 第 {index} 段未返回 conversation_id")
+                raise PureApiError(f"{account} Segment {index} did not return conversation_id")
             if index == 1 and on_conversation_id:
                 try:
                     on_conversation_id(account, submit.conversation_id, time.time() + timeout)
@@ -508,14 +526,14 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                 )
             url = result.get("download_url") or result.get("source_url") or ""
             if not url:
-                raise PureApiError(f"{account} 第 {index} 段没有可下载的视频地址")
+                raise PureApiError(f"{account} Segment {index} has no downloadable video URL")
             part = tmp_dir / f"part{index}.mp4"
             dola.download_video(
                 url, str(part),
                 referer=f"{dola.BASE}/chat/{submit.conversation_id}", proxy=proxy or "",
             )
             parts.append(part)
-            log.info("pure pair: %s 第 %s 段完成", account, index)
+            log.info("pure pair: %s Segment %s completed", account, index)
         return _concat_videos(parts, Path(output_path))
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -591,10 +609,10 @@ def ensure_web_playable(path: str | Path) -> Path:
             tmp_path.unlink()
         except OSError:
             pass
-        log.info("web-compat: %s 转码失败，保留原片（%s）", out_path.name, codec)
+        log.info("web-compat: %s Transcode failed, keeping original (%s)", out_path.name, codec)
         return out_path
     tmp_path.replace(out_path)
-    log.info("web-compat: %s %s -> h264（浏览器可预览）", out_path.name, codec)
+    log.info("web-compat: %s %s -> h264 (web playable)", out_path.name, codec)
     return out_path
 
 
@@ -633,7 +651,7 @@ def _concat_videos(parts: list[Path], output_path: Path) -> Path:
     except OSError:
         pass
     if not ok or not output_path.exists() or output_path.stat().st_size == 0:
-        raise PureApiError("两段视频拼接失败（ffmpeg 不可用或素材不兼容）")
+        raise PureApiError("Failed to concatenate video segments (ffmpeg unavailable or incompatible codecs)")
     return output_path
 
 
@@ -647,11 +665,11 @@ def merge_split_segments(*, dola, session, ctx, segment_keys: list[str],
         for index, key in enumerate(segment_keys, 1):
             url = _segment_media_url(dola, session, ctx, key, remove_watermark, proxy)
             if not url:
-                raise PureApiError(f"{account} 第 {index} 段没有可下载的视频地址")
+                raise PureApiError(f"{account} Segment {index} has no downloadable video URL")
             part = tmp_dir / f"seg{index}.mp4"
             dola.download_video(url, str(part), referer=f"{dola.BASE}/", proxy=proxy)
             parts.append(part)
-        log.info("pure split: %s 两段已下载，开始拼接 -> %s", account, output_path)
+        log.info("pure split: %s Both segments downloaded, stitching -> %s", account, output_path)
         return _concat_videos(parts, Path(output_path))
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -842,19 +860,11 @@ def generate_pure_video(
     pc_version = pc_version or config.PURE_API_PC_VERSION
     remove_watermark = (config.PURE_API_REMOVE_WATERMARK
                         if remove_watermark is None else bool(remove_watermark))
-    timeout = timeout or config.PURE_API_TIMEOUT
+    timeout = timeout if timeout is not None else config.OBSERVATION_SECONDS
     poll_interval = poll_interval or config.PURE_API_POLL_INTERVAL
-    # 30 秒要先出片、落地复核，必要时再补一段并拼接，15 分钟不够。
-    if int(duration or 0) >= 30:
-        timeout = max(timeout, 1800)
-
-    if reference_image_paths:
-        # 带参考图时链路更长（上传 + 生成），按参考图专用超时兜底。
-        timeout = max(timeout, config.REFERENCE_VIDEO_TIMEOUT)
-
     state_file = Path(cookie_state_path)
     _load_state(state_file)
-    if not proxy:
+    if not proxy and config.TRANSPORT_MODE != "relay":
         proxy = (config.PROXY or "").strip()
 
     session, ctx, headers = dola.setup_session(
@@ -887,18 +897,21 @@ def generate_pure_video(
             state_file=state_file, region=region, pc_version=pc_version)
     submit_prompt = (dola.enrich_multi_image_prompt(prompt, len(uploaded_images))
                      if uploaded_images else prompt)
-    submit = dola.submit_chat_completion(
-        session, ctx, headers,
-        images=uploaded_images, audios=[], prompt=submit_prompt, duration=duration,
-        model=pure_model, ratio=ratio, timeout_sec=180, video_ability=True,
-    )
+    try:
+        submit = dola.submit_chat_completion(
+            session, ctx, headers,
+            images=uploaded_images, audios=[], prompt=submit_prompt, duration=duration,
+            model=pure_model, ratio=ratio, timeout_sec=180, video_ability=True,
+        )
+    except Exception as exc:
+        raise PendingResultError("Chưa xác định Dola đã nhận yêu cầu hay chưa") from exc
     if submit.error:
         msg = f"{submit.error_code or 'upstream'}: {submit.error}"
         if any(k in msg.lower() for k in ("login", "登录", "ログイン", "未登录", "anonymous")):
             raise PureLoginExpired(f"{account} 纯 API 会话失效: {msg[:200]}")
-        raise PureApiError(f"{account} 提交失败: {msg[:300]}")
+        raise PureApiError(f"{account} Submission failed: {msg[:300]}")
     if not submit.conversation_id:
-        raise PureApiError(f"{account} 提交未返回 conversation_id")
+        raise PendingResultError("Dola chưa trả conversation_id; không tự gửi lại")
 
     conversation_id = submit.conversation_id
     deadline = time.time() + timeout
@@ -908,187 +921,70 @@ def generate_pure_video(
         except Exception:
             pass
 
-    if int(duration) >= 30:
-        # 30 秒：等上游出片（可能是完整 30 秒，也可能被压到 15 秒），落地后复核。
-        poll, segments = _wait_video_same_conversation(
-            dola=dola, session=session, ctx=ctx, headers=headers,
-            conversation_id=conversation_id, account=account,
-            duration=int(duration), deadline=deadline,
-            poll_interval=poll_interval, on_poll=on_poll,
-            credits=credits,
-        )
-        if segments:
-            # 上游不会自己做剪辑合成，两段 15 秒齐了就在这里用 ffmpeg 拼成 30 秒。
-            out_dir = Path(output_dir or config.DOWNLOAD_DIR)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            merged_path = out_dir / f"{account}_{uuid.uuid4().hex[:12]}.{CONCAT_CONTAINER}"
-            merged = merge_split_segments(
-                dola=dola, session=session, ctx=ctx, segment_keys=segments,
-                output_path=merged_path, account=account,
-                remove_watermark=remove_watermark, proxy=proxy or "",
-            )
-            return {
-                "local_path": str(merged),
-                "account": account,
-                "conversation_id": conversation_id,
-                "download_url": "",
-                "duration": int(duration),
-                "model": pure_model,
-                "pure_api": True,
-                "merged_segments": len(segments),
-                **credits.fields(),
-            }
-        result = _result_from_poll(
-            dola=dola, session=session, ctx=ctx, conversation_id=conversation_id,
-            poll=poll, remove_watermark=remove_watermark, proxy=proxy or "",
-        )
-    else:
-        # 拍板的 5 分钟规则：短时长任务同样先等「第一次回执」，没等到就判【异常】，
-        # 而不是干等到 15 分钟总超时。
-        _await_first_ack(
-            dola=dola, session=session, ctx=ctx, account=account,
-            conversation_id=conversation_id,
-            ack_deadline=time.time() + NO_ACK_SECONDS,
-            poll_interval=poll_interval, credits=credits, on_poll=on_poll,
-        )
-        # 心跳：get_video_result 内部轮询不会回调进度，这里替它刷 last_poll_at，
-        # 免得看门狗把正常等待判成「卡住」而重新派发（重投 = 白扣一次额度）。
-        with _progress_heartbeat(on_poll):
-            result = dola.get_video_result(
-                session, ctx, conversation_id,
-                timeout=timeout, interval=poll_interval,
-                remove_watermark=remove_watermark, proxy=proxy or "",
-            )
-    credits.note(result.get("texts"))
-    credits.note(result.get("failure_reasons"))
-    status = result.get("status")
-    if status != "succeeded":
-        reasons = result.get("failure_reasons") or []
-        texts = result.get("texts") or []
-        detail = " | ".join(str(x) for x in (reasons + texts))[:300]
-        # 派发后一句回执都没有（连额度播报、状态都没有）→ 按拍板判【异常】，提示重试
-        if not reasons and not texts:
-            raise AbnormalNoAckError(
-                f"{ABNORMAL_RETRY_HINT}（{NO_ACK_SECONDS} 秒内上游没有任何回执，status={status}）")
-        if any(str(x).lower() in ("login", "未登录", "ログイン") for x in reasons + texts):
-            raise PureLoginExpired(f"{account} 纯 API 轮询发现登录失效: {detail}")
-        # 上游对 30 秒请求有两条拒绝路径：额度不足（报价 6 点）和「单条最多 15 秒，
-        # 要不要拆两段」的追问。两者在 ALLOW_30S_PAIR 打开时都用本地两段兜底，
-        # 而不是直接失败（否则画布那边的 30 秒任务只能靠换号碰运气）。
-        duration_refused = bool(
-            status == getattr(dola, "DURATION_SPLIT_STATUS", "duration_split")
-            or getattr(dola, "looks_like_duration_confirm", lambda _t: False)(detail)
-            or getattr(dola, "looks_like_duration_capped", lambda _t: False)(detail)
-        )
-        if int(duration) >= 30 and config.ALLOW_30S_PAIR and (
-                _credit_short(detail) or duration_refused):
-            # 额度/限流类失败：只有在显式开启两段兜底时，才用「两条独立的 30 秒请求各被上游
-            # 压成 15 秒」再本地拼接；默认不拼接，交给调用方换号重试拿原生 30 秒。
-            try:
-                out_dir = Path(output_dir or config.DOWNLOAD_DIR)
-                out_dir.mkdir(parents=True, exist_ok=True)
-                merged_path = out_dir / f"{account}_{uuid.uuid4().hex[:12]}.{CONCAT_CONTAINER}"
-                merged = _generate_capped_pair(
-                    dola=dola, session=session, ctx=ctx, headers=headers, account=account,
-                    prompt=prompt, ratio=ratio, model=pure_model, output_path=merged_path,
-                    remove_watermark=remove_watermark, proxy=proxy or "",
-                    timeout=timeout, poll_interval=poll_interval,
-                    on_poll=on_poll, on_conversation_id=on_conversation_id,
-                    images=uploaded_images,
-                    credits=credits,
-                )
-                return {
-                    "local_path": str(merged),
-                    "account": account,
-                    "conversation_id": conversation_id,
-                    "download_url": "",
-                    "duration": int(duration),
-                    "model": pure_model,
-                    "pure_api": True,
-                    "merged_segments": len(PART_HINTS),
-                    "merge_mode": "capped_pair",
-                    **credits.fields(),
-                }
-            except PureApiError as fallback_exc:
-                raise PureApiError(
-                    f"{account} 出片未成功 status={status}: {detail} —— {SPLIT_CREDIT_HINT}"
-                    f"；低成本两段兜底也未成功：{fallback_exc}"
-                ) from fallback_exc
-        if duration_refused and not config.ALLOW_30S_PAIR:
-            raise PureApiError(
-                f"{account} 上游要求 30 秒拆两段（status={status}）：{detail} —— "
-                "当前按「30 秒不拼接」策略换号重试；要直接用 2×15 秒本地拼接，"
-                "把 DOLA_ALLOW_30S_PAIR 设为 1"
-            )
-        raise PureApiError(f"{account} 出片未成功 status={status}: {detail}")
+    return _finish_pure_video(dola=dola, session=session, ctx=ctx, headers=headers,
+        account=account, conversation_id=conversation_id, duration=duration,
+        model=pure_model, deadline=deadline, poll_interval=poll_interval,
+        on_poll=on_poll, credits=credits, proxy=proxy, output_dir=output_dir,
+        remove_watermark=remove_watermark)
 
-    download_url = result.get("download_url") or result.get("source_url") or ""
-    if not download_url:
-        raise PureApiError(f"{account} 未解析到下载 URL")
 
+def _finish_pure_video(*, dola, session, ctx, headers, account, conversation_id,
+                       duration, model, deadline, poll_interval, on_poll, credits,
+                       proxy, output_dir, remove_watermark):
+    poll, segments = _wait_video_same_conversation(
+        dola=dola, session=session, ctx=ctx, headers=headers,
+        conversation_id=conversation_id, account=account, duration=int(duration),
+        deadline=deadline, poll_interval=poll_interval, on_poll=on_poll, credits=credits)
+    if on_poll:
+        try:
+            on_poll(time.time(), "downloading")
+        except TypeError:
+            on_poll(time.time())
     out_dir = Path(output_dir or config.DOWNLOAD_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{account}_{uuid.uuid4().hex[:12]}.mp4"
-    try:
-        saved = dola.download_video(
-            download_url, str(out_path),
-            referer=f"{dola.BASE}/chat/{conversation_id}", proxy="",
-        )
-    except Exception as exc:
-        raise PureApiError(f"{account} 下载失败: {str(exc)[:200]}") from exc
+    if segments:
+        saved = merge_split_segments(dola=dola, session=session, ctx=ctx,
+            segment_keys=segments, output_path=out_path, account=account,
+            remove_watermark=remove_watermark, proxy=proxy or "")
+    else:
+        result = _result_from_poll(dola=dola, session=session, ctx=ctx,
+            conversation_id=conversation_id, poll=poll,
+            remove_watermark=remove_watermark, proxy=proxy or "")
+        credits.note(result.get("texts"))
+        if result.get("status") != "succeeded":
+            if result.get("status") not in FINAL_POLL_STATUSES:
+                raise PendingResultError("Chưa lấy được kết quả — có thể Dola vẫn đang tạo")
+            raise ConfirmedVideoFailure("Dola đã kết thúc tác vụ: " + " | ".join(
+                str(x) for x in (result.get("failure_reasons") or result.get("texts") or []))[:300])
+        url = result.get("download_url") or result.get("source_url")
+        if not url:
+            raise PendingResultError("Video đã tạo nhưng chưa lấy được địa chỉ tải")
+        try:
+            saved = dola.download_video(url, str(out_path),
+                referer=f"{dola.BASE}/chat/{conversation_id}", proxy=proxy or "")
+        except Exception as exc:
+            raise PendingResultError("Video đã tạo nhưng tải tạm gián đoạn") from exc
+    # A short delivered clip is still a result. Never spend more credits here.
+    actual = _media_duration(Path(saved))
+    return {"local_path": str(saved), "account": account,
+            "conversation_id": conversation_id, "duration": int(duration),
+            "actual_duration": actual, "short_clip": clip_is_short(actual, int(duration)),
+            "model": model, "pure_api": True, **credits.fields()}
 
-    if int(duration) >= 30:
-        # 上游有时「静默」把 30 秒压成 15 秒（不给明确提示），落地后用 ffprobe 复核实际时长。
-        # 默认**不拼接**（30 秒要一气呵成）：只拿到短视频就当作本次失败，由调用方换号重试，
-        # 直到某个号给出原生 30 秒成片；需要旧的两段兜底时把 DOLA_ALLOW_30S_PAIR 设为 1。
-        actual = _media_duration(Path(saved))
-        if clip_is_short(actual, int(duration)) and not config.ALLOW_30S_PAIR:
-            raise ShortClipError(
-                f"{account} 上游本次只给了 {actual:.1f} 秒成片（目标 {int(duration)} 秒），"
-                "按「30 秒不拼接」策略换号重试"
-            )
-        if clip_is_short(actual, int(duration)):
-            merged_path = out_dir / f"{account}_{uuid.uuid4().hex[:12]}.{CONCAT_CONTAINER}"
-            merged = _generate_capped_pair(
-                dola=dola, session=session, ctx=ctx, headers=headers, account=account,
-                prompt=prompt, ratio=ratio, model=pure_model, output_path=merged_path,
-                remove_watermark=remove_watermark, proxy=proxy or "",
-                timeout=timeout, poll_interval=poll_interval,
-                on_poll=on_poll, on_conversation_id=on_conversation_id,
-                existing_parts=[Path(saved)],
-                images=uploaded_images,
-                credits=credits,
-            )
-            return {
-                "local_path": str(merged),
-                "account": account,
-                "conversation_id": conversation_id,
-                "download_url": download_url,
-                "duration": int(duration),
-                "model": pure_model,
-                "pure_api": True,
-                "merged_segments": len(PART_HINTS),
-                "merge_mode": "partial_pair",
-                "first_segment_duration": actual,
-                **credits.fields(),
-            }
-    elif int(duration) not in config.NATIVE_DURATIONS:
-        # 任意时长（非原生档位）：上游没有「两段拼成 20 秒」这种兜底，
-        # 所以只复核实际时长 —— 短了直接失败换号，避免把 15 秒片当 20 秒交付。
-        actual = _media_duration(Path(saved))
-        if clip_is_short(actual, int(duration)):
-            raise ShortClipError(
-                f"{account} 上游本次只给了 {actual:.1f} 秒成片（目标 {int(duration)} 秒），"
-                "非原生时长无拼接兜底，直接换号重试"
-            )
 
-    return {
-        "local_path": str(saved),
-        "account": account,
-        "conversation_id": conversation_id,
-        "download_url": download_url,
-        "duration": int(duration),
-        "model": pure_model,
-        "pure_api": True,
-        **credits.fields(),
-    }
+def resume_pure_video(*, account, conversation_id, cookie_state_path, timeout,
+                      duration=30, ratio=None, proxy="", on_poll=None, on_balance=None):
+    """Read an existing conversation; no submission/upload path is reachable."""
+    dola = _dola()
+    install()
+    _load_state(Path(cookie_state_path))
+    session, ctx, headers = dola.setup_session(region=config.PURE_API_REGION,
+        pc_version=config.PURE_API_PC_VERSION, proxy=proxy or "", login_pure=True,
+        login_state_file=str(cookie_state_path))
+    return _finish_pure_video(dola=dola, session=session, ctx=ctx, headers=headers,
+        account=account, conversation_id=conversation_id, duration=duration or 30,
+        model="", deadline=time.time() + timeout,
+        poll_interval=config.PURE_API_POLL_INTERVAL, on_poll=on_poll,
+        credits=_CreditTracker(on_balance), proxy=proxy, output_dir=config.DOWNLOAD_DIR,
+        remove_watermark=config.PURE_API_REMOVE_WATERMARK)

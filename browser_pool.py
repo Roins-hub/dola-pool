@@ -19,7 +19,7 @@ from video_worker_ui import (
 )
 from pure_api_gen import (
     AbnormalNoAckError, ShortClipError, ensure_web_playable, generate_pure_video,
-    hello_probe, probe_login,
+    hello_probe, probe_login, resume_pure_video, PendingResultError, ConfirmedVideoFailure,
 )
 import config
 import cred_store
@@ -186,6 +186,19 @@ class AllAccountsQuotaBlockedError(RuntimeError):
 
 class AllAccountsGroupEmptyError(RuntimeError):
     """目标额度组（如 seedance-2.0 需要的【满额】组）暂时没有可用账号，排队超时。"""
+
+
+class ContentRefusalError(RuntimeError):
+    """上游明确拒绝内容（版权限制/内容审核/肖像保护/违规等）。
+
+    必须立即终止任务，不得换号重试，也不得判定账号异常、风控或扣减额度。
+    """
+
+    def __init__(self, message: str, failure_code: str = "", failure_group: str = "", upstream_request_id: str = ""):
+        super().__init__(message)
+        self.failure_code = failure_code
+        self.failure_group = failure_group
+        self.upstream_request_id = upstream_request_id
 
 
 class _UnlimitedSemaphore:
@@ -1117,12 +1130,12 @@ class BrowserPool:
 
     def _is_cookie_source(self, name: str) -> bool:
         meta = self._meta(name)
-        return bool(meta and meta["source"] == "cookie")
+        return bool(meta and meta["source"] in ("cookie", "facebook"))
 
     def is_pure_account(self, name: str) -> bool:
         """这个号能不能走纯 API（cookie 来源 + 有 cookie_state.json）。
 
-        服务重启后 `_resume_task` 用它决定走纯 API 重新受理，而不是调浏览器 resume
+        服务重启后仅恢复纯 API 原会话轮询，不重新发送 prompt
         （本机没有可用的 Chromium，调了只会报 driver 错误）。
         """
         return self._pure_state(name) is not None and self._is_cookie_source(name)
@@ -1142,17 +1155,19 @@ class BrowserPool:
                 generate_pure_video,
                 account=account, prompt=prompt, ratio=ratio, duration=duration,
                 model=model, cookie_state_path=pure_state,
-                proxy=self._proxy_url_for(account),
+                proxy="" if config.TRANSPORT_MODE == "relay" else self._proxy_url_for(account),
                 on_conversation_id=on_conversation_id, on_poll=on_poll,
                 on_balance=on_balance,
                 reference_image_paths=reference_image_paths,
+                timeout=config.OBSERVATION_SECONDS,
             )
         else:
             # login 账号走浏览器出片
             result = await generate_video(
                 account, prompt, ratio, duration, model=model,
                 on_conversation_id=on_conversation_id, on_poll=on_poll,
-                on_balance=on_balance, reference_image_paths=reference_image_paths)
+                on_balance=on_balance, reference_image_paths=reference_image_paths,
+                timeout=config.OBSERVATION_SECONDS)
         return await self._web_playable(result)
 
     async def _web_playable(self, result: dict) -> dict:
@@ -1404,11 +1419,18 @@ class BrowserPool:
                 def on_balance(balance, source=""):
                     self._set_credit_balance(account, balance, source)
                 try:
-                    result = await self._web_playable(await resume_video(
-                        account, conversation_id, timeout,
-                        on_poll=on_poll, on_balance=on_balance,
-                        duration=duration, ratio=ratio))
-                    self._claim_for(account, cost, result)
+                    if self.is_pure_account(account):
+                        result = await asyncio.to_thread(resume_pure_video,
+                            account=account, conversation_id=conversation_id,
+                            cookie_state_path=self._pure_state(account), timeout=timeout,
+                            duration=duration, ratio=ratio, proxy="" if config.TRANSPORT_MODE == "relay" else self._proxy_url_for(account),
+                            on_poll=on_poll, on_balance=on_balance)
+                    else:
+                        result = await resume_video(account, conversation_id, timeout,
+                            on_poll=on_poll, on_balance=on_balance, duration=duration, ratio=ratio)
+                    result = await self._web_playable(result)
+                    if cost:
+                        self._claim_for(account, cost, result)
                     self._conn.execute(
                         "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
                         (time.time(), account))
@@ -1516,11 +1538,26 @@ class BrowserPool:
                             def on_balance(balance, source=""):
                                 self._set_credit_balance(account, balance, source)
 
-                            result = await self._generate_effective(
-                                account, prompt, ratio, duration, model=model,
-                                on_conversation_id=on_conversation_id, on_poll=on_poll,
-                                on_balance=on_balance,
-                                reference_image_paths=reference_image_paths)
+                            accepted = False
+                            def remember_conversation(*args):
+                                nonlocal accepted
+                                accepted = True
+                                if on_conversation_id:
+                                    on_conversation_id(*args)
+                            try:
+                                result = await self._generate_effective(
+                                    account, prompt, ratio, duration, model=model,
+                                    on_conversation_id=remember_conversation, on_poll=on_poll,
+                                    on_balance=on_balance,
+                                    reference_image_paths=reference_image_paths)
+                            except Exception as exc:
+                                kind = classify_upstream_failure(str(exc))
+                                known_rejection = isinstance(exc, (CreditInsufficientError, AccountLimitedError,
+                                    CreditError, RiskControlError, LoginExpiredError, FileNotFoundError))
+                                confirmed = isinstance(exc, (ContentRefusalError, ConfirmedVideoFailure)) or kind == "content"
+                                if not confirmed and (accepted or (not known_rejection and kind == "other")):
+                                    raise PendingResultError(str(exc)) from exc
+                                raise
                             self._claim_for(account, cost, result)
                             self._conn.execute(
                                 "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
@@ -1528,6 +1565,8 @@ class BrowserPool:
                             self._conn.commit()
                             self._fail_streak.pop(account, None)   # 出片成功 → 连续失败清零
                             return result
+                        except ConfirmedVideoFailure:
+                            raise
                         except CreditInsufficientError as e:
                             print(f"[pool] {account} 生成前积分不足，跳过: {e}", flush=True)
                             self._mark_quota_blocked(account, str(e))
@@ -1582,6 +1621,18 @@ class BrowserPool:
                             last_err = e
                         except Exception as e:
                             message = str(e)
+                            kind = classify_upstream_failure(message)
+                            if kind == "content":
+                                print(f"[pool] {account} Thượng nguồn từ chối nội dung (Content refusal) -> Dừng ngay lập tức, không đổi tài khoản: {message[:160]}", flush=True)
+                                code = getattr(e, "error_code", None) or getattr(e, "status_code", None) or ""
+                                req_id = getattr(e, "request_id", None) or getattr(e, "upstream_request_id", None) or ""
+                                group = failure_text.label_for(message) or "content_refusal"
+                                raise ContentRefusalError(
+                                    message,
+                                    failure_code=str(code) if code else "",
+                                    failure_group=group,
+                                    upstream_request_id=str(req_id) if req_id else "",
+                                ) from e
                             self._note_upstream_failure(account, message, attempt)
                             last_err = e
                         self._mark_attempt_failed(account)
