@@ -732,7 +732,10 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             store.update(task_id, status="queued", phase="waiting")
         raise
     except ConfirmedVideoFailure as e:
-        store.update(task_id, status="failed", phase="failed", error=str(e), finished_at=time.time())
+        display = failure_text.present(str(e), code=str(getattr(e, "failure_code", "") or ""),
+                                       category=str(getattr(e, "failure_group", "") or ""))
+        store.update(task_id, status="failed", phase="failed", error=failure_text.sanitize_details(str(e)),
+                     failure_group=display["category"], failure_code=display["upstream_code"], finished_at=time.time())
     except TimeoutError as e:
         _uncertain_task(task_id)
     except Exception as e:
@@ -805,7 +808,10 @@ async def _resume_task(row: dict):
         store.update(task_id, status="queued", phase="generating", last_poll_at=0)
         raise
     except ConfirmedVideoFailure as e:
-        store.update(task_id, status="failed", phase="failed", error=str(e), finished_at=time.time())
+        display = failure_text.present(str(e), code=str(getattr(e, "failure_code", "") or ""),
+                                       category=str(getattr(e, "failure_group", "") or ""))
+        store.update(task_id, status="failed", phase="failed", error=failure_text.sanitize_details(str(e)),
+                     failure_group=display["category"], failure_code=display["upstream_code"], finished_at=time.time())
     except Exception as e:
         _uncertain_task(task_id)
     finally:
@@ -1633,6 +1639,8 @@ async def admin_accounts(x_admin_key: str | None = Header(default=None)):
     accounts = pool.list_accounts(processing_accounts=store.busy_account_ids())
     sessions = proxy_store.sessions_snapshot()
     for acc in accounts:
+        acc["note_display"] = failure_text.present_note(acc.get("note") or "")
+        acc["note"] = failure_text.sanitize_details(acc.get("note") or "")
         info = get_account_proxy(acc["name"])
         acc["proxy_id"] = info["id"] if info else None
         acc["proxy_name"] = info["name"] if info else None
@@ -2680,10 +2688,36 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
     return {"jobs": JOBS}
 
 
+def _task_display(row: dict) -> dict:
+    """Presentation is derived on read, so historical records remain recoverable."""
+    try:
+        updates = json.loads(row.get("upstream_updates") or "[]")
+    except (TypeError, ValueError):
+        updates = []
+    if not isinstance(updates, list):
+        updates = []
+    safe_updates = []
+    for u in updates[-20:]:
+        if not isinstance(u, dict):
+            continue
+        safe = {key: failure_text.sanitize_details(u.get(key) or "")
+                for key in ("status", "connection", "wait_minutes")}
+        safe["at"] = u.get("at") if isinstance(u.get("at"), (int, float)) else None
+        for key in ("texts", "failure_reasons", "creation_statuses"):
+            values = u.get(key) or []
+            safe[key] = [failure_text.sanitize_details(x) for x in values[:10]] if isinstance(values, list) else []
+        safe_updates.append(safe)
+    return {"error": failure_text.sanitize_details(row.get("error") or ""),
+            "upstream_updates": json.dumps(safe_updates, ensure_ascii=False),
+            "failure_display": failure_text.present(row.get("error") or "",
+                code=row.get("failure_code") or "", category=row.get("failure_group") or ""),
+            "upstream_display": [failure_text.present_update(u) for u in updates[-20:] if isinstance(u, dict)]}
+
+
 @app.get("/api/admin/tasks")
 async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"tasks": [{**row, "target_duration": _target_duration(row), "file_exists": _task_file_exists(row)} for row in store.recent_tasks(min(max(limit, 1), 200))]}
+    return {"tasks": [{**row, **_task_display(row), "target_duration": _target_duration(row), "file_exists": _task_file_exists(row)} for row in store.recent_tasks(min(max(limit, 1), 200))]}
 
 
 @app.get("/api/admin/tasks/{task_id}")
@@ -2694,13 +2728,14 @@ async def admin_get_task(task_id: str, x_admin_key: str | None = Header(default=
         raise HTTPException(404, "task not found")
     prog = _progress_payload(status=row["status"], created_at=row["created_at"], duration=row.get("duration", 30))
     return {
+        **_task_display(row),
         "id": row["id"],
         "status": row["status"],
         "model": row["model"],
         "prompt": row["prompt"],
         "video_url": row["video_url"],
         "file_exists": _task_file_exists(row),
-        "error": row["error"],
+        "error": failure_text.sanitize_details(row["error"]),
         "failure_code": row.get("failure_code"),
         "failure_group": row.get("failure_group"),
         "upstream_request_id": row.get("upstream_request_id"),
@@ -2714,7 +2749,7 @@ async def admin_get_task(task_id: str, x_admin_key: str | None = Header(default=
         "batch_index": row.get("batch_index"),
         "last_poll_at": row.get("last_poll_at"),
         "submission_started_at": row.get("submission_started_at"),
-        "upstream_updates": row.get("upstream_updates"),
+        "upstream_updates": _task_display(row)["upstream_updates"],
         "video_duration": row.get("video_duration"),
         "video_width": row.get("video_width"),
         "video_height": row.get("video_height"),
@@ -2798,7 +2833,7 @@ async def admin_videos(limit: int = 100, x_admin_key: str | None = Header(defaul
     for r in rows:
         if r.get("status") != "completed":
             continue
-        item = dict(r)
+        item = {**r, **_task_display(r)}
         if item.get("video_url"):
             local = Path(config.DOWNLOAD_DIR) / Path(item["video_url"]).name
         else:
@@ -3130,7 +3165,7 @@ async def admin_get_batch(batch_id: str, x_admin_key: str | None = Header(defaul
     _admin_auth(x_admin_key)
     if store.batch_fingerprint(batch_id) is None:
         raise HTTPException(404,"Không tìm thấy mẻ")
-    return {"batch_id":batch_id,"tasks":[{**row,"target_duration":_target_duration(row),
+    return {"batch_id":batch_id,"tasks":[{**row,**_task_display(row),"target_duration":_target_duration(row),
         "file_exists":_task_file_exists(row)} for row in store.batch_tasks(batch_id)]}
 
 

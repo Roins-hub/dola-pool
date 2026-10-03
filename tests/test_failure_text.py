@@ -78,9 +78,9 @@ def test_account_note_line():
     when = time.mktime(time.strptime("2026-09-23 01:05", "%Y-%m-%d %H:%M"))
     line = ft.account_note_line("肖像保护", REAL_PORTRAIT_ERROR, "video_abc123", when)
     assert line.startswith("[2026-09-23 01:05]")
-    assert "肖像保护：" in line
-    assert PORTRAIT in line
-    assert line.endswith("（任务 video_abc123）")
+    assert "quyền sử dụng hình ảnh" in line
+    assert PORTRAIT not in line
+    assert line.endswith("(tác vụ video_abc123)")
     # 技术前缀（账号名 / status=）不该出现在备注里
     assert "status=failed" not in line
 

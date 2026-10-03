@@ -180,11 +180,104 @@ def account_note_line(label: str, text: str, task_id: str = "",
                       when: float | None = None) -> str:
     """写进账号「备注」的一行：时间 + 分类 + 上游原话（+ 任务号）。"""
     stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(when or time.time()))
-    reason = upstream_reason(text, label)[:200]
-    tail = f"（任务 {task_id}）" if task_id else ""
-    return f"[{stamp}] {label}：{reason}{tail}"
+    message = present(text, category=label)["message_vi"]
+    tail = f" (tác vụ {task_id})" if task_id else ""
+    return f"[{stamp}] {message}{tail}"
 
 
 def needs_account_note(text: str) -> bool:
     """只有审核类失败才需要写账号备注（限流/时长协商这些不写，别污染人工备注）。"""
     return label_for(text) in ("肖像保护", "版权/侵权", "内容审核")
+
+# Keep legacy labels for callers; use stable categories for new presentation data.
+_CATEGORY_LABELS = {
+    '肖像保护': 'portrait', '版权/侵权': 'copyright', '内容审核': 'content',
+    '参考图问题': 'reference', '时长协商': 'duration', '限流': 'rate_limit',
+    'content_refusal': 'content',
+}
+_MESSAGES = {
+    'portrait': ('Dola yêu cầu kiểm tra quyền sử dụng hình ảnh người trong ảnh tham chiếu.',
+                 'Chọn ảnh có quyền sử dụng phù hợp hoặc chuyển sang mô tả bằng văn bản.'),
+    'copyright': ('Bản quyền hoặc quyền sử dụng hình ảnh cần được xem xét theo phản hồi Dola.',
+                  'Kiểm tra quyền sử dụng nhân vật, tác phẩm và ảnh tham chiếu trước khi chỉnh prompt.'),
+    'content': ('Dola từ chối nội dung của yêu cầu.',
+                'Xem nguyên nhân và phân tích prompt để chỉnh nội dung phù hợp.'),
+    'reference': ('Dola báo ảnh tham chiếu chưa phù hợp.',
+                  'Kiểm tra định dạng, nội dung và quyền sử dụng ảnh.'),
+    'duration': ('Dola yêu cầu xem lại thời lượng hoặc cách chia cảnh.',
+                 'Xem phản hồi chi tiết; không tự tạo thêm video khi chưa xác nhận.'),
+    'rate_limit': ('Dola đang giới hạn lượt xử lý yêu cầu.',
+                   'Nếu đã có conversation, kiểm tra lại kết quả cũ; không gửi lại để thử.'),
+    'login': ('Tài khoản cần đăng nhập lại.', 'Mở Cài đặt và đăng nhập lại tài khoản Dola.'),
+    'connection': ('Chưa lấy được phản hồi từ Dola do kết nối gián đoạn.',
+                   'Kiểm tra lại kết quả bằng conversation cũ.'),
+    'unknown': ('Dola trả phản hồi nhưng chưa xác định được nguyên nhân.',
+                'Mở chi tiết kỹ thuật hoặc dùng AI phân tích phản hồi trước khi xử lý.'),
+}
+_CJK = re.compile(r'[\u3400-\u9fff]')
+
+
+def sanitize_details(text: str) -> str:
+    """Bounded diagnostic text; credentials are removed before API serialization."""
+    text = str(text or '')
+    text = re.sub(r'https?://[^\s<>\"\']+', '[liên kết]', text)
+    text = re.sub(r'(?im)(authorization|cookie|set-cookie)\s*[\"\']?\s*[:=]\s*[^\r\n]+',
+                  r'\1=[đã ẩn]', text)
+    text = re.sub(r'(?i)(session(?:id)?|ms_?token|access_token|refresh_token|api[_-]?key|password|token)'
+                  r'[\"\']?\s*[:=]\s*[\"\']?[^\s,;\"\'}]+', r'\1=[đã ẩn]', text)
+    return text[:8000]
+
+
+def present(text: str, *, code: str = '', category: str = '') -> dict:
+    raw = str(text or '')
+    category = _CATEGORY_LABELS.get(category, category)
+    if category not in _MESSAGES:
+        category = _CATEGORY_LABELS.get(label_for(raw), '')
+    if not category and (str(code) == '710022002' or '710022002' in raw):
+        category = 'rate_limit'
+    if not category and re.search(r'登录|登出|login.expired|session.expired', raw, re.I):
+        category = 'login'
+    if not category and re.search(r'connection|network|kết nối|timeout|timed out', raw, re.I):
+        category = 'connection'
+    category = category or 'unknown'
+    message, action = _MESSAGES[category]
+    safe_code = str(code or '')
+    if not safe_code:
+        match = re.search(r'(?<!\d)710022002(?!\d)', raw)
+        safe_code = match.group() if match else ''
+    # An upstream code is diagnostic data, not a translated error message.
+    return {'category': category, 'message_vi': message, 'next_action_vi': action,
+            'upstream_code': sanitize_details(safe_code), 'details': sanitize_details(raw)}
+
+
+def present_note(text: str) -> dict:
+    lines = []
+    for line in str(text or '').splitlines():
+        if _CJK.search(line):
+            stamp = re.match(r'^\[[^\]]+\]', line)
+            lines.append((stamp.group()+' ' if stamp else '') + present(line)['message_vi'])
+        else:
+            lines.append(sanitize_details(line))
+    return {'message_vi': '\n'.join(lines), 'details': sanitize_details(text)}
+
+
+def present_update(update: dict) -> dict:
+    texts = update.get('texts') or []
+    failures = update.get('failure_reasons') or []
+    raw = '\n'.join(str(x) for x in [*texts, *failures])
+    result = present(raw) if failures or label_for(raw) else {
+        'category': 'progress', 'message_vi': {
+            'pending': 'Dola đã nhận yêu cầu và đang xử lý video.',
+            'succeeded': 'Dola đã trả kết quả video.',
+            'failed': 'Dola báo tác vụ không tạo được video.',
+        }.get(update.get('status'), 'Đã nhận cập nhật từ Dola.'), 'next_action_vi': '',
+        'upstream_code': '', 'details': sanitize_details(raw),
+    }
+    if update.get('connection') == 'interrupted':
+        result['message_vi'] = 'Kết nối với Dola gián đoạn; đang giữ cập nhật nhận trước đó.'
+    wait = str(update.get('wait_minutes') or '')
+    wait = wait.replace('小时',' giờ').replace('分钟',' phút').replace('秒',' giây').strip()
+    result.update(at=update.get('at'), status=update.get('status'),
+                  connection=update.get('connection'), wait_vi='' if _CJK.search(wait) else sanitize_details(wait),
+                  details=sanitize_details(raw+'\n'+'\n'.join(str(x) for x in (update.get('creation_statuses') or []))))
+    return result

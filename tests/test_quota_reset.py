@@ -171,7 +171,8 @@ def test_portrait_refusal_writes_account_note(tmp_path):
     row = pool._meta("ckp")
     assert row["failed_at"] == 0
     note = row["note"]
-    assert "肖像保护：出于肖像保护考虑" in note
+    assert "quyền sử dụng hình ảnh" in note
+    assert "肖像保护" not in note
     assert "status=failed" not in note          # 备注里不带技术前缀
 
 

@@ -254,10 +254,9 @@ def _clip_seconds(dola, poll) -> float | None:
 
 def upstream_poll_update(poll):
     """Only expose bounded reply signals, never raw chain data or media URLs."""
+    from failure_text import sanitize_details
     def clean(value):
-        text = re.sub(r"https?://\S+", "[liên kết]", str(value))
-        return re.sub(r"(?i)(sessionid|mstoken|cookie|authorization|access_token)\s*[:=]\s*[^\s,;]+",
-                      r"\1=[đã ẩn]", text)[:2000]
+        return sanitize_details(str(value))[:2000]
     get = poll.get if isinstance(poll, dict) else lambda key, default=None: getattr(poll, key, default)
     return {"status": clean(get("status", "pending")),
             "texts": list(dict.fromkeys(clean(t) for t in (get("texts", []) or []) if t))[-10:],
