@@ -47,7 +47,9 @@ def record_preflight_result(
     p_hash = compute_prompt_hash(prompt)
     cfg_fp = custom_fingerprint if custom_fingerprint is not None else compute_config_fingerprint()
 
+    analysis = {key: result[key] for key in ("quality_summary", "issues", "rules_version", "sources", "context_fingerprint") if key in result}
     record = {
+        **analysis,
         "token": token,
         "session_id": session_id,
         "prompt_hash": p_hash,
@@ -60,6 +62,7 @@ def record_preflight_result(
     }
     _PREFLIGHT_TOKENS[token] = record
     return {
+        **analysis,
         "token": token,
         "status": result.get("status"),
         "reason": result.get("reason", ""),
