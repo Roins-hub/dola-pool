@@ -18,7 +18,10 @@ def test_delivered_clip_survives_other_generation_failures(monkeypatch,has_video
     result=dola.inspect_video_once(None,{},'existing-conversation')
     assert result.status==('succeeded' if has_video else 'generation_voided')
     assert refusal in result.failure_reasons
-    if has_video:assert result.vids==['vfixture'] and result.urls
+    if has_video:
+        assert result.vids==['vfixture'] and result.urls
+        display=ft.present_update({'status':result.status,'texts':result.texts,'failure_reasons':result.failure_reasons})
+        assert 'giữ bản đã nhận' in display['message_vi'] and not CJK.search(display['message_vi'])
 
 def test_protocol_keeps_original_and_does_not_inject_chinese():
     for original in ('Mèo chạy qua sân.', 'A black cat walks past a mirror.'):

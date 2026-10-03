@@ -296,6 +296,10 @@ def present_update(update: dict) -> dict:
     }
     if update.get('connection') == 'interrupted':
         result['message_vi'] = 'Kết nối với Dola gián đoạn; đang giữ cập nhật nhận trước đó.'
+    elif update.get('status') == 'succeeded' and failures:
+        result['category'] = 'progress'
+        result['message_vi'] = 'Dola đã trả một video; một số lượt tạo khác trong conversation thất bại. Studio giữ bản đã nhận.'
+        result['next_action_vi'] = 'Xem thời lượng thực của video. Chỉ tạo thêm và ghép khi bạn xác nhận.'
     used, left = _quota_facts(raw)
     if result['category'] == 'progress' and update.get('status') == 'pending':
         if used:
