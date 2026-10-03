@@ -3123,17 +3123,18 @@ def inspect_video_once(session: requests.Session, ctx: dict[str, str], conversat
         add_unique(creation_statuses, status)
         log(f"   Chain {status}")
     status, reasons = classify_chain_outcome(failure_reasons, texts, chain_summary["briefs"])
+    if status == DURATION_SPLIT_STATUS:
+        return PollResult(urls, vids, DURATION_SPLIT_STATUS, reasons, texts, creation_statuses, wait_minutes, data)
+    # A conversation may contain a delivered clip and later failed attempts.
+    # Preserve the available clip; do not discard it because another part failed.
+    if urls or vids:
+        return PollResult(urls, vids, "succeeded", reasons or failure_reasons, texts, creation_statuses, wait_minutes, data)
     if status == "quota_exceeded":
         log("   Daily quota exhausted; worker will switch account")
         return PollResult([], [], "quota_exceeded", reasons, texts, creation_statuses, wait_minutes, data)
     if status == "generation_voided":
-        log("   Generation voided without quota; worker will retry")
+        log("   Generation failed without quota deduction; no video returned")
         return PollResult([], [], "generation_voided", reasons, texts, creation_statuses, wait_minutes, data)
-    if status == DURATION_SPLIT_STATUS:
-        log("   Split-duration prompt; worker will require 2-segment merge to one 30s video")
-        return PollResult(urls, vids, DURATION_SPLIT_STATUS, reasons, texts, creation_statuses, wait_minutes, data)
-    if urls or vids:
-        return PollResult(urls, vids, "succeeded", failure_reasons, texts, creation_statuses, wait_minutes, data)
     if status != "pending":
         return PollResult([], vids, status, reasons, texts, creation_statuses, wait_minutes, data)
     return PollResult([], vids, "pending", failure_reasons, texts, creation_statuses, wait_minutes, data)

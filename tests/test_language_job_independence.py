@@ -8,6 +8,18 @@ import pytest
 
 CJK=re.compile(r'[\u3400-\u9fff]')
 
+@pytest.mark.parametrize('has_video',[True,False])
+def test_delivered_clip_survives_other_generation_failures(monkeypatch,has_video):
+    refusal='你的内容已生成完毕，其中 2 个视频生成失败，失败视频的生成额度未扣除。'
+    data={'text_block':{'text':refusal}}
+    if has_video:
+        data['video']={'vid':'vfixture','download_url':'https://fixture.invalid/video.mp4'}
+    monkeypatch.setattr(dola,'fetch_single_chain',lambda *args:data)
+    result=dola.inspect_video_once(None,{},'existing-conversation')
+    assert result.status==('succeeded' if has_video else 'generation_voided')
+    assert refusal in result.failure_reasons
+    if has_video:assert result.vids==['vfixture'] and result.urls
+
 def test_protocol_keeps_original_and_does_not_inject_chinese():
     for original in ('Mèo chạy qua sân.', 'A black cat walks past a mirror.'):
         enriched=dola.enrich_multi_image_prompt(original,2)
