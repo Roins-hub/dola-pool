@@ -60,6 +60,23 @@ async def browser_journey():
   await page.goto(BASE);await page.locator('#loginUser').fill('admin');await page.locator('#loginPassword').fill('admin123');await page.locator('#loginPassword').press('Enter')
   await page.wait_for_selector('#tab-generate',state='visible')
   assert await page.locator('.side-nav button').count()==3
+  # Rich AI suggestions are selectable; applying one never edits another phrase.
+  await page.locator('#gen_prompt').fill('ANALYZE_ME 🐈 quay đẹp; ánh sáng đẹp')
+  await page.locator('#btn_preflight').click()
+  await page.wait_for_selector('#gen_analysis .analysis-issue')
+  assert await page.locator('#gen_analysis .analysis-issue').count()==2
+  await page.screenshot(path=str(OUT/'analysis-desktop.png'),full_page=True)
+  await page.locator('#gen_analysis input[data-issue-id="camera"]').check()
+  await page.get_by_role('button',name='Tạo bản đề xuất từ lựa chọn',exact=True).click()
+  assert await page.locator('#gen_rewrite_before').input_value()=='ANALYZE_ME 🐈 quay đẹp; ánh sáng đẹp'
+  assert await page.locator('#gen_rewrite_draft').input_value()=='ANALYZE_ME 🐈 máy quay tiến chậm; ánh sáng đẹp'
+  assert await page.locator('#gen_prompt').input_value()=='ANALYZE_ME 🐈 quay đẹp; ánh sáng đẹp'
+  await page.get_by_role('button',name='Áp dụng prompt này',exact=True).click()
+  assert await page.locator('#gen_analysis').is_hidden()
+  await page.get_by_role('button',name='Hoàn tác',exact=True).click()
+  assert await page.locator('#gen_prompt').input_value()=='ANALYZE_ME 🐈 quay đẹp; ánh sáng đẹp'
+  await page.evaluate("localStorage.removeItem('dola-studio-draft-v1')")
+  await page.reload();await page.wait_for_selector('#tab-generate',state='visible')
   await page.locator('#gen_prompt').fill('Một chú mèo nhìn ra cửa sổ')
   await page.locator('#gen_rewrite_instructions').fill('Giữ nhân vật, máy quay tiến nhẹ')
   await page.locator('#btn_rewrite').click();await page.wait_for_selector('#gen_rewrite_box',state='visible')
@@ -91,8 +108,9 @@ async def browser_journey():
   (ROOT/'hold').touch()
   await page.locator('#gen_confirm_review').check();await page.locator('#btn_submit_gen').dblclick()
   await page.wait_for_selector('#gen_job_content progress:not([value])')
-  await page.wait_for_function("document.querySelector('#gen_job_content').textContent.includes('Đã nhận yêu cầu. Video đang được dựng.')")
+  await page.wait_for_function("document.querySelector('#gen_job_content').textContent.includes('Dola đã nhận yêu cầu và đang xử lý video.')")
   assert '3 phút' in await page.locator('#gen_job_content').inner_text()
+  assert not await page.locator('#gen_job_content .upstream-main').evaluate("el=>/[\u3400-\u9fff]/.test(el.textContent)")
   assert not await page.locator('#gen_job_content progress').get_attribute('value')
   await page.screenshot(path=str(OUT/'progress-desktop.png'),full_page=True)
   await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'progress-mobile.png'),full_page=True)
@@ -117,6 +135,16 @@ async def browser_journey():
   await page.locator('#gen_prompt').fill('prompt mới');await page.wait_for_timeout(600)
   assert await page.locator('#gen_preflight_alert').inner_text()==''
   await page.unroute('**/api/admin/prompts/preflight')
+  # Editing parameters during analysis invalidates a response for the old context.
+  await page.route('**/api/admin/prompts/preflight',lambda route: asyncio.create_task(delayed_preflight(route)))
+  await page.locator('#gen_prompt').fill('prompt trước khi đổi thời lượng');await page.locator('#btn_preflight').click()
+  await page.locator('#gen_duration').select_option('10');await page.wait_for_timeout(600)
+  assert await page.locator('#gen_preflight_alert').inner_text()==''
+  assert await page.locator('#gen_analysis').is_hidden()
+  await page.unroute('**/api/admin/prompts/preflight')
+  # Reference roles are selectable with an accessible name; changed roles invalidate checking.
+  await page.get_by_label('Vai trò ảnh reference.png').select_option('character')
+  assert await page.locator('#gen_preflight_alert').inner_text()==''
   # Old job response cannot stop a newer job polling timer.
   await page.evaluate('''()=>{const script=document.createElement('script');script.textContent=`(async ()=>{const real=api;let release;api=()=>new Promise(r=>release=r);
     currentActiveTaskId='old';const pending=pollStudioJob('old');currentActiveTaskId='new';studioPollTimer=setInterval(()=>{},10000);
@@ -152,6 +180,11 @@ async def browser_journey():
   assert await page.locator('#myVideoJobs .video-job').count()==4
   await page.locator('#myBatchClear').click()
   await page.get_by_role('button',name='▤ Video của tôi',exact=True).click();await page.wait_for_selector('.video-job')
+  await page.locator('#tab-videos').get_by_role('button',name='Bảng',exact=True).click()
+  await page.wait_for_selector('#myVideoTable table')
+  await page.locator('#myVideoTable button').first.click();await page.wait_for_selector('#mySelectedPreview video')
+  assert await page.locator('#mySelectedPreview').evaluate('el=>el.scrollWidth<=el.clientWidth')
+  await page.locator('#tab-videos').get_by_role('button',name='Lưới',exact=True).click()
   await page.screenshot(path=str(OUT/'videos-desktop.png'),full_page=True)
   await page.get_by_role('button',name='⚙ Cài đặt',exact=True).click();await page.wait_for_selector('#tab-accounts',state='visible');await page.wait_for_selector('#accountsTable table')
   assert not await page.get_by_text('Quản lý API Key',exact=True).count()
@@ -216,6 +249,7 @@ try:
  asyncio.run(browser_journey())
  (OUT/'result.json').write_text(json.dumps({'passed':True,'process_pids':[pid1,pid2],
   'restart_submission_count':1,'continuation_submission_count':2,'manual_check_no_resubmit':True,'idempotent_request_retry':True,'reference_image_reload':True,'rewrite_iterations':2,'stale_rewrite_discarded':True,'upstream_progress_browser':True,'txt_batch_four_jobs':True,'batch_process_restart_no_duplicate':True,
+  'rich_ai_selective_edit':True,'context_stale_discarded':True,'vietnamese_progress':True,'queue_table_preview':True,
   'mock_boundary':'Dola protocol operations and AI HTTP transport; real scheduler/store/download/ffmpeg/UI',
   'runtime':str(ROOT)},indent=2))
  print('PASS: process restart, short clip/confirmed merge, observation expiry/manual recovery, desktop/mobile, draft/rewrite/preflight/UI races')

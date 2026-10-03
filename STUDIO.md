@@ -53,3 +53,9 @@ Video preview/tải trong Studio dùng cùng origin đang mở, nên URL tunnel 
 Pytest cô lập DB, profile, cấu hình AI và credential store trước import. Journey dùng process mới, protocol Dola giả và AI HTTP transport giả; giữ scheduler, worker Pure API, SQLite, media download, FFmpeg và browser thật. Script sinh file H.264 15 giây, kiểm tra ghép ~30 giây, restart không gửi trùng, timeout/kiểm tra lại, draft/ảnh, rewrite/preflight, race response và desktop/mobile.
 
 Hai script E2E cũ là entrypoint tương thích cho journey này. Script dịch/patch dùng một lần và HTML backup cũ đã được lưu ngoài repo trong thư mục triển khai ngày 02/10/2026. Không chạy các script cũ lên UI mới.
+
+## Thiết kế Studio mới
+
+Workspace có prompt/AI bên trái, ảnh tham chiếu bên phải và hàng đợi bảng/lưới cạnh preview. Vai trò ảnh là thông tin người dùng chọn; phân tích hiện đọc văn bản và metadata, không tuyên bố đã xem pixel. AI chỉ rõ đoạn gốc, lý do và thay thế; chọn từng gợi ý để dựng bản đề xuất, xem trước rồi áp dụng, có hoàn tác. Đoạn trích sai, trùng chưa rõ vị trí hoặc chồng lấn không tự thay.
+
+Kiểm tra prompt mới gắn model, thời lượng, tỉ lệ và SHA-256 byte ảnh. Đổi đầu vào làm mất hiệu lực kết quả cũ. Request preflight JSON chỉ có prompt vẫn được nhận; khi tạo video, token chỉ kiểm tra văn bản cần phân tích bổ sung cấu hình thực. Biên nhận request đã có được trả trước gate hết hạn và không gọi lại AI. Cập nhật Dola hiển thị tiếng Việt; nguyên văn đã che secrets ở Chi tiết kỹ thuật.

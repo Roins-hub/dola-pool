@@ -61,6 +61,12 @@ async def ai_transport(request):
   result='Một chú mèo trên cửa sổ, máy quay tiến nhẹ, giữ ánh sáng ban đầu.'
  elif 'BLOCK_ME' in user:result=json.dumps({'status':'block','reason':'Nội dung cần chỉnh sửa','suggestions':'Thử mô tả khác'})
  elif 'REVIEW_ME' in user:result=json.dumps({'status':'review','reason':'Cần xác nhận cảnh hành động','suggestions':''})
+ elif 'ANALYZE_ME' in user:result=json.dumps({'status':'allow','reason':'','suggestions':'',
+  'quality_summary':'Giữ cảnh mèo; làm rõ góc máy và ánh sáng.', 'issues':[
+   {'id':'camera','kind':'quality','severity':'suggestion','quote':'quay đẹp','occurrence':1,
+    'replacement':'máy quay tiến chậm','reason_vi':'Góc máy chưa rõ.','confidence':'high','source_ids':['visual-action']},
+   {'id':'light','kind':'quality','severity':'suggestion','quote':'ánh sáng đẹp','occurrence':1,
+    'replacement':'ánh sáng sớm dịu','reason_vi':'Ánh sáng chưa cụ thể.','confidence':'medium','source_ids':['visual-action']}]})
  else:result=json.dumps({'status':'allow','reason':'','suggestions':''})
  return httpx.Response(200,json={'choices':[{'message':{'content':result}}]})
 RealClient=httpx.AsyncClient

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>dola-pool - Bảng điều khiển quản trị (Admin Panel)</title>
+<title>Dola Studio · Tạo video</title>
 <style>
 .studio-intro{color:var(--sub);line-height:1.6;margin-bottom:24px}
 .studio-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:22px}
@@ -219,6 +219,11 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
 }
 .ai-config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.prompt-history textarea,.prompt-history select{display:block;width:100%;padding:10px;margin:10px 0;line-height:1.5}.account-advanced[open]{padding:10px;border:1px solid var(--stroke);border-radius:12px}.account-advanced summary{cursor:pointer;padding:8px}.account-advanced .settings-nav{max-width:500px}
 @media(max-width:920px){.ai-config-grid{grid-template-columns:1fr}}
+.creator-body{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:22px}.creator-prompt,.creator-references{min-width:0}.creator-references{border-left:1px solid var(--line);padding-left:20px}.creator-references .drop-zone{min-height:160px}.studio-results{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:18px;align-items:start}.studio-results .card{min-width:0}.analysis-issue{padding:12px;border:1px solid var(--line);border-radius:10px;margin:10px 0;overflow-wrap:anywhere}.analysis-issue label{display:flex;gap:8px;align-items:start}.analysis-issue blockquote{padding:8px 12px;margin:8px 0;border-left:3px solid var(--blue);white-space:pre-wrap}.analysis-issue .replacement{color:#a9d8c6;white-space:pre-wrap}.analysis-sources{font-size:12px;color:var(--sub);margin-top:8px}.queue-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}.queue-toolbar select{padding:8px}.queue-table{overflow:auto;max-height:520px}.queue-table table{min-width:650px;width:100%}.queue-table td{max-width:260px;overflow:hidden;text-overflow:ellipsis}.queue-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.queue-grid article{padding:12px;border:1px solid var(--line);border-radius:10px;min-width:0;overflow-wrap:anywhere}.reference-role{width:100%;font-size:12px;padding:6px;margin-top:6px}.image-preview-item{height:auto!important;width:160px!important}.image-preview-item img{height:100px;object-fit:cover}.studio-health{font-size:12px;color:var(--sub);margin:10px 0}.analysis-summary{line-height:1.6;margin:10px 0}
+@media(max-width:1100px){.studio-results{grid-template-columns:1fr}}
+@media(max-width:920px){.creator-body{grid-template-columns:1fr}.creator-references{border-left:0;border-top:1px solid var(--line);padding-left:0;padding-top:16px}.studio-options{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.studio-options select{padding:8px 4px!important}.studio-intro{margin-bottom:14px}.queue-toolbar{gap:6px}}
+#gen_batch_editor label{display:block;margin:8px 0}#gen_batch_prompts{display:block;width:100%;padding:12px;line-height:1.6;resize:vertical}#gen_txt_file{max-width:100%}.queue-table th:last-child,.queue-table td:last-child{position:sticky;right:0;background:#192337}.queue-table td:last-child{min-width:62px}
+@media(max-width:600px){.studio-options{grid-template-columns:1fr}.studio-options select{padding:9px 12px!important}}
 </style>
 </head>
 <body>
@@ -271,7 +276,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
         </div>
       </div>
       <div id="videoStat" style="margin:10px 0 6px;color:var(--sub);font-size:13px">Đang tải thống kê video...</div>
-      <p id="myBatchSummary" role="status"></p><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div id="myVideoJobs" class="my-video-jobs"></div><details><summary>Thông tin file đã lưu</summary><div id="videosTable"></div></details>
+      <p id="myBatchSummary" role="status"></p><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div class="queue-toolbar"><button class="btn" onclick="setMyVideoView('grid')">Lưới</button><button class="btn" onclick="setMyVideoView('table')">Bảng</button><label for="myVideoFilter">Trạng thái</label><select id="myVideoFilter" onchange="loadMyVideos()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option></select></div><div id="myVideoTable" class="queue-table" style="display:none"></div><div id="myVideoJobs" class="my-video-jobs"></div><article id="mySelectedPreview" class="video-job" style="display:none"></article><details><summary>Thông tin file đã lưu</summary><div id="videosTable"></div></details>
     </div>
   </section>
 
@@ -399,14 +404,14 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
       <h3>Tạo video từ ý tưởng của bạn</h3><p class="studio-intro">Mô tả cảnh, thêm ảnh nếu cần, rồi tạo video. Bạn có thể nhờ AI chỉnh prompt trước khi gửi.</p>
       <div class="studio-options">
         <div>
-          <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Mô hình video</label>
+          <label for="gen_model" style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Mô hình video</label>
           <select id="gen_model" style="width:100%;padding:8px 12px" onchange="onModelChange()">
             <option value="seedance-2.5">Seedance 2.5</option>
             <option value="seedance-2.0">Seedance 2.0</option>
           </select>
         </div>
         <div>
-          <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Thời lượng mong muốn</label>
+          <label for="gen_duration" style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Thời lượng mong muốn</label>
           <select id="gen_duration" style="width:100%;padding:8px 12px">
             <option value="30">30 giây</option>
             <option value="15">15 giây</option>
@@ -415,7 +420,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
           </select>
         </div>
         <div>
-          <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Khung hình</label>
+          <label for="gen_ratio" style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Khung hình</label>
           <select id="gen_ratio" style="width:100%;padding:8px 12px">
             <option value="16:9">16:9 · Ngang</option>
             <option value="9:16">9:16 · Dọc</option>
@@ -431,6 +436,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
         <div><label for="gen_mode">Cách tạo</label><select id="gen_mode" onchange="batchInputsChanged()"><option value="single">Một prompt</option><option value="list">Danh sách prompt / TXT</option></select></div>
         <div><label for="gen_copies">Số video mỗi prompt</label><input id="gen_copies" type="number" min="1" max="10" value="1" oninput="batchInputsChanged()" style="width:85px"></div>
       </div>
+      <div class="creator-body"><div class="creator-prompt">
       <div id="gen_batch_editor" style="display:none;margin-bottom:14px">
         <label for="gen_batch_prompts">Danh sách prompt — mỗi dòng là một prompt</label>
         <textarea id="gen_batch_prompts" rows="7" oninput="batchInputsChanged()" placeholder="Một chú mèo trên cửa sổ&#10;Một con thuyền trên biển lúc bình minh"></textarea>
@@ -442,7 +448,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
       <div id="gen_single_editor">
       <div style="margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <label style="font-size:13px;color:var(--sub)">Ý tưởng và mô tả cảnh</label>
+          <label for="gen_prompt" style="font-size:13px;color:var(--sub)">Ý tưởng và mô tả cảnh</label>
           <span style="font-size:12px;color:var(--sub)">Ký tự: <b id="prompt_char_count">0</b></span>
         </div>
         <textarea id="gen_prompt" rows="5" style="width:100%;padding:10px 14px;font-size:14px;line-height:1.6" placeholder="Nhập mô tả video bạn muốn tạo (ví dụ: Cảnh tiên nhân áo trắng đứng trên vách đá ngắm hoàng hôn, góc quay tracking cinematic, ánh sáng vàng cam...)" oninput="onPromptInput()"></textarea>
@@ -470,6 +476,9 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
         <label for="gen_history">Các lần AI chỉnh prompt</label><select id="gen_history" onchange="chooseRewriteHistory(this.value)"><option value="">Chọn bản đề xuất trước</option></select>
       </details>
       </div>
+      <div id="gen_preflight_alert" style="display:none"></div>
+      <div id="gen_analysis" style="display:none" aria-live="polite"></div>
+      </div><aside class="creator-references" aria-label="Ảnh tham chiếu">
       <!-- Khung ảnh tham chiếu (Reference Images) -->
       <div style="margin-bottom:14px">
         <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Ảnh tham chiếu (Tùy chọn, tối đa 15MB/ảnh - JPG, PNG, WEBP)</label>
@@ -482,8 +491,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
         <div id="gen_image_previews" class="image-previews"></div>
       </div>
 
-      <!-- Banner kết quả kiểm tra Preflight -->
-      <div id="gen_preflight_alert" style="display:none"></div>
+      </aside></div>
 
       <!-- Nút thao tác -->
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px">
@@ -493,10 +501,18 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
       </div>
     </div>
 
+    <div class="studio-results">
+    <div class="card" id="studio_queue_card"><h3>Hàng đợi video</h3>
+      <p id="studioHealth" class="studio-health" role="status">Đang lấy trạng thái backend…</p>
+      <div class="queue-toolbar"><button class="btn" onclick="setQueueView('table')">Bảng</button><button class="btn" onclick="setQueueView('grid')">Lưới</button>
+      <label for="studioQueueFilter">Trạng thái</label><select id="studioQueueFilter" onchange="renderStudioQueue()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option></select></div>
+      <div id="studioQueueRows" class="queue-table"></div>
+    </div>
     <!-- Khung theo dõi tiến độ Job đang chạy -->
     <div id="gen_job_card" class="card" style="display:none">
       <h3>Tiến độ tạo video</h3>
       <div id="gen_job_content"></div>
+    </div>
     </div>
   </section>
 
@@ -586,7 +602,7 @@ async function refresh(){
   q('#lastUpdate').textContent='Cập nhật lúc '+new Date().toLocaleTimeString();
   try{
     if(curTab==='settings'){if(settingsTab==='accounts')await loadAccounts();}
-    else if(curTab==='generate')await initGenerateTab();
+    else if(curTab==='generate'){await initGenerateTab();await loadStudioQueue();}
     else if(curTab==='accounts')await loadAccounts();
     else if(curTab==='proxies')await loadProxies();
     else if(curTab==='tasks')await loadTasks();
@@ -778,7 +794,7 @@ async function loadAccounts(){
 
 /** 备注单元格：显示账号备注（审核拒稿原文会自动追加到这里），点一下可直接编辑。 */
 function noteCell(x){
-  const note=x.note||'';
+  const note=x.note_display?.message_vi||x.note||'';
   const open=`onclick="editNote('${x.name}')"`;
   if(!note)return `<span class="tiny" style="cursor:pointer" title="Bấm để thêm ghi chú" ${open}>—</span>`;
   return `<span class="note" title="Bấm để sửa ghi chú" ${open}>${esc(note)}</span>`;
@@ -1971,6 +1987,48 @@ function onModelChange(){
 }
 
 let promptVersion=0, rewriteVersion=0, preflightVersion=0;
+let referenceRevision=0,referenceRoles=[],selectedImageDigests=[],referenceHashPromise=Promise.resolve(),promptAnalysis=null,analysisTaskId='';
+function invalidateAnalysis(){preflightVersion++;rewriteVersion++;currentPreflight=null;batchPreflight=null;promptAnalysis=null;renderPreflightBanner(null);hide('gen_analysis');q('#gen_batch_check').innerHTML='';}
+function analysisSnapshot(){return JSON.stringify([q('#gen_prompt').value,promptVersion,generationSnapshot(),referenceRevision]);}
+function refreshReferenceHashes(){
+  const revision=++referenceRevision;invalidateAnalysis();
+  referenceHashPromise=Promise.all(selectedImages.map(async f=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await f.arrayBuffer()))).map(b=>b.toString(16).padStart(2,'0')).join(''))).then(values=>{if(revision===referenceRevision)selectedImageDigests=values;});
+  referenceHashPromise.catch(()=>studioMessage('Không đọc được ảnh tham chiếu; hãy chọn lại ảnh.'));
+}
+function changeReferenceRole(index,value){referenceRoles[index]=value;invalidateAnalysis();saveStudioDraft();}
+async function requestPreflight(prompt){
+  await referenceHashPromise;
+  const fd=new FormData();fd.append('analysis',JSON.stringify({prompt,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,reference_roles:selectedImages.map((_,i)=>isBatchGeneration()?'other':referenceRoles[i]||'other'),...(analysisTaskId?{upstream_task_id:analysisTaskId}:{})}));
+  for(const image of selectedImages)fd.append('images',image);
+  const response=await fetch('/api/admin/prompts/preflight',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await response.json();
+  if(!response.ok){const error=new Error(typeof data.detail==='string'?data.detail:'Không phân tích được prompt');error.status=response.status;throw error;}
+  return data;
+}
+function renderPromptAnalysis(result,snapshot){
+  const box=q('#gen_analysis');if(!result){hide('gen_analysis');return;}
+  promptAnalysis={result,snapshot,prompt:q('#gen_prompt').value};
+  const issues=result.issues||[];if(!result.quality_summary&&!issues.length){hide('gen_analysis');return;}
+  box.innerHTML='<h4>Phân tích và đề xuất sửa</h4><p class="analysis-summary">'+esc(result.quality_summary||'Xem từng nhận xét dưới đây.')+'</p><p class="tiny">AI kiểm tra văn bản và thông tin ảnh; chưa đánh giá nội dung pixel. Gợi ý không bảo đảm Dola chấp nhận.</p>'+issues.map(issue=>{
+    const sources=(issue.source_ids||[]).map(id=>(result.sources||[]).find(source=>source.id===id)).filter(Boolean);
+    return `<article class="analysis-issue"><label><input type="checkbox" data-issue-id="${esc(issue.id)}" ${issue.applicable?'':'disabled'}><strong>${esc({content:'Nội dung',capability:'Khả năng thực hiện',quality:'Chất lượng'}[issue.kind]||'Nhận xét')}</strong></label>${issue.quote?'<blockquote>'+esc(issue.quote)+'</blockquote>':''}<p>${esc(issue.reason_vi)}</p>${issue.replacement?'<p class="replacement">Đề xuất: '+esc(issue.replacement)+'</p>':''}<p class="tiny">Mức chắc chắn: ${esc({high:'Cao',medium:'Vừa',low:'Thấp'}[issue.confidence]||'Chưa rõ')}${!issue.applicable?' · '+esc(issue.anchor_error||'Sửa trực tiếp nếu cần'):''}</p>${sources.map(source=>`<p class="analysis-sources">Nguồn: ${esc(source.source)} · ${esc(source.evidence)}</p>`).join('')}</article>`;
+  }).join('')+'<button class="btn" onclick="applySelectedSuggestions()">Tạo bản đề xuất từ lựa chọn</button>';
+  show('gen_analysis');
+}
+function applySelectedSuggestions(){
+  if(!promptAnalysis||promptAnalysis.snapshot!==analysisSnapshot())return studioMessage('Đầu vào đã đổi; hãy phân tích lại.');
+  const chosen=new Set(Array.from(q('#gen_analysis').querySelectorAll('input[data-issue-id]:checked')).map(el=>el.dataset.issueId));
+  const original=promptAnalysis.prompt,edits=[];
+  for(const issue of promptAnalysis.result.issues||[]){if(!chosen.has(issue.id)||!issue.applicable)continue;
+    let from=0,pos=-1;for(let n=0;n<(issue.occurrence||1);n++){pos=original.indexOf(issue.quote,from);if(pos<0)break;from=pos+1;}
+    if(pos<0)return studioMessage('Đoạn gốc không còn khớp; hãy kiểm tra lại.');edits.push({start:pos,end:pos+issue.quote.length,value:issue.replacement});
+  }
+  if(!edits.length)return studioMessage('Chọn ít nhất một gợi ý có thể áp dụng.');
+  edits.sort((a,b)=>b.start-a.start);for(let i=1;i<edits.length;i++)if(edits[i].end>edits[i-1].start)return studioMessage('Gợi ý chồng lấn; hãy sửa trực tiếp.');
+  let proposed=original;for(const edit of edits)proposed=proposed.slice(0,edit.start)+edit.value+proposed.slice(edit.end);
+  if(!draftOriginal)draftOriginal=original;rewriteBase=original;q('#gen_rewrite_before').value=original;q('#gen_rewrite_draft').value=proposed;
+  rewriteVersions.push({before:original,after:proposed,instructions:'Các gợi ý đã chọn'});renderRewriteHistory();show('gen_rewrite_box');saveStudioDraft();studioMessage('Xem bản đề xuất trước khi áp dụng.');
+}
+
 let rewriteHistory=[], rewriteVersions=[], draftOriginal='', rewriteBase='', pendingRequestId='', pendingSnapshot='';
 const DRAFT_KEY='dola-studio-draft-v1';
 function studioMessage(text){q('#gen_action_msg').textContent=text;}
@@ -1980,7 +2038,7 @@ function saveStudioDraft(){
     suggestion:q('#gen_rewrite_draft').value,before:q('#gen_rewrite_before').value,
     requestId:pendingRequestId,requestSnapshot:pendingSnapshot,suggestionVisible:q('#gen_rewrite_box').style.display!=='none',
     model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,taskId:currentActiveTaskId,
-    mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,batchId:currentBatchId}));}
+    referenceRoles,mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,batchId:currentBatchId}));}
   catch(e){studioMessage('Không lưu được bản nháp trên trình duyệt; hãy sao chép prompt trước khi đóng trang.');}
 }
 async function imageDraftStore(files){
@@ -1998,14 +2056,14 @@ async function restoreStudioDraft(){
     onModelChange();if(d.duration)q('#gen_duration').value=d.duration;if(d.ratio)q('#gen_ratio').value=d.ratio;
     q('#gen_mode').value=d.mode||'single';q('#gen_copies').value=d.copies||'1';q('#gen_batch_prompts').value=d.batchPrompts||'';currentBatchId=d.batchId||'';renderBatchInputs();
     q('#prompt_char_count').textContent=q('#gen_prompt').value.length;
-    const files=await imageDraftStore();if(files&&!selectedImages.length){selectedImages=files;renderImagePreviews();}
+    referenceRoles=d.referenceRoles||[];const files=await imageDraftStore();if(files&&!selectedImages.length){selectedImages=files;renderImagePreviews();refreshReferenceHashes();await referenceHashPromise;}
     if(d.taskId)trackStudioJob(d.taskId);
   }catch(e){studioMessage('Không khôi phục được toàn bộ bản nháp; bạn có thể tiếp tục nhập ý tưởng.');}
 }
 function onPromptInput(){
   promptVersion++;rewriteVersion++;preflightVersion++;
   q('#prompt_char_count').textContent=q('#gen_prompt').value.length;
-  studioMessage('');currentPreflight=null;renderPreflightBanner(null);hide('gen_rewrite_box');q('#gen_rewrite_draft').value='';
+  analysisTaskId='';invalidateAnalysis();studioMessage('');hide('gen_rewrite_box');q('#gen_rewrite_draft').value='';
   batchPreflight=null;renderBatchInputs();saveStudioDraft();
 }
 function renderRewriteHistory(){q('#gen_original').value=draftOriginal;
@@ -2031,16 +2089,16 @@ function handleImageSelection(files){
       alert(`Ảnh ${f.name} vượt quá dung lượng cho phép 15MB.`);
       continue;
     }
-    selectedImages.push(f);
+    selectedImages.push(f);referenceRoles.push('other');
   }
-  renderImagePreviews();
+  renderImagePreviews();refreshReferenceHashes();
   document.body.dataset.imagesSaved='pending';
   imageDraftStore(selectedImages).then(()=>document.body.dataset.imagesSaved='saved').catch(()=>{document.body.dataset.imagesSaved='failed';studioMessage('Không lưu được ảnh nháp; cần chọn lại ảnh sau khi tải lại trang.');});
 }
 
 function removeImage(idx){
-  selectedImages.splice(idx, 1);
-  renderImagePreviews();
+  selectedImages.splice(idx, 1);referenceRoles.splice(idx,1);
+  renderImagePreviews();refreshReferenceHashes();
   document.body.dataset.imagesSaved='pending';
   imageDraftStore(selectedImages).then(()=>document.body.dataset.imagesSaved='saved').catch(()=>{document.body.dataset.imagesSaved='failed';studioMessage('Không lưu được ảnh nháp; cần chọn lại ảnh sau khi tải lại trang.');});
 }
@@ -2064,6 +2122,8 @@ function renderImagePreviews(){
     rm.onclick = (e)=>{ e.stopPropagation(); removeImage(idx); };
     item.appendChild(img);
     item.appendChild(rm);
+    const role=document.createElement('select');role.className='reference-role';role.setAttribute('aria-label','Vai trò ảnh '+f.name);
+    role.innerHTML='<option value="other">Ảnh tham chiếu</option><option value="character">Nhân vật</option><option value="scene">Bối cảnh</option><option value="style">Phong cách</option>';role.value=referenceRoles[idx]||'other';role.onchange=()=>changeReferenceRole(idx,role.value);item.appendChild(role);
     box.appendChild(item);
   });
 }
@@ -2091,11 +2151,11 @@ function dismissRewrite(){rewriteVersion++;hide('gen_rewrite_box');q('#gen_rewri
 async function doPreflightCheck(){
   if(isBatchGeneration())return checkBatchPrompts();
   const original=q('#gen_prompt').value.trim();if(!original){studioMessage('Nhập ý tưởng trước khi tạo video.');return null;}
-  const version=++preflightVersion,pv=promptVersion;
+  await referenceHashPromise;const version=++preflightVersion,pv=promptVersion,snapshot=analysisSnapshot();
   q('#btn_preflight').disabled=true;studioMessage('Đang kiểm tra nội dung…');
-  try{const res=await api('/api/admin/prompts/preflight',{method:'POST',body:{prompt:original}});
-    if(version!==preflightVersion||pv!==promptVersion||original!==q('#gen_prompt').value.trim())return null;
-    currentPreflight={...res,prompt:original};renderPreflightBanner(res);studioMessage('');return currentPreflight;
+  try{const res=await requestPreflight(original);
+    if(version!==preflightVersion||pv!==promptVersion||snapshot!==analysisSnapshot())return null;
+    currentPreflight={...res,prompt:original,snapshot:generationSnapshot()};renderPreflightBanner(res);renderPromptAnalysis(res,snapshot);studioMessage('');return currentPreflight;
   }catch(e){if(version===preflightVersion)studioMessage('Không kiểm tra được nội dung: '+e.message);return null;}
   finally{q('#btn_preflight').disabled=false;}
 }
@@ -2145,12 +2205,12 @@ async function importPromptTxt(input){
   }catch(e){studioMessage('Không đọc được TXT: '+e.message);}finally{input.value='';}
 }
 async function checkBatchPrompts(){
-  const prompts=batchPromptList(),copies=Number(q('#gen_copies').value),snapshot=generationSnapshot();
+  await referenceHashPromise;const prompts=batchPromptList(),copies=Number(q('#gen_copies').value),snapshot=generationSnapshot();
   if(!prompts.length||!Number.isInteger(copies)||copies<1||copies>10||prompts.length*copies>50){studioMessage('Nhập prompt và chọn 1–10 bản mỗi prompt, tối đa 50 video mỗi mẻ.');return false;}
   const checked=new Map(),entries=[];q('#gen_batch_check').textContent='Đang kiểm tra danh sách; chưa gửi video…';
   try{for(let i=0;i<prompts.length;i++){
     const prompt=prompts[i];let result=checked.get(prompt);
-    if(!result){result=await api('/api/admin/prompts/preflight',{method:'POST',body:{prompt}});checked.set(prompt,result);}
+    if(!result){result=await requestPreflight(prompt);checked.set(prompt,result);}
     if(snapshot!==generationSnapshot())return false;
     entries.push({prompt,...result});q('#gen_batch_check').textContent='Đã kiểm tra '+(i+1)+'/'+prompts.length+' prompt; chưa gửi video…';
   }
@@ -2162,7 +2222,7 @@ async function checkBatchPrompts(){
 }
 async function submitVideoBatch(){
   const btn=q('#btn_submit_gen');if(btn.disabled)return;btn.disabled=true;
-  const snapshot=generationSnapshot();
+  await referenceHashPromise;const snapshot=generationSnapshot();
   try{
     if(!batchPreflight||batchPreflight.snapshot!==snapshot||batchPreflight.entries.some(e=>e.expires_at*1000<Date.now()))if(!await checkBatchPrompts())return;
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại mẻ.');
@@ -2184,15 +2244,15 @@ async function submitVideoBatch(){
   }
   finally{btn.disabled=false;btn.textContent='Tạo video';}
 }
-function generationSnapshot(){return JSON.stringify({prompt:q('#gen_prompt').value.trim(),model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,images:selectedImages.map(f=>[f.name,f.size,f.lastModified]),mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value});}
+function generationSnapshot(){return JSON.stringify({prompt:q('#gen_prompt').value.trim(),model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,images:selectedImages.map((f,i)=>[f.name,f.size,f.lastModified,selectedImageDigests[i]||'',referenceRoles[i]||'other']),mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value});}
 async function doSubmitGenerate(){
   if(isBatchGeneration())return submitVideoBatch();
   const btn=q('#btn_submit_gen');if(btn.disabled)return;
   const prompt=q('#gen_prompt').value.trim();if(!prompt)return studioMessage('Nhập ý tưởng trước khi tạo video.');
-  btn.disabled=true;const snapshot=generationSnapshot();
+  btn.disabled=true;await referenceHashPromise;const snapshot=generationSnapshot();
   if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
   try{
-    if(!currentPreflight||currentPreflight.prompt!==prompt)await doPreflightCheck();
+    if(!currentPreflight||currentPreflight.prompt!==prompt||currentPreflight.snapshot!==snapshot||currentPreflight.expires_at*1000<Date.now())await doPreflightCheck();
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại trước khi gửi.');
     if(!currentPreflight)return;
     if(currentPreflight.status==='block')return studioMessage('Chỉnh nội dung theo gợi ý trước khi tạo.');
@@ -2200,7 +2260,7 @@ async function doSubmitGenerate(){
     if(reviewed&&!q('#gen_confirm_review')?.checked)return studioMessage('Xem lý do phía trên, xác nhận rồi bấm Tạo video.');
     btn.textContent='Đang gửi…';const fd=new FormData();fd.append('prompt',prompt);
     fd.append('model',q('#gen_model').value);fd.append('duration',q('#gen_duration').value);fd.append('ratio',q('#gen_ratio').value);
-    fd.append('request_id',pendingRequestId);fd.append('preflight_token',currentPreflight.token||'');if(reviewed)fd.append('confirm_review','true');
+    fd.append('reference_roles',JSON.stringify(selectedImages.map((_,i)=>referenceRoles[i]||'other')));fd.append('request_id',pendingRequestId);fd.append('preflight_token',currentPreflight.token||'');if(reviewed)fd.append('confirm_review','true');
     for(const image of selectedImages)fd.append('images',image);
     const resp=await fetch('/api/admin/videos/generations',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});
     const data=await resp.json();if(!resp.ok){currentPreflight=null;throw new Error(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu');}
@@ -2235,12 +2295,10 @@ function jobProgressMarkup(t){
   html+=`<p class="tiny">${active?'Đã chờ '+elapsedLabel+' · ':''}Kiểm tra gần nhất: ${esc(checked)}. ${active?'Studio cập nhật mỗi 3 giây; thông tin Dola được lấy qua polling định kỳ.':''}</p>`;
   if(active)html+='<p class="tiny">Dola chưa cung cấp phần trăm dựng video. Thanh chờ thể hiện tác vụ đang được theo dõi.</p>';
   if(latest.connection==='interrupted')html+='<p role="status">Tạm mất kết nối với Dola. Đang kiểm tra lại conversation cũ; thông tin bên dưới là cập nhật đã nhận trước đó.</p>';
-  if(latest.texts?.length)html+=`<strong>Thông báo từ Dola · ${esc(new Date(latest.at*1000).toLocaleTimeString('vi-VN'))}</strong><div class="dola-message">${esc(latest.texts.join('\n'))}</div><p class="tiny">Nội dung gốc từ Dola; có thể khác ngôn ngữ giao diện.</p>`;
+  const display=t.upstream_display||[],message=display.at(-1);
+  if(message){html+=`<div class="upstream-main"><strong>Thông báo từ Dola</strong><p class="dola-message">${esc(message.message_vi)}</p>${message.next_action_vi?'<p>'+esc(message.next_action_vi)+'</p>':''}${message.wait_vi?'<p>Thời gian chờ dự kiến: '+esc(message.wait_vi)+' (có thể thay đổi).</p>':''}</div>`;}
   else if(active)html+='<p class="tiny">Chưa nhận được thông báo từ Dola.</p>';
-  if(latest.wait_minutes)html+=`<p>Thời gian chờ Dola dự kiến: ${esc(latest.wait_minutes)} (có thể thay đổi).</p>`;
-  if(latest.failure_reasons?.length)html+=`<p class="dola-message">Dola báo: ${esc(latest.failure_reasons.join('\n'))}</p>`;
-  if(latest.creation_statuses?.length)html+=`<p class="tiny">Trạng thái Dola: ${esc(latest.creation_statuses.join(' · '))}</p>`;
-  if(updates.length)html+=`<details class="dola-history"><summary>Lịch sử cập nhật Dola (${updates.length})</summary>${updates.slice().reverse().map(u=>`<div class="dola-message"><strong>${esc(new Date(u.at*1000).toLocaleTimeString('vi-VN'))} · ${esc(u.connection==='interrupted'?'Kết nối gián đoạn':u.status||'Đã nhận phản hồi')}</strong>\n${esc((u.texts||[]).join('\n'))}</div>`).join('')}</details>`;
+  if(display.length)html+=`<details class="dola-history"><summary>Lịch sử cập nhật Dola (${display.length})</summary>${display.slice().reverse().map(u=>`<div class="dola-message"><strong>${u.at?esc(new Date(u.at*1000).toLocaleTimeString('vi-VN')):''}</strong> ${esc(u.message_vi)}${u.details?'<details><summary>Chi tiết kỹ thuật</summary><pre class="technical-error">'+esc(u.details)+'</pre></details>':''}</div>`).join('')}</details>`;
   return html+'</div>';
 }
 function renderJobInto(el,t){
@@ -2263,8 +2321,8 @@ function taskMarkup(t){
   if(t.video_url&&t.file_exists===false)html+='<p>File video không còn trên máy. Thông tin prompt vẫn được giữ.</p>';
   if(t.status==='unknown')html+='<p>Chưa lấy được kết quả — có thể Dola vẫn đang tạo. Tool không tự gửi lại yêu cầu.</p>';
   if(['unknown','failed'].includes(t.status)&&t.can_check_result)html+=`<button class="btn btn-p" onclick="checkVideoResult('${esc(t.id)}')">Kiểm tra lại kết quả</button>`;
-  if(t.status==='failed')html+='<p>Không tạo được video. Xem chi tiết để điều chỉnh hoặc kiểm tra tài khoản.</p>';
-  if(t.error)html+=`<details><summary>Chi tiết kỹ thuật</summary><pre class="technical-error">${esc(t.error)}</pre></details>`;
+  if(t.status==='failed')html+='<p>'+esc(t.failure_display?.message_vi||'Không tạo được video; chưa xác định nguyên nhân.')+'</p><p>'+esc(t.failure_display?.next_action_vi||'')+'</p><button class="btn" onclick="analyzeFailedTask(\''+esc(t.id)+'\')">Phân tích và sửa prompt</button>';
+  if(t.error)html+=`<details><summary>Chi tiết kỹ thuật</summary><pre class="technical-error">${esc(t.failure_display?.details||t.error)}</pre></details>`;
   html+=`<div class="job-actions"><button class="btn" onclick="useTaskPrompt('${esc(t.id)}')">Dùng lại prompt</button><button class="btn" onclick="switchTab('generate');trackStudioJob('${esc(t.id)}')">Theo dõi</button></div>`;
   return html;
 }
@@ -2277,16 +2335,34 @@ async function continueVideo(id){
   try{const result=await api('/api/admin/tasks/'+encodeURIComponent(id)+'/continue',{method:'POST',body:{confirm_cost:true}});switchTab('generate');trackStudioJob(result.id);}
   catch(e){if(e.message.includes('review')&&confirm('Nội dung cần xem xét. Bạn xác nhận tiếp tục tạo đoạn bổ sung?')){const result=await api('/api/admin/tasks/'+encodeURIComponent(id)+'/continue',{method:'POST',body:{confirm_cost:true,confirm_review:true}});switchTab('generate');trackStudioJob(result.id);}else alert(e.message);}
 }
+async function analyzeFailedTask(id){await useTaskPrompt(id);analysisTaskId=id;await doPreflightCheck();}
 async function useTaskPrompt(id){const t=await api('/api/admin/tasks/'+encodeURIComponent(id));q('#gen_mode').value='single';q('#gen_copies').value='1';batchInputsChanged();rewriteHistory.push(q('#gen_prompt').value);q('#gen_prompt').value=t.prompt||'';if(t.model)q('#gen_model').value=t.model;onModelChange();if(t.duration)q('#gen_duration').value=t.duration;if(t.ratio&&t.ratio!=='default')q('#gen_ratio').value=t.ratio;onPromptInput();switchTab('generate');}
+let queueView='table',studioQueueTasks=[],studioQueueVersion=0,myVideoView='grid',mySelectedId='';
+function filteredTasks(tasks,value){return tasks.filter(t=>value==='all'||(value==='running'?['queued','processing'].includes(t.status):t.status===value));}
+function queueMarkup(tasks,target,mode='table'){
+  if(!tasks.length)return '<p class="tiny">Chưa có video trong bộ lọc này.</p>';
+  const button=t=>`<button class="btn" onclick="${target==='studio'?'trackStudioJob':'selectMyVideo'}('${esc(t.id)}')" aria-label="Xem video ${esc(t.id.slice(-8))}">Xem</button>`;
+  if(mode==='grid')return '<div class="queue-grid">'+tasks.map(t=>`<article><strong>${esc(taskLabel(t))}</strong><p>${esc((t.prompt||'').slice(0,120))}</p><p class="tiny">${esc(t.model)} · ${esc(t.video_duration||t.duration)} giây</p>${button(t)}</article>`).join('')+'</div>';
+  return '<table><thead><tr><th>Trạng thái</th><th>Prompt</th><th>Model / thời lượng</th><th>Tài khoản</th><th>Tuyến</th><th></th></tr></thead><tbody>'+tasks.map(t=>`<tr><td>${esc(taskLabel(t))}</td><td title="${esc(t.prompt)}">${esc((t.prompt||'').slice(0,80))}</td><td>${esc(t.model)} · ${esc(t.video_duration||t.duration)} giây</td><td>${esc(t.account||'Chưa chọn')}</td><td>${esc(t.transport_mode||'Xem Cài đặt')}</td><td>${button(t)}</td></tr>`).join('')+'</tbody></table>';
+}
+function renderStudioQueue(){q('#studioQueueRows').innerHTML=queueMarkup(filteredTasks(studioQueueTasks,q('#studioQueueFilter').value),'studio',queueView);}
+function setQueueView(mode){queueView=mode;renderStudioQueue();}
+async function loadStudioQueue(){
+  const version=++studioQueueVersion;
+  try{const r=await api('/api/admin/tasks?limit=100');if(version!==studioQueueVersion||curTab!=='generate')return;studioQueueTasks=r.tasks||[];renderStudioQueue();q('#studioHealth').textContent='Backend đã kết nối · '+studioQueueTasks.filter(t=>['queued','processing'].includes(t.status)).length+' video đang chờ/tạo. Kết nối Dola được hiển thị riêng trong từng video.';}
+  catch(e){if(version===studioQueueVersion)q('#studioHealth').textContent='Mất kết nối backend; thông tin hàng đợi đang là bản đã nhận trước đó.';}
+}
+function setMyVideoView(mode){myVideoView=mode;q('#myVideoJobs').style.display=mode==='grid'?'grid':'none';q('#myVideoTable').style.display=mode==='table'?'block':'none';loadMyVideos();}
+async function selectMyVideo(id){mySelectedId=id;const t=await api('/api/admin/tasks/'+encodeURIComponent(id));if(mySelectedId!==id)return;q('#mySelectedPreview').style.display='block';renderJobInto(q('#mySelectedPreview'),t);}
 let videosLoading=false;
 async function loadMyVideos(){
   if(videosLoading)return;videosLoading=true;
   try{const batchId=currentBatchId;
     const r=await api(batchId?'/api/admin/videos/batches/'+encodeURIComponent(batchId):'/api/admin/tasks?limit=100');if(curTab!=='videos'||batchId!==currentBatchId)return;
     q('#myBatchClear').style.display=batchId?'inline-block':'none';if(!batchId)q('#myBatchSummary').textContent='';
-    const container=q('#myVideoJobs'),tasks=r.tasks||[],ids=new Set(tasks.map(t=>t.id));
+    const container=q('#myVideoJobs'),tasks=filteredTasks(r.tasks||[],q('#myVideoFilter').value),ids=new Set(tasks.map(t=>t.id));q('#myVideoTable').innerHTML=queueMarkup(tasks,'my');const selected=tasks.find(t=>t.id===mySelectedId);if(selected)renderJobInto(q('#mySelectedPreview'),selected);
     if(container.firstElementChild?.tagName==='P')container.innerHTML='';
-    const members=currentBatchId?tasks.filter(t=>t.batch_id===currentBatchId):[];
+    const members=currentBatchId?(r.tasks||[]).filter(t=>t.batch_id===currentBatchId):[];
     if(currentBatchId)q('#myBatchSummary').textContent='Mẻ đang theo dõi: '+members.length+' video · '+members.filter(t=>t.status==='completed').length+' hoàn tất · '+members.filter(t=>['queued','processing'].includes(t.status)).length+' đang chờ/tạo · '+members.filter(t=>t.status==='unknown').length+' chưa rõ kết quả · '+members.filter(t=>t.status==='failed').length+' thất bại';
     for(const el of container.querySelectorAll('[data-task-id]'))if(!ids.has(el.dataset.taskId))el.remove();
     if(!tasks.length){container.innerHTML='<p>Chưa có video. Bắt đầu với ý tưởng đầu tiên của bạn.</p>';return;}
@@ -2385,7 +2461,9 @@ async function saveAiSettings(){
   try{ await api('/api/admin/accounts'); hide('loginMask'); switchTab('generate'); }
   catch(e){ /* 401 已在 api() 内触发 showLogin */ }
 })();
+for(const id of ['gen_model','gen_duration','gen_ratio'])q('#'+id).addEventListener('change',()=>{invalidateAnalysis();saveStudioDraft();});
 timer=setInterval(()=>{if(autoRefresh)refresh();},10000);
+setInterval(()=>{if(autoRefresh&&curTab==='generate'&&q('#loginMask').style.display==='none')loadStudioQueue().catch(()=>{});},3000);
 setInterval(()=>{if(autoRefresh&&curTab==='videos'&&q('#loginMask').style.display==='none')loadMyVideos().catch(()=>{});},3000);
 </script>
 </body>
