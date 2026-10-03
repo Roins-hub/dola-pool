@@ -672,10 +672,29 @@ async def _save_video_result(task_id, result):
         store.update(task_id, export_error=failure_text.sanitize_details(str(exc)))
 
 
+class SubmissionDeferred(Exception):
+    pass
+
+
+async def _wait_task_submission(task_id):
+    while True:
+        row = store.get(task_id)
+        if not row or row['status'] not in ('queued', 'processing'):
+            return False
+        if not store.batch_paused(row.get('batch_id')):
+            if row.get('phase') == 'paused':
+                store.update(task_id, phase='waiting')
+            return True
+        store.update(task_id, phase='paused')
+        await asyncio.sleep(1)
+
+
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client):
     if task_id in ACTIVE_STUDIO_JOBS:
         return
     row = store.get(task_id)
+    if not row or row['status'] in ('completed', 'failed', 'cancelled'):
+        return
     if row and row.get("conversation_id"):
         return await _resume_task(row)
     if row and (row.get("submission_started_at") or row.get("status") == "unknown"):
@@ -689,8 +708,12 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 重新受理：排队时钟（updated_at）与上一轮的报错一起清零。看门狗按「最后一次状态
         # 变化」算排队时长，不清零的话刚被重启捞回来的任务会带着旧的 updated_at 立刻被判
         # 「排队超时」——把刚修好的恢复路径又堵死。
+        if not await _wait_task_submission(task_id):
+            return
         store.update(task_id, status="queued", phase="waiting", error="")
         while pool.inventory_waiting:
+            if not await _wait_task_submission(task_id):
+                return
             store.update(task_id, phase="waiting", error="Chờ tài khoản — hãy bật kho hoặc bật tài khoản trong Cài đặt")
             await asyncio.sleep(1)
         store.update(task_id, error="")
@@ -712,14 +735,21 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
 
         def on_account_try(account, attempt):
             # 拿到账号即拿到并发槽 —— 此刻才算真正开始生成（等待期间保持 queued）。
-            tried_accs.append(account)
+            attempted = tried_accs + [account]
             fields = dict(status="processing", phase="sending", submission_started_at=time.time(), account=account, attempt=attempt,
-                          attempted_accounts=json.dumps(tried_accs, ensure_ascii=False),
+                          attempted_accounts=json.dumps(attempted, ensure_ascii=False),
                           last_poll_at=time.time())
-            if len(tried_accs) == 1:
+            if len(attempted) == 1:
                 # started_at 只记首次尝试，否则换号会把出片耗时均值（ETA）拉长
                 fields["started_at"] = time.time()
-            store.update(task_id, **fields)
+            if not store.begin_submission(task_id, **fields):
+                raise SubmissionDeferred()
+            tried_accs.append(account)
+
+        def before_account():
+            row = store.get(task_id)
+            if not row or row['status'] not in ('queued', 'processing') or store.batch_paused(row.get('batch_id')):
+                raise SubmissionDeferred()
 
         reference_root, reference_paths = await download_reference_images(
             reference_images or [], task_id)
@@ -732,12 +762,20 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 任务总时限内持续换号；到点不再派发新尝试。兜底超时额外留一次完整出片的等待时间，
         # 避免把已经在 Dola 端生成中的那一次强行中断（会白扣额度）。
         task_deadline = time.time() + config.OBSERVATION_SECONDS
-        result = await pool.generate_video(
-            prompt, ratio, duration, model,
-            on_conversation_id=on_conversation_id, on_poll=on_poll,
-            reference_image_paths=reference_paths,
-            on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
-            deadline=task_deadline)
+        while True:
+            if not await _wait_task_submission(task_id):
+                return
+            try:
+                result = await pool.generate_video(
+                    prompt, ratio, duration, model,
+                    on_conversation_id=on_conversation_id, on_poll=on_poll,
+                    reference_image_paths=reference_paths,
+                    on_account_try=on_account_try, before_account=before_account,
+                    max_attempts=VIDEO_MAX_ATTEMPTS, deadline=task_deadline)
+                break
+            except SubmissionDeferred:
+                # Release account/global slots before waiting on a paused batch.
+                task_deadline = time.time() + config.OBSERVATION_SECONDS
         store.update(task_id, phase="downloading")
         await _save_video_result(task_id, result)
         # 出片目录超限就从旧到新删，避免磁盘被撑满（同样是同步目录遍历）
@@ -762,7 +800,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         elif row.get("submission_started_at"):
             _uncertain_task(task_id, "Yêu cầu bị gián đoạn khi gửi; không tự gửi lại")
         else:
-            store.update(task_id, status="queued", phase="waiting")
+            if row.get('status') != 'cancelled':
+                store.update(task_id, status="queued", phase="waiting")
         raise
     except ConfirmedVideoFailure as e:
         display = failure_text.present(str(e), code=str(getattr(e, "failure_code", "") or ""),
@@ -797,7 +836,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 落盘的参考图只在任务**走到终态**时清理：任务被取消/服务重启时它还要留给
         # resume 用（库里存的是路径，文件删早了恢复时就报「参考图文件已丢失」）。
         row = store.get(task_id)
-        if row and (row.get("status") == "failed" or (row.get("status") == "completed" and not (row.get("video_duration") and row["video_duration"] < (row.get("duration") or 0) * 0.9))):
+        if row and (row.get("status") == "cancelled" or (row.get("status") == "completed" and not (row.get("video_duration") and row["video_duration"] < (row.get("duration") or 0) * 0.9))):
             cleanup_local_references(reference_images or [])
             store.update(task_id, reference_images="[]")
         if acquired:
@@ -980,15 +1019,19 @@ def _watchdog_plan() -> list[dict]:
     failed_ids: set[str] = set()
     for row in info["waiting"]:
         task_id = row["id"]
+        full = store.get(task_id) or {}
+        if store.batch_paused(full.get('batch_id')) and not full.get('submission_started_at'):
+            continue
         if pool.inventory_waiting and not row.get("submission_started_at"):
             continue
         since = row.get("queued_since") or row["created_at"] or time.time()
         minutes = (time.time() - float(since)) / 60
         print(f"[watchdog] {task_id} 排队 {minutes:.0f} 分钟仍没轮到（上游持续限流），判失败",
               flush=True)
-        store.update(task_id, status="failed", finished_at=time.time(),
-                     error=f"排队等待超过 {config.MAX_QUEUE_WAIT_SECONDS // 60} 分钟仍未拿到可用账号"
-                           "（上游限流），请稍后重试")
+        if not store.fail_unsent_waiting(task_id,
+                f"排队等待超过 {config.MAX_QUEUE_WAIT_SECONDS // 60} 分钟仍未拿到可用账号"
+                "（上游限流），请稍后重试"):
+            continue
         failed_ids.add(task_id)
         WATCHDOG_DISPATCHED.discard(task_id)
         WATCHDOG_RETRIES.pop(task_id, None)
@@ -1090,6 +1133,7 @@ def _maintenance() -> None:
     removed = store.prune_finished(config.TASK_RETENTION_DAYS)
     files = 0
     for row in removed:
+        cleanup_local_references(_task_reference_images(row.get('reference_images')))
         delete_reference_thumbnails(_task_reference_thumbs(row.get("reference_thumbs")))
         name = (row.get("video_url") or "").rsplit("/", 1)[-1]
         if not name:
@@ -1205,7 +1249,7 @@ async def create_video_vinted_alias(request: Request,
     return await create_video(request, authorization)
 
 
-async def _submit_task(client, model, prompt, ratio, duration, reference_images, task_id=None, input_fingerprint=None, source_task_id=None):
+async def _submit_task(client, model, prompt, ratio, duration, reference_images, task_id=None, input_fingerprint=None, source_task_id=None, reference_roles=None):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
     resolved = _resolve_model_for_duration(model, duration)
     if resolved is None:
@@ -1280,6 +1324,8 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
         raise HTTPException(429, str(exc)) from exc
     if input_fingerprint:
         store.update(task_id, input_fingerprint=input_fingerprint)
+    if reference_roles is not None:
+        store.update(task_id, reference_roles=json.dumps(reference_roles))
     asyncio.create_task(_run_task(
         task_id, model, prompt, ratio, duration, reference_images, client
     ))
@@ -3385,6 +3431,150 @@ def _acceptance_lock(identity: str):
     return _STUDIO_ACCEPT_LOCKS[index]
 
 
+class TaskSelection(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=50)
+
+
+class BatchControl(BaseModel):
+    paused: bool
+
+
+class RetryDraft(BaseModel):
+    source_task_id: str = Field(min_length=1, max_length=200)
+    prompt: str = Field(min_length=1, max_length=config.MAX_PROMPT_CHARS)
+    repair: bool = False
+    instructions: str = Field(default='', max_length=4000)
+
+
+class RetryEntry(RetryDraft):
+    preflight_token: str
+    confirm_review: bool = False
+
+
+class RetryBatch(BaseModel):
+    request_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,64}$')
+    entries: list[RetryEntry] = Field(min_length=1, max_length=50)
+
+
+@app.post('/api/admin/videos/batches/{batch_id}/control')
+async def admin_control_batch(batch_id: str, body: BatchControl, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if store.batch_fingerprint(batch_id) is None:
+        raise HTTPException(404, 'Không tìm thấy mẻ')
+    store.set_batch_paused(batch_id, body.paused)
+    return {'batch_id': batch_id, 'paused': store.batch_paused(batch_id)}
+
+
+@app.post('/api/admin/tasks/cancel-unsent')
+async def admin_cancel_tasks(body: TaskSelection, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    cancelled = store.cancel_unsent(body.ids)
+    for task_id in cancelled:
+        if task_id not in ACTIVE_STUDIO_JOBS:
+            cleanup_local_references(_task_reference_images(store.get(task_id).get('reference_images')))
+            store.update(task_id, reference_images='[]')
+    return {'cancelled': cancelled, 'skipped': [i for i in dict.fromkeys(body.ids) if i not in cancelled]}
+
+
+@app.post('/api/admin/videos/selected-download')
+async def admin_download_selected(body: TaskSelection, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    rows = [row for task_id in dict.fromkeys(body.ids) if (row := store.get(task_id))]
+    path = await asyncio.to_thread(_build_batch_zip, rows)
+    return FileResponse(path, filename='video-da-chon.zip', media_type='application/zip',
+                        background=BackgroundTask(os.unlink, path))
+
+
+async def _retry_source_context(task_id):
+    row = store.get(task_id)
+    if not row or row['status'] != 'failed':
+        raise HTTPException(409, 'Chỉ tạo lại video đã xác nhận thất bại; video chưa rõ kết quả cần kiểm tra conversation cũ')
+    refs = _task_reference_images(row.get('reference_images'))
+    if not refs and _task_reference_thumbs(row.get('reference_thumbs')):
+        raise HTTPException(422, 'Ảnh gốc của job cũ không còn. Dùng lại prompt và bổ sung ảnh trước khi tạo')
+    try:
+        roles = json.loads(row.get('reference_roles') or '[]')
+        references, frozen = await _reference_context(refs, roles)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(422, 'Không còn đủ ảnh tham chiếu gốc; hãy bổ sung ảnh trước khi tạo lại') from exc
+    return row, _video_context(row['model'], row['duration'], row['ratio'], references), frozen, roles
+
+
+@app.post('/api/admin/videos/retry-preview')
+async def admin_retry_preview(body: RetryDraft, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    row, context, _, _ = await _retry_source_context(body.source_task_id)
+    if not body.prompt.strip():
+        raise HTTPException(422, 'Prompt không được để trống')
+    prompt = body.prompt
+    try:
+        if body.repair:
+            prompt = await rewrite_prompt_text(original_prompt=prompt, duration=row['duration'],
+                ratio=row['ratio'], model=row['model'], instructions=(
+                    'Đề xuất chỉnh prompt dựa trên lỗi bên dưới, giữ ý tưởng, ngôn ngữ, nhân vật và cảnh. '
+                    'Tuân thủ chính sách nội dung; không tìm cách vượt kiểm duyệt. '
+                    'Nếu lỗi kết nối hoặc tài khoản, đừng đổi nội dung chỉ để sửa lỗi kỹ thuật.\n'
+                    + json.dumps({'user_instructions': body.instructions,
+                                  'upstream_error': failure_text.sanitize_details(row.get('error') or '')}, ensure_ascii=False)))
+        if len(prompt) > config.MAX_PROMPT_CHARS or not prompt.strip():
+            raise HTTPException(422, 'Bản đề xuất không có nội dung hợp lệ')
+        result = await preflight_check_prompt(prompt, context=context,
+            upstream_error=failure_text.sanitize_details(row.get('error') or ''))
+    except AiProviderNotConfiguredError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except AiProviderCallError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    session_id = hashlib.sha256((x_admin_key or 'default').encode()).hexdigest()[:24]
+    return {'source_task_id':row['id'], 'original_prompt':body.prompt, 'prompt':prompt,
+            **record_preflight_result(session_id, prompt, result, context=context)}
+
+
+@app.post('/api/admin/videos/retry-batch', status_code=202)
+async def admin_retry_batch(body: RetryBatch, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    username = ADMIN_SESSIONS[x_admin_key]['username']
+    batch_id = 'batch_' + hashlib.sha256(f'studio:{username}:{body.request_id}'.encode()).hexdigest()[:32]
+    fingerprint = context_fingerprint([{'source_task_id':e.source_task_id,'prompt':e.prompt} for e in body.entries])
+    async with _acceptance_lock(batch_id):
+        existing = store.batch_fingerprint(batch_id)
+        if existing is not None:
+            if existing != fingerprint:
+                raise HTTPException(409, 'Mã yêu cầu đã dùng cho một danh sách khác')
+            return {'batch_id':batch_id,'tasks':[{'id':r['id'],'status':r['status']} for r in store.batch_tasks(batch_id)]}
+        if len({e.source_task_id for e in body.entries}) != len(body.entries):
+            raise HTTPException(422, 'Mỗi job lỗi chỉ được chọn một lần trong lượt tạo lại')
+        session_id = hashlib.sha256((x_admin_key or 'default').encode()).hexdigest()[:24]
+        prepared = []
+        for entry in body.entries:
+            row, context, frozen, roles = await _retry_source_context(entry.source_task_id)
+            await _ensure_video_preflight(session_id, entry.prompt, entry.preflight_token, entry.confirm_review, context)
+            prepared.append((entry,row,frozen,roles))
+        if not pool.accounts:
+            raise HTTPException(503, 'Chưa có tài khoản Dola')
+        client={'api_key_hash':f'admin_{session_id}','api_key_name':f'Admin ({session_id})','concurrency_limit':0}
+        jobs=[]; created=False
+        try:
+            for entry, source, frozen, roles in prepared:
+                refs = await asyncio.to_thread(materialize_data_urls, frozen)
+                jobs.append({'id':'video_'+hashlib.sha256(f'{batch_id}:{len(jobs)}'.encode()).hexdigest()[:32],
+                    'source_task_id':source['id'],'prompt':entry.prompt,'model':source['model'],
+                    'duration':source['duration'],'ratio':source['ratio'],'reference_images':json.dumps(refs),
+                    'reference_roles':json.dumps(roles), 'api_key_hash':client['api_key_hash'],
+                    'api_key_name':client['api_key_name'],'client_concurrency_limit':0})
+            try:
+                rows,created=store.create_batch(batch_id,fingerprint,jobs,max_pending=config.MAX_PENDING_TASKS,name='Tạo lại video lỗi')
+            except PendingTaskLimitExceeded as exc:
+                raise HTTPException(429,str(exc)) from exc
+            for row in rows:
+                asyncio.create_task(_run_task(row['id'],row['model'],row['prompt'],row['ratio'],row['duration'],
+                    _task_reference_images(row['reference_images']),client))
+            return {'batch_id':batch_id,'tasks':[{'id':r['id'],'status':r['status']} for r in rows]}
+        finally:
+            if not created:
+                for job in jobs:
+                    cleanup_local_references(_task_reference_images(job['reference_images']))
+
+
 @app.get("/api/admin/video-receipts/{request_id}")
 async def admin_video_receipt(request_id: str, kind: str = "single",
                               x_admin_key: str | None = Header(default=None)):
@@ -3488,9 +3678,10 @@ async def _accept_create_video(request: Request, x_admin_key: str | None = None)
             raise HTTPException(422, 'Chỉ liên kết bản sửa với tác vụ đã xác nhận thất bại')
     reference_context, frozen_refs = await _reference_context(refs, roles)
     context = _video_context(model, duration, ratio, reference_context)
-    await _ensure_video_preflight(session_id, prompt, preflight_token, confirm_review, context)
+    if str(form.get("skip_preflight") or "").lower() not in ("true", "1"):
+        await _ensure_video_preflight(session_id, prompt, preflight_token, confirm_review, context)
     return await _submit_task(admin_client, resolved, prompt, ratio, duration, frozen_refs,
-                              task_id=task_id, input_fingerprint=input_fp, source_task_id=source_task_id)
+                              task_id=task_id, input_fingerprint=input_fp, source_task_id=source_task_id, reference_roles=roles)
 
 
 # 面板单文件前端（放最后，保证上面的路由优先）
@@ -3504,6 +3695,7 @@ class BatchPrompt(BaseModel):
 
 
 class VideoBatch(BaseModel):
+    skip_preflight: bool = False
     source_task_id: str | None = Field(default=None, max_length=200)
     name: str = Field(default="", max_length=100)
     request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
@@ -3649,7 +3841,7 @@ async def admin_get_batch(batch_id: str, x_admin_key: str | None = Header(defaul
     _admin_auth(x_admin_key)
     if store.batch_fingerprint(batch_id) is None:
         raise HTTPException(404,"Không tìm thấy mẻ")
-    return {"batch_id":batch_id,"name":store.batch_name(batch_id),"download_name":_batch_download_name(batch_id),"tasks":[{**row,**_task_display(row),"target_duration":_target_duration(row),
+    return {"batch_id":batch_id,"paused":store.batch_paused(batch_id),"name":store.batch_name(batch_id),"download_name":_batch_download_name(batch_id),"tasks":[{**row,**_task_display(row),"target_duration":_target_duration(row),
         "file_exists":_task_file_exists(row)} for row in store.batch_tasks(batch_id)]}
 
 
@@ -3718,9 +3910,10 @@ async def _accept_create_batch(request: Request, x_admin_key: str | None = None)
         if not source or source['status'] != 'failed':
             raise HTTPException(422, 'Chỉ liên kết bản sửa với tác vụ đã xác nhận thất bại')
     session_id = hashlib.sha256((x_admin_key or "default").encode()).hexdigest()[:24]
-    for prompt, context in zip(batch.prompts, contexts):
-        await _ensure_video_preflight(session_id, prompt.prompt.strip(), prompt.preflight_token,
-                                      prompt.confirm_review, context)
+    if not batch.skip_preflight:
+        for prompt, context in zip(batch.prompts, contexts):
+            await _ensure_video_preflight(session_id, prompt.prompt.strip(), prompt.preflight_token,
+                                          prompt.confirm_review, context)
     if not pool.accounts:
         raise HTTPException(503, "Chưa có tài khoản Dola")
     if not pool.available and (pool.all_accounts_limited or pool.all_accounts_quota_blocked):
@@ -3740,7 +3933,8 @@ async def _accept_create_batch(request: Request, x_admin_key: str | None = None)
                 jobs.append({"id":"video_"+hashlib.sha256(f"{batch_id}:{len(jobs)}".encode()).hexdigest()[:32],
                     "model":model,"prompt":prompt.prompt.strip(),"duration":batch.duration,"ratio":batch.ratio,
                     "reference_images":json.dumps(images,ensure_ascii=False),"api_key_hash":client["api_key_hash"],
-                    "api_key_name":client["api_key_name"],"client_concurrency_limit":0,"source_task_id":batch.source_task_id})
+                    "api_key_name":client["api_key_name"],"client_concurrency_limit":0,"source_task_id":batch.source_task_id,
+                    "reference_roles":json.dumps(prompt.reference_roles)})
         try:
             rows,created = store.create_batch(batch_id,fingerprint,jobs,max_pending=config.MAX_PENDING_TASKS,name=batch.name.strip())
         except ValueError as exc:

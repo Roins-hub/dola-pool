@@ -1497,7 +1497,7 @@ class BrowserPool:
                              on_poll=None, on_balance=None,
                              reference_image_paths: list[str] | None = None,
                              on_account_try=None, max_attempts: int = 3,
-                             deadline: float | None = None) -> dict:
+                             deadline: float | None = None, before_account=None) -> dict:
         """挑一个可调度且空闲的号出片；失败自动换号重试（最多 max_attempts 次）。
 
         - 按模型分流：seedance-2.0（3 点）只从【满额】组取号；seedance-2.5（2 点）
@@ -1531,6 +1531,8 @@ class BrowserPool:
                 return deadline is None or time.time() < deadline
 
             while attempts_left() and time_left():
+                if before_account:
+                    before_account()
                 while self.inventory_waiting:
                     await asyncio.sleep(1)
                     # Waiting for a deliberately disabled inventory is not a generation timeout.
@@ -1560,6 +1562,8 @@ class BrowserPool:
                         waiting_possible = True
                         continue
                     async with lock:
+                        if before_account:
+                            before_account()
                         if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                             continue  # 等待期间状态变化
                         # 派发前先发一句「你好」：被登出/没回复 → 该号进【风控】组，换下一个号。

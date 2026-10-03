@@ -68,6 +68,8 @@ class TaskStore:
             self._conn.execute("CREATE TABLE IF NOT EXISTS video_batches (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, created_at REAL)")
             if 'name' not in {r[1] for r in self._conn.execute('PRAGMA table_info(video_batches)')}:
                 self._conn.execute("ALTER TABLE video_batches ADD COLUMN name TEXT DEFAULT ''")
+            if 'paused' not in {r[1] for r in self._conn.execute('PRAGMA table_info(video_batches)')}:
+                self._conn.execute("ALTER TABLE video_batches ADD COLUMN paused INTEGER DEFAULT 0")
             for column, definition in (
                 ("account", "TEXT"),
                 ("conversation_id", "TEXT"),
@@ -102,6 +104,7 @@ class TaskStore:
                 ("batch_fingerprint", "TEXT"),
                 ("input_fingerprint", "TEXT"),
                 ("export_error", "TEXT"),
+                ("reference_roles", "TEXT"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -285,6 +288,42 @@ class TaskStore:
         with _LOCK:
             return [dict(r) for r in self._conn.execute("SELECT * FROM tasks WHERE batch_id=? ORDER BY batch_index", (batch_id,)).fetchall()]
 
+    def batch_paused(self, batch_id):
+        with _LOCK:
+            row = self._conn.execute('SELECT paused FROM video_batches WHERE id=?', (batch_id,)).fetchone()
+            return bool(row and row[0])
+
+    def set_batch_paused(self, batch_id, paused):
+        with _LOCK, self._conn:
+            self._conn.execute('UPDATE video_batches SET paused=? WHERE id=?', (int(paused), batch_id))
+
+    def begin_submission(self, task_id, **fields):
+        """Linearize pause/cancel against sending, before any upstream submission."""
+        with _LOCK, self._conn:
+            row = self._conn.execute('SELECT status,batch_id FROM tasks WHERE id=?', (task_id,)).fetchone()
+            if not row or row['status'] not in ('queued', 'processing'):
+                return False
+            batch = self._conn.execute('SELECT paused FROM video_batches WHERE id=?', (row['batch_id'],)).fetchone()
+            if batch and batch[0]:
+                return False
+            fields.update(status='processing', phase='sending', submission_started_at=time.time(), updated_at=time.time())
+            self._conn.execute('UPDATE tasks SET '+','.join(k+'=?' for k in fields)+' WHERE id=?', [*fields.values(),task_id])
+            return True
+
+    def cancel_unsent(self, ids):
+        cancelled=[]
+        with _LOCK, self._conn:
+            for task_id in dict.fromkeys(ids):
+                cursor=self._conn.execute("UPDATE tasks SET status='cancelled',phase='cancelled',finished_at=?,updated_at=? WHERE id=? AND status='queued' AND submission_started_at IS NULL AND conversation_id IS NULL", (time.time(),time.time(),task_id))
+                if cursor.rowcount:
+                    cancelled.append(task_id)
+        return cancelled
+
+    def fail_unsent_waiting(self, task_id, error):
+        with _LOCK, self._conn:
+            cursor=self._conn.execute("UPDATE tasks SET status='failed',error=?,finished_at=?,updated_at=? WHERE id=? AND status='queued' AND submission_started_at IS NULL AND conversation_id IS NULL AND NOT EXISTS (SELECT 1 FROM video_batches WHERE id=tasks.batch_id AND paused=1)", (error,time.time(),time.time(),task_id))
+            return bool(cursor.rowcount)
+
     def studio_option(self, key):
         with _LOCK:
             row = self._conn.execute("SELECT value FROM studio_options WHERE key=?", (key,)).fetchone()
@@ -374,8 +413,8 @@ class TaskStore:
         cutoff = time.time() - float(retention_days) * 86400
         with _LOCK:
             rows = self._conn.execute(
-                "SELECT id, video_url, account, reference_thumbs FROM tasks"
-                " WHERE status IN ('completed','failed')"
+                "SELECT id, video_url, account, reference_thumbs, reference_images FROM tasks"
+                " WHERE status IN ('completed','failed','cancelled')"
                 "   AND COALESCE(finished_at, updated_at) < ?"
                 " ORDER BY COALESCE(finished_at, updated_at) ASC",
                 (cutoff,),

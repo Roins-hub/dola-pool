@@ -1,6 +1,6 @@
 # Dola Studio cá nhân
 
-App mở vào Tạo video. Nhập mô tả, chọn model/thời lượng/khung hình và ảnh tham chiếu nếu cần. Nút Tạo video tự kiểm tra nội dung; trường hợp cần xem xét yêu cầu xác nhận trước khi gửi.
+App mở vào Tạo video. Nhập mô tả, chọn model/thời lượng/khung hình và ảnh tham chiếu nếu cần. Nút **Tạo video** gửi tạo trực tiếp, không gọi AI kiểm tra. **Kiểm tra nội dung** là thao tác riêng, tùy chọn. Backend vẫn kiểm tra đăng nhập, dữ liệu, model/thời lượng và ảnh; Dola vẫn xử lý nội dung theo quy định của dịch vụ.
 
 Nhập **Bạn muốn sửa gì?** để AI chỉnh bản đang chọn. Bản đề xuất không tự ghi đè prompt. Có sửa tiếp, so sánh, áp dụng, hoàn tác, bản gốc và lịch sử. Prompt/lịch sử được lưu trên trình duyệt; ảnh được lưu bằng IndexedDB. Trình duyệt xóa dữ liệu hoặc hết dung lượng có thể làm mất bản nháp. Studio báo khi lưu thất bại.
 
@@ -8,7 +8,7 @@ Nhập **Bạn muốn sửa gì?** để AI chỉnh bản đang chọn. Bản đ
 
 Chọn **Một prompt**, đặt **Số video mỗi prompt** để tạo nhiều kết quả riêng. Hoặc chọn **Danh sách prompt / TXT**: mỗi dòng là một prompt, bỏ dòng trống; giữ dòng trùng. File TXT cần UTF-8 và tối đa 1 MB. Mỗi prompt tạo 1–10 bản, tổng tối đa 50 video/mẻ. Model, thời lượng, tỉ lệ và ảnh tham chiếu áp dụng cho cả mẻ.
 
-Studio kiểm tra từng prompt, hiển thị các lý do và yêu cầu xác nhận nội dung cần xem xét. Có một prompt bị chặn hoặc lỗi kiểm tra thì chưa gửi mẻ. Trước khi tạo, xác nhận số video và việc có thể dùng thêm điểm. Mẻ được lưu đầy đủ trong SQLite trước khi worker gửi; tải lại hoặc đóng trang không dừng hàng đợi. Mã mẻ giữ nguyên khi thử lại cùng bản nháp sau mất phản hồi. Thay đổi nội dung với cùng mã bị từ chối. Xóa video trong mẻ rồi thử lại mã cũ không tạo lại video đã xóa.
+Bấm **Kiểm tra nội dung** nếu muốn phân tích từng prompt trước. Kết quả kiểm tra chỉ hỗ trợ duyệt; nút tạo mẻ không tự gọi hoặc chờ AI. Trước khi tạo, xác nhận số video và việc có thể dùng thêm điểm. Mẻ được lưu đầy đủ trong SQLite trước khi worker gửi; tải lại hoặc đóng trang không dừng hàng đợi. Mã mẻ giữ nguyên khi thử lại cùng bản nháp sau mất phản hồi. Thay đổi nội dung với cùng mã bị từ chối. Xóa video trong mẻ rồi thử lại mã cũ không tạo lại video đã xóa.
 
 **Video của tôi** mở mẻ vừa tạo, có số job hoàn tất, đang chạy, chưa rõ kết quả và thất bại. Bấm **Xem tất cả video** để ra khỏi bộ lọc. Mỗi video có trạng thái, thanh tiến độ theo bước và phản hồi Dola riêng.
 
@@ -58,7 +58,7 @@ Hai script E2E cũ là entrypoint tương thích cho journey này. Script dịch
 
 Workspace có prompt/AI bên trái, ảnh tham chiếu bên phải và hàng đợi bảng/lưới cạnh preview. Vai trò ảnh là thông tin người dùng chọn; phân tích hiện đọc văn bản và metadata, không tuyên bố đã xem pixel. AI chỉ rõ đoạn gốc, lý do và thay thế; chọn từng gợi ý để dựng bản đề xuất, xem trước rồi áp dụng, có hoàn tác. Đoạn trích sai, trùng chưa rõ vị trí hoặc chồng lấn không tự thay.
 
-Kiểm tra prompt mới gắn model, thời lượng, tỉ lệ và SHA-256 byte ảnh. Đổi đầu vào làm mất hiệu lực kết quả cũ. Request preflight JSON chỉ có prompt vẫn được nhận; khi tạo video, token chỉ kiểm tra văn bản cần phân tích bổ sung cấu hình thực. Biên nhận request đã có được trả trước gate hết hạn và không gọi lại AI. Cập nhật Dola hiển thị tiếng Việt; nguyên văn đã che secrets ở Chi tiết kỹ thuật.
+Kiểm tra prompt mới gắn model, thời lượng, tỉ lệ và SHA-256 byte ảnh. Đổi đầu vào làm mất hiệu lực kết quả cũ. Request preflight JSON chỉ có prompt vẫn được nhận; với luồng gửi có yêu cầu preflight, token chỉ kiểm tra văn bản cần phân tích bổ sung cấu hình thực. Tạo trực tiếp từ Studio cá nhân không bắt buộc token AI; các endpoint công khai giữ gate hiện có. Biên nhận request đã có được trả trước gate hết hạn và không gọi lại AI. Cập nhật Dola hiển thị tiếng Việt; nguyên văn đã che secrets ở Chi tiết kỹ thuật.
 
 ## Thư mục prompt và xuất kết quả
 
@@ -83,3 +83,15 @@ Không thêm thư viện hay framework mới. Các chức năng tạo ảnh/asse
 Nếu POST đã được nhận nhưng mất response, Studio tìm biên nhận theo tài khoản đăng nhập/mã yêu cầu trước khi gọi lại AI, kể cả sau reload hoặc token hết hạn. GET `/api/admin/video-receipts/{request_id}?kind=single|batch` chỉ đọc; chưa có biên nhận trả null. Prompt phân tích và gửi một video giữ cùng nguyên văn để neo gợi ý không lệch vì khoảng trắng.
 
 Vai trò ảnh người dùng chọn được dùng cả khi tạo mẻ với ảnh chung. Log chuẩn và stdout của các thành phần chính cùng che URL/session/cookie/key; dữ liệu lịch sử gốc chỉ hiển thị ở chi tiết đã che secrets.
+
+## Điều khiển mẻ và xử lý lỗi
+
+Bấm **Xem mẻ** trên một video để mở mẻ cũ. **Tạm dừng lượt gửi mới** được lưu trong database, giữ qua restart; video Dola đã nhận vẫn được theo dõi và tải về. **Tiếp tục lượt gửi** mở lại hàng đợi. Chọn tối đa 50 video trong bảng/lưới để **Bỏ job chưa gửi** hoặc **Tải ZIP đã chọn**. Bỏ job không xóa dữ liệu và không hủy conversation đã gửi. ZIP có manifest ghi rõ file được tải và các job chưa có file.
+
+**Duyệt / tạo lại lỗi đã chọn** chỉ nạp job có trạng thái thất bại đã xác nhận; bỏ qua video chưa rõ kết quả. Giữ prompt gốc, cho sửa trực tiếp, **AI đề xuất sửa**, hoàn tác và kiểm tra từng dòng. Chọn các dòng hợp lệ, xác nhận các lý do cần xem xét và xác nhận chi phí trước khi tạo video mới. Mỗi dòng tạo một video và lưu liên kết với job lỗi gốc. Không tự chạy lại hoặc tự dùng điểm khi AI đề xuất.
+
+Bản nháp sửa lỗi và lịch sử được lưu trong trình duyệt; sau tải lại phải kiểm tra prompt lại vì token có hạn. Nếu phản hồi gửi bị mất, Studio giữ mã yêu cầu và tìm mẻ đã nhận trước khi kiểm tra/gửi lại, kể cả sau tải lại trang. Response AI cũ không ghi đè prompt đã chỉnh.
+
+Job lỗi mới giữ ảnh gốc để tạo lại, theo thời hạn lưu task hiện có. Mỗi video tạo lại sở hữu bản sao ảnh riêng và giữ vai trò ảnh. Nếu ảnh gốc của job cũ đã bị xóa, Studio báo cần bổ sung ảnh; không thay bằng thumbnail.
+
+Kiểm tra nút tạo trực tiếp riêng: `.venv/bin/python tests/run_direct_submit_journey.py /tmp/dola-direct-evidence`.

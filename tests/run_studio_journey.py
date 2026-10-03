@@ -101,9 +101,9 @@ async def browser_journey():
   await page.wait_for_function("document.body.dataset.imagesSaved==='saved'")
   await page.reload();await page.wait_for_selector('#tab-generate',state='visible')
   await page.wait_for_selector('.image-preview-item img')
-  # Blocked preflight never submits; draft survives.
+  # Optional content check never submits; draft survives.
   before=len(events('submit'));await page.locator('#gen_prompt').fill('BLOCK_ME')
-  await page.locator('#btn_submit_gen').click();await page.wait_for_selector('.alert-block',state='visible')
+  await page.locator('#btn_preflight').click();await page.wait_for_selector('.alert-block',state='visible')
   assert len(events('submit'))==before
   assert await page.locator('#gen_prompt').input_value()=='BLOCK_ME'
   # A selected deletion removes only the exact second occurrence and can be undone.
@@ -124,9 +124,9 @@ async def browser_journey():
   await page.get_by_role('button',name='Tạo bản đề xuất từ lựa chọn',exact=True).click()
   assert await page.locator('#gen_rewrite_draft').input_value()==' mèo chạy; mèo bước WHITESPACE_ANCHOR '
   assert await page.locator('#gen_prompt').input_value()==raw
-  # Review requires user confirmation.
+  # Optional review remains available independently of direct creation.
   await page.locator('#gen_prompt').fill('REVIEW_ME hành động giả tưởng')
-  await page.locator('#btn_submit_gen').click();await page.wait_for_selector('#gen_confirm_review')
+  await page.locator('#btn_preflight').click();await page.wait_for_selector('#gen_confirm_review')
   assert len(events('submit'))==before
   (ROOT/'hold').touch()
   await page.locator('#gen_confirm_review').check();await page.locator('#btn_submit_gen').dblclick()
@@ -217,7 +217,7 @@ async def browser_journey():
   # TXT import, blocked batch, review gate and four separate persisted jobs.
   await page.locator('#gen_mode').select_option('list')
   await page.locator('#gen_batch_prompts').fill('cat\nBLOCK_ME')
-  before=len(events('submit'));await page.locator('#btn_submit_gen').click()
+  before=len(events('submit'));await page.locator('#btn_preflight').click()
   await page.wait_for_function("document.querySelector('#gen_batch_check').textContent.includes('Mẻ chưa được gửi')")
   assert len(events('submit'))==before
   (ROOT/'prompts.txt').write_text('\ufeffMột chú mèo\r\n\r\nREVIEW_ME Một con thuyền\r\n',encoding='utf-8')
@@ -225,7 +225,7 @@ async def browser_journey():
   await page.wait_for_function("document.querySelector('#gen_batch_prompts').value.includes('Một con thuyền')")
   await page.locator('#gen_copies').fill('2')
   assert '4 video' in await page.locator('#gen_batch_summary').inner_text()
-  await page.locator('#btn_submit_gen').click();await page.wait_for_selector('#gen_batch_review')
+  await page.locator('#btn_preflight').click();await page.wait_for_selector('#gen_batch_review')
   assert len(events('submit'))==before
   await page.locator('#gen_batch_review').check()
   page.on('dialog',lambda dialog:asyncio.create_task(dialog.accept()))
@@ -311,6 +311,7 @@ async def browser_journey():
   assert len(list(output.glob('*.mp4')))==2
   assert httpx.get(BASE+'/api/admin/studio-output',headers=login()).json()['export_directory']==str(output.resolve())
   page=await context.new_page()
+  page.on('dialog',lambda d:asyncio.create_task(d.accept()))
   page.on('pageerror',lambda e:errors.append(str(e)))
   page.on('console',lambda m:errors.append(m.text) if m.type=='error' and '401' not in m.text else None)
   await page.goto(BASE);await page.wait_for_selector('#loginMask',state='visible')
@@ -353,6 +354,62 @@ async def browser_journey():
   await page.wait_for_selector('#gen_job_content video')
   assert row(repaired_id)['source_task_id']==refused_id
   assert len(events('submit'))==refusal_before+2
+  # Bulk failure repair keeps originals/drafts and survives a lost accepted POST.
+  await page.get_by_role('button',name='▤ Video của tôi',exact=True).click()
+  await page.locator('#myVideoFilter').select_option('all')
+  await page.locator('#tab-videos').get_by_role('button',name='Bảng',exact=True).click()
+  await page.locator('#myVideoTable input[data-video-select="'+refused_id+'"]').check()
+  unclear_id=next(t['id'] for t in httpx.get(BASE+'/api/admin/tasks?limit=100',headers=login()).json()['tasks'] if t['status']=='unknown')
+  await page.locator('#myVideoTable input[data-video-select="'+unclear_id+'"]').check()
+  await page.get_by_role('button',name='Duyệt / tạo lại lỗi đã chọn',exact=True).click()
+  await page.wait_for_selector('#retryPanel',state='visible')
+  assert await page.locator('#retryRows textarea').count()==1
+  assert 'REFUSAL_FIXTURE' in await page.locator('#retryRows details').text_content()
+  await page.locator('#retryInstructions').fill('Giữ cảnh và nhân vật; làm rõ hành động')
+  await page.get_by_role('button',name='AI đề xuất sửa các dòng đã chọn',exact=True).click()
+  await page.wait_for_function("document.querySelector('#retryMessage').textContent.includes('Đã xử lý')")
+  assert await page.locator('#retry-prompt-0').input_value()!='REFUSAL_FIXTURE'
+  await page.get_by_role('button',name='Hoàn tác / dùng bản gốc',exact=True).click()
+  assert await page.locator('#retry-prompt-0').input_value()=='REFUSAL_FIXTURE'
+  await page.locator('#retry-prompt-0').fill('Mèo nhìn cửa sổ — sửa theo mẻ')
+  await page.reload();await page.wait_for_selector('#tab-generate',state='visible')
+  await page.get_by_role('button',name='▤ Video của tôi',exact=True).click()
+  assert await page.locator('#retry-prompt-0').input_value()=='Mèo nhìn cửa sổ — sửa theo mẻ'
+  assert 'REFUSAL_FIXTURE' in await page.locator('#retryRows details').text_content()
+  await page.get_by_role('button',name='Kiểm tra các prompt đã chọn',exact=True).click()
+  await page.wait_for_function("document.querySelector('#retry-status-0').textContent.includes('Có thể gửi')")
+  before_retry=len(events('submit'))
+  async def lose_retry_reply(route):
+   response=await route.fetch();assert response.status==202
+   await route.fulfill(status=200,content_type='application/json',body='{')
+  await page.route('**/api/admin/videos/retry-batch',lose_retry_reply)
+  await page.locator('#retrySubmit').dblclick()
+  await page.wait_for_function("document.querySelector('#retryMessage').textContent.includes('Chưa xác nhận')")
+  for _ in range(100):
+   if len(events('submit'))==before_retry+1:break
+   await asyncio.sleep(.1)
+  assert len(events('submit'))==before_retry+1
+  await page.unroute('**/api/admin/videos/retry-batch')
+  await page.reload();await page.wait_for_selector('#tab-generate',state='visible')
+  await page.get_by_role('button',name='▤ Video của tôi',exact=True).click()
+  retry_ai=len(events('ai'))
+  await page.locator('#retry-prompt-0').fill('Bản sửa mới sau khi mất phản hồi')
+  await page.get_by_role('button',name='AI đề xuất sửa các dòng đã chọn',exact=True).click()
+  await page.wait_for_function("document.querySelector('#retryMessage').textContent.includes('Đã tìm lại mẻ')")
+  assert len(events('submit'))==before_retry+1 and len(events('ai'))==retry_ai
+  await page.locator('#retrySubmit').click()
+  assert 'Chọn ít nhất' in await page.locator('#retryMessage').inner_text()
+  await page.screenshot(path=str(OUT/'retry-batch-desktop.png'),full_page=True)
+  await page.set_viewport_size({'width':390,'height':844})
+  await page.screenshot(path=str(OUT/'retry-batch-mobile.png'),full_page=True)
+  assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth')
+  # Selected ZIP uses real completed artifacts and its manifest, not a worker stub.
+  await page.locator('#tab-videos').get_by_role('button',name='Chọn tất cả đang hiển thị',exact=True).click()
+  async with page.expect_download() as chosen_zip:
+   await page.get_by_role('button',name='Tải ZIP đã chọn',exact=True).click()
+  chosen_path=OUT/'selected-videos.zip';await (await chosen_zip.value).save_as(str(chosen_path))
+  with zipfile.ZipFile(chosen_path) as archive:
+   assert len(json.loads(archive.read('ket-qua.json'))['included'])==1
   await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
   await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'studio-mobile.png'),full_page=True)
   assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'Mobile horizontal overflow'
@@ -426,9 +483,32 @@ try:
  retry=httpx.post(BASE+'/api/admin/videos/batches',headers=login(),data={'batch':json.dumps(spec)});retry.raise_for_status()
  assert [t['id'] for t in retry.json()['tasks']]==[t['id'] for t in batch['tasks']]
  assert len(events('submit'))==count_before_restart+2
+ # Pause survives a fresh process; accepted work completes, cancelled work never submits.
+ (ROOT/'hold').touch();headers=login();entries=[]
+ for prompt in ['pause cat','pause boat']:
+  pf=httpx.post(BASE+'/api/admin/prompts/preflight',headers=headers,json={'prompt':prompt});pf.raise_for_status()
+  entries.append({'prompt':prompt,'preflight_token':pf.json()['token']})
+ pause_spec={'request_id':'pause-restart','prompts':entries,'copies':2,'model':'seedance-2.5','duration':10,'ratio':'16:9'}
+ r=httpx.post(BASE+'/api/admin/videos/batches',headers=headers,data={'batch':json.dumps(pause_spec)});r.raise_for_status();paused=r.json()
+ for _ in range(100):
+  view=httpx.get(BASE+'/api/admin/videos/batches/'+paused['batch_id'],headers=headers).json()
+  if len([t for t in view['tasks'] if t.get('conversation_id')])==2:break
+  time.sleep(.1)
+ sent=[t['id'] for t in view['tasks'] if t.get('conversation_id')]
+ waiting=[t['id'] for t in view['tasks'] if not t.get('submission_started_at')]
+ assert len(sent)==len(waiting)==2
+ httpx.post(BASE+'/api/admin/videos/batches/'+paused['batch_id']+'/control',headers=headers,json={'paused':True}).raise_for_status()
+ r=httpx.post(BASE+'/api/admin/tasks/cancel-unsent',headers=headers,json={'ids':[sent[0],waiting[0]]});r.raise_for_status();assert r.json()['cancelled']==[waiting[0]]
+ submissions=len(events('submit'));process.kill();process.wait(timeout=10);(ROOT/'hold').unlink();start()
+ for task_id in sent:wait_row(task_id,'completed')
+ time.sleep(.5);assert len(events('submit'))==submissions
+ assert row(waiting[0])['status']=='cancelled' and row(waiting[1])['status']=='queued'
+ headers=login();view=httpx.get(BASE+'/api/admin/videos/batches/'+paused['batch_id'],headers=headers).json();assert view['paused']
+ httpx.post(BASE+'/api/admin/videos/batches/'+paused['batch_id']+'/control',headers=headers,json={'paused':False}).raise_for_status()
+ wait_row(waiting[1],'completed');assert len(events('submit'))==submissions+1
  asyncio.run(browser_journey())
  (OUT/'result.json').write_text(json.dumps({'passed':True,'process_pids':[pid1,pid2],
-  'refusal_edit_reload_linked_new_video':True,'reuse_prompt_leaves_folder_mode':True,'named_batch_restore_zip':True,'lost_post_receipt_before_ai_single_batch':True,'boundary_whitespace_anchor':True,'restart_submission_count':1,'continuation_submission_count':2,'manual_check_no_resubmit':True,'idempotent_request_retry':True,'reference_image_reload':True,'rewrite_iterations':2,'stale_rewrite_discarded':True,'upstream_progress_browser':True,'txt_batch_four_jobs':True,'batch_process_restart_no_duplicate':True,
+  'bulk_retry_repair_recovery_before_ai':True,'bulk_retry_original_undo_reload':True,'selected_zip_real_media':True,'batch_pause_cancel_real_process_restart':True,'refusal_edit_reload_linked_new_video':True,'reuse_prompt_leaves_folder_mode':True,'named_batch_restore_zip':True,'lost_post_receipt_before_ai_single_batch':True,'boundary_whitespace_anchor':True,'restart_submission_count':1,'continuation_submission_count':2,'manual_check_no_resubmit':True,'idempotent_request_retry':True,'reference_image_reload':True,'rewrite_iterations':2,'stale_rewrite_discarded':True,'upstream_progress_browser':True,'txt_batch_four_jobs':True,'batch_process_restart_no_duplicate':True,
   'after_300s_single_conversation':True,'polling_error_recovered_same_conversation':True,'ambiguous_send_restart_no_resubmit':True,
   'folder_two_groups_own_images_restart':True,'folder_zip_playable':True,'export_copy_preserves_original':True,'inventory_disable_keeps_active_job':True,'confirmed_http_rejection_keeps_draft':True,
   'rich_ai_selective_edit':True,'context_stale_discarded':True,'vietnamese_progress':True,'queue_table_preview':True,

@@ -276,7 +276,31 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
         </div>
       </div>
       <div id="videoStat" style="margin:10px 0 6px;color:var(--sub);font-size:13px">Đang tải thống kê video...</div>
-      <p id="myBatchSummary" role="status"></p><button id="myBatchZip" class="btn" style="display:none" onclick="downloadBatchZip()">Tải ZIP kết quả</button><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div class="queue-toolbar"><button class="btn" onclick="setMyVideoView('grid')">Lưới</button><button class="btn" onclick="setMyVideoView('table')">Bảng</button><label for="myVideoFilter">Trạng thái</label><select id="myVideoFilter" onchange="loadMyVideos()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option></select></div><div id="myVideoTable" class="queue-table" style="display:none"></div><div id="myVideoJobs" class="my-video-jobs"></div><article id="mySelectedPreview" class="video-job" style="display:none"></article><details><summary>Thông tin file đã lưu</summary><div id="videosTable"></div></details>
+      <div class="queue-toolbar" aria-label="Điều khiển mẻ">
+        <button id="myBatchPause" class="btn" hidden onclick="toggleBatchPause()">Tạm dừng lượt gửi mới</button>
+        <button class="btn" onclick="selectVisibleVideos(true)">Chọn tất cả đang hiển thị</button>
+        <button class="btn" onclick="selectVisibleVideos(false)">Bỏ chọn</button>
+        <button class="btn" onclick="downloadSelectedJobs()">Tải ZIP đã chọn</button>
+        <button class="btn" onclick="cancelSelectedJobs()">Bỏ job chưa gửi</button>
+        <button class="btn btn-p" onclick="openRetrySelection()">Duyệt / tạo lại lỗi đã chọn</button>
+      </div>
+      <p id="queueActionMessage" role="status" aria-live="polite"></p>
+      <section id="retryPanel" class="card" hidden aria-labelledby="retryTitle">
+        <h3 id="retryTitle">Duyệt prompt để tạo lại video lỗi</h3>
+        <p>Chỉ xử lý lỗi đã xác nhận. Video chưa rõ kết quả cần kiểm tra lại. Mỗi dòng được duyệt sẽ tạo một video mới và có thể dùng thêm điểm Dola.</p>
+        <label for="retryInstructions" style="display:block">Bạn muốn sửa gì?</label>
+        <textarea id="retryInstructions" style="width:100%;box-sizing:border-box" maxlength="4000" rows="2" placeholder="Giữ nhân vật và cảnh; làm rõ hành động" oninput="saveRetryDraft()"></textarea>
+        <div class="queue-toolbar">
+          <button class="btn" onclick="prepareRetryRows(true)">AI đề xuất sửa các dòng đã chọn</button>
+          <button class="btn" onclick="prepareRetryRows(false)">Kiểm tra các prompt đã chọn</button>
+          <button class="btn" onclick="restorePendingRetryPrompts()">Khôi phục bản đã gửi</button>
+          <button id="retrySubmit" class="btn btn-p" onclick="submitRetryRows()">Tạo lại các dòng đã duyệt</button>
+          <button class="btn" onclick="q('#retryPanel').hidden=true">Thu gọn</button>
+        </div>
+        <p id="retryMessage" role="status" aria-live="polite"></p>
+        <div id="retryRows"></div>
+      </section>
+      <p id="myBatchSummary" role="status"></p><button id="myBatchZip" class="btn" style="display:none" onclick="downloadBatchZip()">Tải ZIP kết quả</button><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div class="queue-toolbar"><button class="btn" onclick="setMyVideoView('grid')">Lưới</button><button class="btn" onclick="setMyVideoView('table')">Bảng</button><label for="myVideoFilter">Trạng thái</label><select id="myVideoFilter" onchange="loadMyVideos()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option><option value="cancelled">Đã bỏ trước khi gửi</option></select></div><div id="myVideoTable" class="queue-table" style="display:none"></div><div id="myVideoJobs" class="my-video-jobs"></div><article id="mySelectedPreview" class="video-job" style="display:none"></article><details><summary>Thông tin file đã lưu</summary><div id="videosTable"></div></details>
     </div>
   </section>
 
@@ -520,7 +544,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
     <div class="card" id="studio_queue_card"><h3>Hàng đợi video</h3>
       <p id="studioHealth" class="studio-health" role="status">Đang lấy trạng thái backend…</p>
       <div class="queue-toolbar"><button class="btn" onclick="setQueueView('table')">Bảng</button><button class="btn" onclick="setQueueView('grid')">Lưới</button>
-      <label for="studioQueueFilter">Trạng thái</label><select id="studioQueueFilter" onchange="renderStudioQueue()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option></select></div>
+      <label for="studioQueueFilter">Trạng thái</label><select id="studioQueueFilter" onchange="renderStudioQueue()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option><option value="cancelled">Đã bỏ trước khi gửi</option></select></div>
       <div id="studioQueueRows" class="queue-table"></div>
     </div>
     <!-- Khung theo dõi tiến độ Job đang chạy -->
@@ -577,7 +601,7 @@ async function api(path,opts={}){
   const r=await fetch(path,{method:opts.method||'GET',headers:{'Content-Type':'application/json','X-Admin-Key':adminKey,...(opts.headers||{})},body:opts.body?JSON.stringify(opts.body):undefined});
   if(r.status===401){showLogin();throw new Error('unauthorized');}
   const text=await r.text();
-  let data={};try{data=text?JSON.parse(text):{};}catch(e){}
+  let data={};try{data=text?JSON.parse(text):{};}catch(e){if(r.ok)throw new Error('Phản hồi từ Studio bị gián đoạn; chưa xác định kết quả yêu cầu.');}
   if(!r.ok){const error=new Error(data.message_vi||(typeof data.detail==='object'?JSON.stringify(data.detail):(data.detail||`${r.status} ${text.slice(0,120)}`)));error.details=data.failure_display?.details;error.status=r.status;throw error;}
   return data;
 }
@@ -2289,15 +2313,13 @@ async function submitVideoBatch(){
     const receipt=await recoverPendingReceipt('batch',snapshot);
     if(receipt){currentBatchId=receipt.batch_id;pendingRequestId='';pendingSnapshot='';analysisTaskId='';renderDraftSource();saveStudioDraft();if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');switchTab('videos');studioMessage('Đã tìm lại mẻ đã nhận; không gửi thêm video.');return;}
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã đổi; hãy kiểm tra lại.');
-    if(!batchPreflight||batchPreflight.snapshot!==snapshot||batchPreflight.entries.some(e=>e.expires_at*1000<Date.now()))if(!await checkBatchPrompts())return;
-    if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại mẻ.');
-    if(!batchPreflight||batchPreflight.entries.some(e=>!['allow','review'].includes(e.status)))return;
-    const review=batchPreflight.entries.some(e=>e.status==='review');if(review&&!q('#gen_batch_review')?.checked)return studioMessage('Xem lý do và xác nhận nội dung trước khi gửi mẻ.');
-    const copies=Number(q('#gen_copies').value),total=batchPreflight.entries.length*copies;
+    const copies=Number(q('#gen_copies').value),prompts=batchPromptList(),total=prompts.length*copies;
+    if(!prompts.length||!Number.isInteger(copies)||copies<1||copies>10||total>50)return studioMessage('Nhập prompt và chọn 1–10 bản, tối đa 50 video mỗi mẻ.');
+    const entries=prompts.map((prompt,i)=>{const group=q('#gen_mode').value==='folder'?folderGroups[i]:null;return {prompt,reference_roles:selectedImages.map((_,n)=>referenceRoles[n]||'other'),...(group?{reference_indices:group.reference_indices,reference_roles:group.reference_indices.map(n=>referenceRoles[n]||'other'),group:group.name}:{})};});
     if(!confirm('Tạo '+total+' video? Mỗi video có thể dùng thêm điểm Dola. Các video là những kết quả riêng, không tự ghép.'))return;
     if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
-    const fd=new FormData();fd.append('batch',JSON.stringify({source_task_id:analysisTaskId||null,name:q('#gen_batch_name').value,request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
-      prompts:batchPreflight.entries.map(e=>({prompt:e.prompt,preflight_token:e.token,confirm_review:review,reference_roles:e.reference_roles||[],...(e.reference_indices?{reference_indices:e.reference_indices,reference_roles:e.reference_roles,group:e.group}:{})}))}));for(const image of selectedImages)fd.append('images',image);
+    const fd=new FormData();fd.append('batch',JSON.stringify({skip_preflight:true,source_task_id:analysisTaskId||null,name:q('#gen_batch_name').value,request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
+      prompts:entries}));for(const image of selectedImages)fd.append('images',image);
     btn.textContent='Đang gửi mẻ…';const resp=await fetch('/api/admin/videos/batches',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await resp.json();
     if(!resp.ok){const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không nhận được mẻ'));error.details=data.failure_display?.details;error.status=resp.status;throw error;}
     currentBatchId=data.batch_id;if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');pendingRequestId='';pendingSnapshot='';analysisTaskId='';renderDraftSource();saveStudioDraft();switchTab('videos');
@@ -2320,15 +2342,9 @@ async function doSubmitGenerate(){
     if(receipt){pendingRequestId='';pendingSnapshot='';currentBatchId='';analysisTaskId='';renderDraftSource();trackStudioJob(receipt.id);studioMessage('Đã tìm lại video đã nhận; không gửi thêm yêu cầu.');return;}
     if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã đổi; hãy kiểm tra lại.');
     if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
-    if(!currentPreflight||currentPreflight.prompt!==prompt||currentPreflight.snapshot!==snapshot||currentPreflight.expires_at*1000<Date.now())await doPreflightCheck();
-    if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã thay đổi; hãy kiểm tra lại trước khi gửi.');
-    if(!currentPreflight)return;
-    if(currentPreflight.status==='block')return studioMessage('Chỉnh nội dung theo gợi ý trước khi tạo.');
-    const reviewed=currentPreflight.status==='review';
-    if(reviewed&&!q('#gen_confirm_review')?.checked)return studioMessage('Xem lý do phía trên, xác nhận rồi bấm Tạo video.');
     btn.textContent='Đang gửi…';const fd=new FormData();fd.append('prompt',prompt);
     fd.append('model',q('#gen_model').value);fd.append('duration',q('#gen_duration').value);fd.append('ratio',q('#gen_ratio').value);
-    fd.append('reference_roles',JSON.stringify(selectedImages.map((_,i)=>referenceRoles[i]||'other')));fd.append('request_id',pendingRequestId);if(analysisTaskId)fd.append('source_task_id',analysisTaskId);fd.append('preflight_token',currentPreflight.token||'');if(reviewed)fd.append('confirm_review','true');
+    fd.append('reference_roles',JSON.stringify(selectedImages.map((_,i)=>referenceRoles[i]||'other')));fd.append('request_id',pendingRequestId);if(analysisTaskId)fd.append('source_task_id',analysisTaskId);fd.append('skip_preflight','true');
     for(const image of selectedImages)fd.append('images',image);
     const resp=await fetch('/api/admin/videos/generations',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});
     const data=await resp.json();if(resp.status===401)showLogin();if(!resp.ok){currentPreflight=null;const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu'));error.details=data.failure_display?.details;error.confirmed=true;throw error;}
@@ -2343,11 +2359,11 @@ function trackStudioJob(taskId){
 async function pollStudioJob(taskId){
   if(!taskId)return;try{const res=await api('/api/admin/tasks/'+encodeURIComponent(taskId));
     if(taskId!==currentActiveTaskId)return;q('#gen_job_content .poll-error')?.remove();renderStudioJobCard(res);
-    if(['completed','failed','unknown'].includes(res.status)){clearInterval(studioPollTimer);studioPollTimer=null;}
+    if(['completed','failed','unknown','cancelled'].includes(res.status)){clearInterval(studioPollTimer);studioPollTimer=null;}
   }catch(e){if(taskId===currentActiveTaskId){const el=q('#gen_job_content');let notice=el.querySelector('.poll-error');if(!notice){notice=document.createElement('p');notice.className='poll-error';notice.setAttribute('role','status');el.prepend(notice);}notice.textContent='Mất kết nối với Studio. Đang thử lấy trạng thái; không gửi video mới.';}}
 }
-const phaseLabels={waiting:'Chờ tài khoản',sending:'Đang gửi yêu cầu',generating:'Dola đang tạo video',downloading:'Đang tải video',done:'Hoàn tất',uncertain:'Chưa rõ kết quả'};
-function taskLabel(t){return t.status==='unknown'?'Chưa rõ kết quả':t.status==='failed'?'Không tạo được video':phaseLabels[t.phase]||({queued:'Chờ tài khoản',processing:'Dola đang tạo video',completed:'Hoàn tất'}[t.status]||t.status);}
+const phaseLabels={waiting:'Chờ tài khoản',paused:'Tạm dừng lượt gửi',cancelled:'Đã bỏ trước khi gửi',sending:'Đang gửi yêu cầu',generating:'Dola đang tạo video',downloading:'Đang tải video',done:'Hoàn tất',uncertain:'Chưa rõ kết quả'};
+function taskLabel(t){return t.status==='unknown'?'Chưa rõ kết quả':t.status==='failed'?'Không tạo được video':phaseLabels[t.phase]||({queued:'Chờ tài khoản',processing:'Dola đang tạo video',completed:'Hoàn tất',cancelled:'Đã bỏ trước khi gửi'}[t.status]||t.status);}
 function localVideoUrl(url){try{const path=new URL(url,location.href).pathname;return path.startsWith('/videos/')?path:url;}catch(e){return url;}}
 function jobProgressMarkup(t){
   let updates=[];try{updates=JSON.parse(t.upstream_updates||'[]');}catch(e){}
@@ -2381,8 +2397,8 @@ function renderJobInto(el,t){
 function taskMarkup(t){
   t={...t,video_url:localVideoUrl(t.video_url)};
   const target=t.target_duration||t.duration;
-  let html=`<div class="job-heading"><strong>${esc(taskLabel(t))}</strong><span class="tiny">${esc(t.model||'')} · Mong muốn ${esc(target||'')} giây</span></div>`;
-  if(t.batch_id)html+=`<p class="tiny">Mẻ ${esc(t.batch_id.slice(-8))} · Video ${esc(t.batch_index)}</p>`;
+  let html=(curTab==='videos'?videoSelectionMarkup(t):'')+`<div class="job-heading"><strong>${esc(taskLabel(t))}</strong><span class="tiny">${esc(t.model||'')} · Mong muốn ${esc(target||'')} giây</span></div>`;
+  if(t.batch_id)html+=`<p class="tiny">Mẻ ${esc(t.batch_id.slice(-8))} · Video ${esc(t.batch_index)} <button class="btn" onclick="viewVideoBatch('${esc(t.batch_id)}')">Xem mẻ</button></p>`;
   if(t.source_task_id)html+='<p class="tiny">Bản sửa từ video '+esc(t.source_task_id)+'</p>';
   html+=jobProgressMarkup(t);
   if(t.video_url&&t.file_exists!==false){html+=`<video controls preload="metadata" src="${esc(t.video_url)}" class="studio-video"></video><p class="tiny">Thời lượng thực: ${Number(t.video_duration||0).toFixed(1)} giây${t.video_width?' · '+t.video_width+'×'+t.video_height:''}. Video Dola trả về; không cam kết 1080p native.</p><a class="btn btn-p" href="${esc(t.video_url)}" download>Tải video</a>`;
@@ -2409,10 +2425,18 @@ async function continueVideo(id){
 async function analyzeFailedTask(id){await useTaskPrompt(id);analysisTaskId=id;renderDraftSource();saveStudioDraft();await doPreflightCheck();}
 async function useTaskPrompt(id){analysisTaskId='';const t=await api('/api/admin/tasks/'+encodeURIComponent(id));q('#gen_mode').value='single';q('#gen_copies').value='1';batchInputsChanged();rewriteHistory.push(q('#gen_prompt').value);q('#gen_prompt').value=t.prompt||'';if(t.model)q('#gen_model').value=t.model;onModelChange();if(t.duration)q('#gen_duration').value=t.duration;if(t.ratio&&t.ratio!=='default')q('#gen_ratio').value=t.ratio;onPromptInput();switchTab('generate');}
 let queueView='table',studioQueueTasks=[],studioQueueVersion=0,myVideoView='grid',mySelectedId='';
+let selectedVideoIds=new Set(),myVisibleTasks=[],currentBatchPaused=false;
+function videoSelectionMarkup(t){return `<label class="tiny"><input type="checkbox" data-video-select="${esc(t.id)}" ${selectedVideoIds.has(t.id)?'checked':''} onchange="toggleVideoSelection('${esc(t.id)}',this.checked)"> Chọn video ${esc(t.id.slice(-8))}</label>`;}
+function toggleVideoSelection(id,value){if(value&&selectedVideoIds.size>=50&&!selectedVideoIds.has(id)){q('#queueActionMessage').textContent='Mỗi lượt chọn tối đa 50 video.';}else{value?selectedVideoIds.add(id):selectedVideoIds.delete(id);q('#queueActionMessage').textContent='Đã chọn '+selectedVideoIds.size+' video.';}document.querySelectorAll('[data-video-select]').forEach(el=>el.checked=selectedVideoIds.has(el.dataset.videoSelect));}
+function selectVisibleVideos(value){if(value){selectedVideoIds.clear();for(const t of myVisibleTasks.slice(0,50))selectedVideoIds.add(t.id);}else selectedVideoIds.clear();toggleVideoSelection('',false);if(value&&myVisibleTasks.length>50)q('#queueActionMessage').textContent='Đã chọn 50 video đầu tiên; mỗi lượt xử lý tối đa 50 video.';}
+async function viewVideoBatch(id){currentBatchId=id;selectedVideoIds.clear();saveStudioDraft();switchTab('videos');await loadMyVideos();}
+async function toggleBatchPause(){if(!currentBatchId)return;const id=currentBatchId,btn=q('#myBatchPause');btn.disabled=true;try{await api('/api/admin/videos/batches/'+encodeURIComponent(id)+'/control',{method:'POST',body:{paused:!currentBatchPaused}});await loadMyVideos();}catch(e){q('#queueActionMessage').textContent=e.message;}finally{btn.disabled=false;}}
+async function cancelSelectedJobs(){const ids=[...selectedVideoIds];if(!ids.length)return q('#queueActionMessage').textContent='Chọn video trước khi bỏ job.';if(!confirm('Bỏ các job đã chọn còn chưa gửi? Video đã gửi Dola vẫn được theo dõi.'))return;try{const r=await api('/api/admin/tasks/cancel-unsent',{method:'POST',body:{ids}});q('#queueActionMessage').textContent='Đã bỏ '+r.cancelled.length+' job chưa gửi; giữ '+r.skipped.length+' job đã gửi hoặc đã kết thúc.';await loadMyVideos();}catch(e){q('#queueActionMessage').textContent=e.message;}}
+async function downloadSelectedJobs(){const ids=[...selectedVideoIds];if(!ids.length)return q('#queueActionMessage').textContent='Chọn video cần tải.';try{const r=await fetch('/api/admin/videos/selected-download',{method:'POST',headers:{'x-admin-key':adminKey,'Content-Type':'application/json'},body:JSON.stringify({ids})});if(!r.ok)throw new Error('Không tải được ZIP; kiểm tra kết nối và đăng nhập.');const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download='video-da-chon.zip';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);}catch(e){q('#queueActionMessage').textContent=e.message;}}
 function filteredTasks(tasks,value){return tasks.filter(t=>value==='all'||(value==='running'?['queued','processing'].includes(t.status):t.status===value));}
 function queueMarkup(tasks,target,mode='table'){
   if(!tasks.length)return '<p class="tiny">Chưa có video trong bộ lọc này.</p>';
-  const button=t=>`<button class="btn" onclick="${target==='studio'?'trackStudioJob':'selectMyVideo'}('${esc(t.id)}')" aria-label="Xem video ${esc(t.id.slice(-8))}">Xem</button>`;
+  const button=t=>(target==='my'?videoSelectionMarkup(t):'')+`<button class="btn" onclick="${target==='studio'?'trackStudioJob':'selectMyVideo'}('${esc(t.id)}')" aria-label="Xem video ${esc(t.id.slice(-8))}">Xem</button>`;
   if(mode==='grid')return '<div class="queue-grid">'+tasks.map(t=>`<article><strong>${esc(taskLabel(t))}</strong><p>${esc((t.prompt||'').slice(0,120))}</p><p class="tiny">${esc(t.model)} · ${esc(t.video_duration||t.duration)} giây</p>${button(t)}</article>`).join('')+'</div>';
   return '<table><thead><tr><th>Trạng thái</th><th>Prompt</th><th>Model / thời lượng</th><th>Tài khoản</th><th>Tuyến</th><th></th></tr></thead><tbody>'+tasks.map(t=>`<tr><td>${esc(taskLabel(t))}</td><td title="${esc(t.prompt)}">${esc((t.prompt||'').slice(0,80))}</td><td>${esc(t.model)} · ${esc(t.video_duration||t.duration)} giây</td><td>${esc(t.account||'Chưa chọn')}</td><td>${esc(t.transport_mode||'Xem Cài đặt')}</td><td>${button(t)}</td></tr>`).join('')+'</tbody></table>';
 }
@@ -2430,12 +2454,12 @@ async function loadMyVideos(){
   if(videosLoading)return;videosLoading=true;
   try{const batchId=currentBatchId;
     const r=await api(batchId?'/api/admin/videos/batches/'+encodeURIComponent(batchId):'/api/admin/tasks?limit=100');if(curTab!=='videos'||batchId!==currentBatchId)return;
-    q('#myBatchZip').style.display=batchId?'inline-block':'none';q('#myBatchClear').style.display=batchId?'inline-block':'none';if(!batchId)q('#myBatchSummary').textContent='';
-    const container=q('#myVideoJobs'),tasks=filteredTasks(r.tasks||[],q('#myVideoFilter').value),ids=new Set(tasks.map(t=>t.id));q('#myVideoTable').innerHTML=queueMarkup(tasks,'my');const selected=tasks.find(t=>t.id===mySelectedId);if(selected)renderJobInto(q('#mySelectedPreview'),selected);
+    q('#myBatchZip').style.display=batchId?'inline-block':'none';q('#myBatchClear').style.display=batchId?'inline-block':'none';q('#myBatchPause').hidden=!batchId;currentBatchPaused=!!r.paused;q('#myBatchPause').textContent=currentBatchPaused?'Tiếp tục lượt gửi':'Tạm dừng lượt gửi mới';if(!batchId)q('#myBatchSummary').textContent='';
+    const container=q('#myVideoJobs'),tasks=filteredTasks(r.tasks||[],q('#myVideoFilter').value),ids=new Set(tasks.map(t=>t.id));myVisibleTasks=tasks;q('#myVideoTable').innerHTML=queueMarkup(tasks,'my');const selected=tasks.find(t=>t.id===mySelectedId);if(selected)renderJobInto(q('#mySelectedPreview'),selected);
     if(container.firstElementChild?.tagName==='P')container.innerHTML='';
     const members=currentBatchId?(r.tasks||[]).filter(t=>t.batch_id===currentBatchId):[];
     if(currentBatchId)currentBatchDownloadName=r.download_name||'dola-videos.zip';
-    if(currentBatchId)q('#myBatchSummary').textContent=(r.name?'Mẻ '+r.name+': ':'Mẻ đang theo dõi: ')+members.length+' video · '+members.filter(t=>t.status==='completed').length+' hoàn tất · '+members.filter(t=>['queued','processing'].includes(t.status)).length+' đang chờ/tạo · '+members.filter(t=>t.status==='unknown').length+' chưa rõ kết quả · '+members.filter(t=>t.status==='failed').length+' thất bại';
+    if(currentBatchId)q('#myBatchSummary').textContent=(r.name?'Mẻ '+r.name+': ':'Mẻ đang theo dõi: ')+members.length+' video · '+members.filter(t=>t.status==='completed').length+' hoàn tất · '+members.filter(t=>['queued','processing'].includes(t.status)).length+' đang chờ/tạo · '+members.filter(t=>t.status==='unknown').length+' chưa rõ kết quả · '+members.filter(t=>t.status==='failed').length+' thất bại · '+members.filter(t=>t.status==='cancelled').length+' đã bỏ'+(currentBatchPaused?' · Đã tạm dừng lượt gửi mới; video đã gửi vẫn tiếp tục.':'');
     for(const el of container.querySelectorAll('[data-task-id]'))if(!ids.has(el.dataset.taskId))el.remove();
     if(!tasks.length){container.innerHTML='<p>Chưa có video. Bắt đầu với ý tưởng đầu tiên của bạn.</p>';return;}
     for(const t of tasks){let el=Array.from(container.children).find(el=>el.dataset.taskId===t.id);
@@ -2444,6 +2468,52 @@ async function loadMyVideos(){
     }
   }finally{videosLoading=false;}
 }
+
+// retry-controls-start
+let retryRows=[],retryVersion=0,retryBusy=false,retryPendingId='',retryPendingSnapshot='';
+function retryMessage(text){q('#retryMessage').textContent=text;}
+function saveRetryDraft(){try{localStorage.setItem('dola-studio-retry-v1',JSON.stringify({rows:retryRows.map(({checked,...r})=>r),instructions:q('#retryInstructions').value,pendingId:retryPendingId,pendingSnapshot:retryPendingSnapshot}));}catch(e){retryMessage('Không lưu được bản nháp chỉnh sửa trong trình duyệt.');}}
+function restoreRetryDraft(){try{const d=JSON.parse(localStorage.getItem('dola-studio-retry-v1')||'null');if(!d||!Array.isArray(d.rows))return;retryRows=d.rows.slice(0,50).map(r=>({...r,checked:null}));q('#retryInstructions').value=d.instructions||'';retryPendingId=d.pendingId||'';retryPendingSnapshot=d.pendingSnapshot||'';if(retryRows.length){q('#retryPanel').hidden=false;renderRetryRows();retryMessage('Đã khôi phục bản nháp. Kiểm tra lại trước khi tạo; nếu lượt gửi trước mất phản hồi, Studio tìm mẻ đã nhận trước.');}}catch(e){}}
+function editRetryPrompt(i,prompt){const row=retryRows[i];row.prompt=prompt;row.checked=null;row.revision=(row.revision||0)+1;saveRetryDraft();const status=q('#retry-status-'+i);if(status)status.textContent='Prompt đã đổi — cần kiểm tra lại.';}
+function undoRetryPrompt(i){const row=retryRows[i];if(row.history?.length)row.prompt=row.history.pop();else row.prompt=row.original_prompt;row.checked=null;row.revision=(row.revision||0)+1;saveRetryDraft();renderRetryRows();}
+function finishRetryRows(chosen,batchId){for(const row of chosen){row.selected=false;row.checked=null;row.submitted_batch_id=batchId;}retryPendingId='';retryPendingSnapshot='';saveRetryDraft();renderRetryRows();}
+function retrySnapshot(){return JSON.stringify(retryRows.filter(r=>r.selected).map(r=>({source_task_id:r.source_task_id,prompt:r.prompt})));}
+function restorePendingRetryPrompts(){if(!retryPendingId||!retryPendingSnapshot)return retryMessage('Không có lượt gửi chưa xác định để khôi phục.');const sent=JSON.parse(retryPendingSnapshot);for(const row of retryRows){const old=sent.find(e=>e.source_task_id===row.source_task_id);row.selected=!!old;if(old){row.history=(row.history||[]).concat(row.prompt).slice(-20);row.prompt=old.prompt;row.checked=null;row.revision=(row.revision||0)+1;}}saveRetryDraft();renderRetryRows();retryMessage('Đã khôi phục bản của lượt gửi trước. Kiểm tra rồi thử lại sẽ dùng cùng mã yêu cầu.');}
+async function recoverOutstandingRetry(){if(!retryPendingId)return false;const id=retryPendingId,receipt=await api('/api/admin/video-receipts/'+encodeURIComponent(id)+'?kind=batch');if(!receipt||id!==retryPendingId)return false;const sent=JSON.parse(retryPendingSnapshot||'[]');currentBatchId=receipt.batch_id;finishRetryRows(retryRows.filter(r=>sent.some(e=>e.source_task_id===r.source_task_id)),receipt.batch_id);saveStudioDraft();await loadMyVideos();retryMessage('Đã tìm lại mẻ được nhận; không tạo thêm video hoặc gọi lại AI. Bản nháp đang chỉnh vẫn được giữ.');return true;}
+function renderRetryRows(){q('#retryRows').innerHTML=retryRows.map((r,i)=>`<article class="analysis-issue"><label><input type="checkbox" ${r.selected?'checked':''} onchange="retryRows[${i}].selected=this.checked;saveRetryDraft()"> Tạo lại video ${esc(r.source_task_id.slice(-8))}</label><p>${esc(r.failure||'Lỗi đã xác nhận')}</p><details><summary>Prompt gốc</summary><pre class="technical-error">${esc(r.original_prompt)}</pre></details><label for="retry-prompt-${i}">Prompt đang duyệt</label><textarea id="retry-prompt-${i}" rows="4" oninput="editRetryPrompt(${i},this.value)">${esc(r.prompt)}</textarea><button class="btn" onclick="undoRetryPrompt(${i})">Hoàn tác / dùng bản gốc</button><p id="retry-status-${i}" role="status">${esc(r.checked?({allow:'Có thể gửi',review:'Cần xem xét',block:'Cần chỉnh sửa'}[r.checked.status]||'Kiểm tra chưa thành công')+(r.checked.reason?' — '+r.checked.reason:''):r.error||'Chưa kiểm tra bản đang duyệt')}</p>${r.checked?.status==='review'?`<label><input type="checkbox" ${r.confirm_review?'checked':''} onchange="retryRows[${i}].confirm_review=this.checked"> Tôi đã xem lý do và đồng ý gửi dòng này.</label>`:''}</article>`).join('');}
+async function openRetrySelection(){if(retryBusy)return;const ids=[...selectedVideoIds];if(!ids.length)return q('#queueActionMessage').textContent='Chọn video lỗi cần xử lý.';const version=++retryVersion;try{const rows=[];for(const id of ids){const t=await api('/api/admin/tasks/'+encodeURIComponent(id));if(version!==retryVersion)return;if(t.status==='failed')rows.push({source_task_id:id,original_prompt:t.prompt,prompt:t.prompt,failure:t.failure_display?.message_vi||'Lỗi đã xác nhận',selected:true,history:[],checked:null});}if(!rows.length)return q('#queueActionMessage').textContent='Không có lỗi đã xác nhận trong lựa chọn. Video chưa rõ kết quả cần kiểm tra lại.';if(retryRows.length&&!confirm('Thay bản nháp sửa lỗi hiện tại bằng các video vừa chọn?'))return;retryRows=rows;retryPendingId='';retryPendingSnapshot='';q('#retryPanel').hidden=false;saveRetryDraft();renderRetryRows();retryMessage('Đã nạp '+rows.length+' lỗi; bỏ qua '+(ids.length-rows.length)+' video chưa rõ kết quả hoặc chưa thất bại. Chưa gửi video mới.');q('#retryTitle').scrollIntoView({block:'start'});}catch(e){q('#queueActionMessage').textContent=e.message;}}
+async function prepareRetryRows(repair){
+  if(retryBusy)return;retryBusy=true;const version=++retryVersion,instructions=q('#retryInstructions').value;
+  try{if(await recoverOutstandingRetry())return;if(retryPendingId&&(repair||retryPendingSnapshot!==retrySnapshot()))return retryMessage('Lượt gửi trước chưa rõ kết quả. Khôi phục bản đã gửi và kiểm tra lại; chưa gọi AI sửa hoặc tạo mẻ mới.');for(const row of retryRows){if(!row.selected)continue;const prompt=row.prompt,revision=row.revision||0;row.error='';retryMessage((repair?'AI đang đề xuất và kiểm tra':'Đang kiểm tra')+' video '+row.source_task_id.slice(-8)+'; chưa gửi video.');
+    try{const checked=await api('/api/admin/videos/retry-preview',{method:'POST',body:{source_task_id:row.source_task_id,prompt,repair,instructions}});
+      if(version!==retryVersion||!retryRows.includes(row)||revision!==(row.revision||0)||row.prompt!==prompt||(repair&&instructions!==q('#retryInstructions').value))continue;
+      if(checked.prompt!==prompt){row.history=(row.history||[]).concat(prompt).slice(-20);row.prompt=checked.prompt;}
+      row.checked=checked;row.confirm_review=false;
+    }catch(e){if(version===retryVersion&&revision===(row.revision||0)){row.checked=null;row.error=e.message;}}
+    saveRetryDraft();renderRetryRows();
+  }if(version===retryVersion)retryMessage('Đã xử lý các dòng đã chọn. Xem bản gốc, chỉnh đề xuất hoặc bỏ chọn từng dòng trước khi tạo.');}
+  finally{retryBusy=false;}
+}
+async function submitRetryRows(){
+  if(retryBusy)return;const chosen=retryRows.filter(r=>r.selected);if(!chosen.length)return retryMessage('Chọn ít nhất một dòng.');
+  const snapshot=JSON.stringify(chosen.map(r=>({source_task_id:r.source_task_id,prompt:r.prompt})));
+  retryBusy=true;q('#retrySubmit').disabled=true;
+  try{
+    if(await recoverOutstandingRetry())return;
+    if(retryPendingId&&retryPendingSnapshot!==snapshot)return retryMessage('Lượt gửi trước chưa rõ kết quả. Khôi phục bản đã gửi để thử lại cùng mã; chưa tạo mẻ mới.');
+    if(chosen.some(r=>!r.checked||r.checked.prompt!==r.prompt||r.checked.expires_at*1000<=Date.now()))return retryMessage('Kiểm tra lại các prompt đã chọn trước khi tạo.');
+    if(chosen.some(r=>!['allow','review'].includes(r.checked.status)))return retryMessage('Bỏ chọn hoặc chỉnh các dòng bị chặn; chưa gửi video.');
+    if(chosen.some(r=>r.checked.status==='review'&&!r.confirm_review))return retryMessage('Xem lý do và xác nhận từng dòng cần xem xét.');
+    if(!confirm('Tạo '+chosen.length+' video mới từ các dòng đã duyệt? Có thể dùng thêm điểm Dola; job gốc được giữ.'))return;
+    if(retryPendingSnapshot!==snapshot||!retryPendingId){retryPendingId=crypto.randomUUID();retryPendingSnapshot=snapshot;}saveRetryDraft();
+    const result=await api('/api/admin/videos/retry-batch',{method:'POST',body:{request_id:retryPendingId,entries:chosen.map(r=>({source_task_id:r.source_task_id,prompt:r.prompt,preflight_token:r.checked.token,confirm_review:!!r.confirm_review}))}});
+    if(!result.batch_id||!Array.isArray(result.tasks))throw new Error('Thiếu thông tin mẻ đã nhận; cần kiểm tra lại mã yêu cầu.');
+    currentBatchId=result.batch_id;finishRetryRows(chosen,result.batch_id);selectedVideoIds.clear();saveStudioDraft();await loadMyVideos();retryMessage('Đã nhận mẻ tạo lại. Bản gốc và liên kết với job lỗi được giữ.');
+  }catch(e){retryMessage('Chưa xác nhận được lượt tạo lại: '+e.message+'. Bản nháp và mã yêu cầu được giữ; thử lại cùng bản sẽ tìm mẻ cũ trước.');}
+  finally{retryBusy=false;q('#retrySubmit').disabled=false;}
+}
+// retry-controls-end
+restoreRetryDraft();
 
 /* ---- CẤU HÌNH AI PROVIDER ---- */
 async function loadAiSettings(clearMsg = true){
