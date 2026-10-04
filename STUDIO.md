@@ -101,3 +101,13 @@ Kiểm tra nút tạo trực tiếp riêng: `.venv/bin/python tests/run_direct_s
 Tool giữ nguyên nội dung prompt Việt/Anh, dùng chỉ dẫn tạo video và tham chiếu ảnh bằng tiếng Việt, yêu cầu Dola trả thông báo bằng tiếng Việt. Dola vẫn có thể trả nguyên văn tiếng Trung: thông báo chính diễn giải hạn mức cần/còn lại, lỗi không trừ lượt và thời gian dự kiến khi upstream cung cấp; nguyên văn đã che thông tin nhạy cảm nằm trong chi tiết kỹ thuật. Không dùng AI để dịch mỗi lượt polling.
 
 Đổi model, thời lượng, tỉ lệ hoặc prompt chỉ thay bản nháp tiếp theo. Cấu hình của mỗi video được lưu khi gửi; tạo video mới hoặc xem tiến độ video khác không hủy video đang chạy. Khu vực tạo video hiển thị tất cả job đang chạy với cấu hình riêng, kể cả khi đã có nhiều video mới hơn trong lịch sử. Thanh tiến độ chờ và thông báo lấy từ job đã lưu; không suy ra phần trăm từ thời gian.
+
+## Giao diện và thư viện 04/10/2026
+
+Trang Tạo video có editor và panel Công việc đang chạy; bỏ lịch sử lặp trên trang này. Chỉnh với AI mở khi cần. Đề xuất có đoạn thay thế hợp lệ mới có checkbox; nhận xét chỉ đọc được đặt riêng. Độ tin cậy do AI tự đánh giá, nguồn cộng đồng không phải cam kết của Dola. Tạo video vẫn gửi trực tiếp, kiểm tra là tùy chọn.
+
+Video của tôi dùng một bộ lựa chọn cho tải ZIP, bỏ lượt chưa gửi, sửa lỗi và xóa. Xóa chỉ nhận completed, xác nhận rõ xóa file/lịch sử, giữ job khác. Thư viện có tìm kiếm theo prompt/id, phân trang 20 dòng và danh sách mẻ đã lưu. Chọn video mở chi tiết trong dialog có Escape; chuyển màn hình đóng dialog trước. Completed không hiện thời gian chờ cũ; lịch sử vẫn giữ nguyên văn đã che secrets.
+
+Mẫu prompt của tôi lưu tối đa 50 mẫu (prompt/cấu hình/chỉ dẫn sửa) trong trình duyệt; ảnh cần chọn riêng. Dùng mẫu có xác nhận thay bản đang soạn, có hoàn tác và vô hiệu hóa phân tích cũ; không giữ nguồn sửa lỗi của video khác. Thông báo trong app xuất hiện khi job đã được theo dõi chuyển sang hoàn tất/thất bại/chưa rõ. Không gọi AI hoặc gửi video cho các chức năng này.
+
+Cài đặt hiển thị card tài khoản và hạn mức upstream kèm thời điểm ghi nhận. Kho, nhóm, proxy và thao tác vận hành vẫn ở phần nâng cao. Khi mất kết nối thư viện giữ dữ liệu cũ và báo lỗi tại chỗ. Không thay framework/provider/database, không xóa dữ liệu trong migration.

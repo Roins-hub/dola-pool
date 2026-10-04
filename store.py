@@ -651,6 +651,29 @@ class TaskStore:
                 ).fetchall()
         return [dict(r) for r in rows]
 
+    def library_tasks(self, limit=50, offset=0, search='', status='all', batch_id=''):
+        clauses, args = [], []
+        if search:
+            value=search.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')
+            clauses.append("(prompt LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')")
+            args.extend(['%'+value+'%']*2)
+        if status=='running':
+            clauses.append("status IN ('queued','processing')")
+        elif status!='all':
+            clauses.append('status=?'); args.append(status)
+        if batch_id:
+            clauses.append('batch_id=?'); args.append(batch_id)
+        where=' WHERE '+' AND '.join(clauses) if clauses else ''
+        with _LOCK:
+            total=self._conn.execute('SELECT COUNT(*) FROM tasks'+where,args).fetchone()[0]
+            rows=self._conn.execute('SELECT * FROM tasks'+where+' ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?',[*args,limit,offset]).fetchall()
+        return [dict(r) for r in rows], total
+
+    def library_batches(self):
+        with _LOCK:
+            rows=self._conn.execute("SELECT b.id,b.name,b.paused,b.created_at,COUNT(t.id) AS total FROM video_batches b JOIN tasks t ON t.batch_id=b.id GROUP BY b.id ORDER BY b.created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
     def active_tasks(self):
         with _LOCK:
             return [dict(row) for row in self._conn.execute("SELECT * FROM tasks WHERE status IN ('queued','processing') ORDER BY created_at")]

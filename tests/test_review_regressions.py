@@ -154,7 +154,7 @@ async def test_browser_observation_window_includes_ack_wait(monkeypatch):
 def test_reusing_prompt_enters_single_creator_instead_of_old_folder_batch():
     node("""let analysisTaskId='old',rewriteHistory=[];function batchInputsChanged(){}const fields={'#gen_mode':{value:'folder'},'#gen_copies':{value:'2'},'#gen_prompt':{},'#gen_model':{},'#gen_duration':{},'#gen_ratio':{}};
 function q(s){return fields[s];}async function api(){return {prompt:'Chosen prompt',model:'seedance-2.5',duration:15,ratio:'16:9'};}
-function onModelChange(){}function onPromptInput(){}function switchTab(){}
+function closeLibraryDetail(){}function onModelChange(){}function onPromptInput(){}function switchTab(){}
 """+js_function('useTaskPrompt')+"\nuseTaskPrompt('selected').then(()=>{if(fields['#gen_mode'].value!=='single'||fields['#gen_copies'].value!=='1')throw Error('Old batch inputs still control generation');});")
 
 
@@ -176,3 +176,27 @@ def test_safe_stdout_print_redacts_joined_credentials(capsys):
 def test_server_stdout_uses_redaction(capsys):
     getattr(server,'print',print)('operation failed sessionid=PRIVATE')
     assert 'PRIVATE' not in capsys.readouterr().out
+
+
+def test_template_clears_failed_video_provenance():
+    node("""let analysisTaskId='old-failure',rewriteHistory=[];const fields={'#gen_prompt':{value:'old'},'#gen_mode':{},'#gen_copies':{},'#gen_model':{},'#gen_duration':{},'#gen_ratio':{},'#gen_rewrite_instructions':{},'#templateMessage':{},'#promptTemplates':{value:'one'}};
+function q(s){return fields[s];}function promptTemplates(){return [{id:'one',prompt:'new template',model:'seedance-2.5',duration:30,ratio:'9:16'}];}function confirm(){return true;}function renderDraftSource(){}function batchInputsChanged(){}function onModelChange(){}function onPromptInput(){}
+"""+js_function('applyPromptTemplate')+"\napplyPromptTemplate();if(analysisTaskId||fields['#gen_prompt'].value!=='new template')throw Error('Stale failure provenance');")
+
+
+def test_selecting_another_video_clears_old_actions_before_response():
+    node("""let mySelectedId='A';const preview={textContent:'old video A',style:{}},drawer={open:true};function q(s){return s==='#mySelectedPreview'?preview:drawer;}function api(){return new Promise(()=>{});}function renderJobInto(){throw Error('Response has not arrived');}
+"""+js_function('selectMyVideo')+"\nselectMyVideo('B');if(!preview.textContent.includes('Đang tải')||preview.textContent.includes('old video A'))throw Error('Previous video controls still visible');")
+
+
+def test_analysis_only_replacements_are_selectable():
+    node("""let promptAnalysis;const box={innerHTML:''};function q(s){return s==='#gen_analysis'?box:{value:'original'};}function esc(s){return String(s);}function hide(){}function show(){}
+"""+js_function('renderPromptAnalysis')+"""
+renderPromptAnalysis({quality_summary:'review',issues:[{id:'note',kind:'capability',applicable:false,reason_vi:'uncertain',replacement:null,confidence:'high'},{id:'edit',kind:'quality',applicable:true,reason_vi:'clear',replacement:'edited',confidence:'medium'}]},'snapshot');
+if(box.innerHTML.includes('data-issue-id="note"')||!box.innerHTML.includes('data-issue-id="edit"')||!box.innerHTML.includes('AI tự đánh giá'))throw Error('Information note was selectable or AI confidence overstated');
+""")
+
+
+def test_navigation_closes_native_library_dialog():
+    node("""let curTab,settingsTab;const drawer={open:true},field={style:{}};function q(s){return s==='#libraryDrawer'?drawer:field;}const document={querySelectorAll:()=>[]};function closeLibraryDetail(){drawer.open=false;}function refresh(){}
+"""+js_function('switchTab')+"\nswitchTab('generate');if(drawer.open||curTab!=='generate')throw Error('Native dialog still blocks navigation');")

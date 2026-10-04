@@ -55,7 +55,7 @@ def wait_row(id,status):
  raise AssertionError(data)
 async def browser_journey():
  async with async_playwright() as p:
-  browser=await p.chromium.launch(headless=True)
+  browser=await p.chromium.launch(headless=True,channel="chrome")
   context=await browser.new_context(viewport={'width':1440,'height':1000})
   page=await context.new_page()
   bad_responses=[]
@@ -83,6 +83,7 @@ async def browser_journey():
   await page.evaluate("localStorage.removeItem('dola-studio-draft-v1')")
   await page.reload();await page.wait_for_selector('#tab-generate',state='visible')
   await page.locator('#gen_prompt').fill('Một chú mèo nhìn ra cửa sổ')
+  if not await page.locator('.rewrite-panel').evaluate('el=>el.open'):await page.locator('.rewrite-panel>summary').click()
   await page.locator('#gen_rewrite_instructions').fill('Giữ nhân vật, máy quay tiến nhẹ')
   await page.locator('#btn_rewrite').click();await page.wait_for_selector('#gen_rewrite_box',state='visible')
   assert await page.locator('#gen_prompt').input_value()=='Một chú mèo nhìn ra cửa sổ'
@@ -158,6 +159,7 @@ async def browser_journey():
   await page.screenshot(path=str(OUT/'studio-desktop.png'),full_page=True)
   # A stale rewrite must not overwrite a newer idea.
   await page.route('**/api/admin/prompts/rewrite',lambda route: asyncio.create_task(delayed_rewrite(route)))
+  if not await page.locator('.rewrite-panel').evaluate('el=>el.open'):await page.locator('.rewrite-panel>summary').click()
   await page.locator('#gen_prompt').fill('Ý tưởng trước');await page.locator('#btn_rewrite').click()
   await page.locator('#gen_prompt').fill('Ý tưởng mới');await page.wait_for_timeout(600)
   assert await page.locator('#gen_rewrite_box').is_hidden()
@@ -242,7 +244,7 @@ async def browser_journey():
   assert 'Một con thuyền' in await page.locator('#gen_batch_prompts').input_value()
   await page.get_by_role('button',name='▤ Video của tôi',exact=True).click();await page.wait_for_selector('.video-job')
   assert await page.locator('#myVideoJobs .video-job').count()==4
-  await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
+  await page.keyboard.press('Escape');await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
   await page.locator('#gen_batch_prompts').fill('Lost batch cat\nLost batch boat')
   await page.locator('#gen_copies').fill('1')
   await page.route('**/api/admin/videos/batches',lose_accepted_response)
@@ -264,9 +266,9 @@ async def browser_journey():
   await page.wait_for_selector('#myVideoTable table')
   await page.locator('#myVideoTable button').first.click();await page.wait_for_selector('#mySelectedPreview video')
   assert await page.locator('#mySelectedPreview').evaluate('el=>el.scrollWidth<=el.clientWidth')
-  await page.locator('#tab-videos').get_by_role('button',name='Lưới',exact=True).click()
+  await page.keyboard.press('Escape');await page.locator('#tab-videos').get_by_role('button',name='Lưới',exact=True).click()
   await page.screenshot(path=str(OUT/'videos-desktop.png'),full_page=True)
-  await page.get_by_role('button',name='⚙ Cài đặt',exact=True).click();await page.wait_for_selector('#tab-accounts',state='visible');await page.wait_for_selector('#accountsTable table')
+  await page.get_by_role('button',name='⚙ Cài đặt',exact=True).click();await page.wait_for_selector('#tab-accounts',state='visible');await page.locator('#accountTechnicalDetails>summary').click();await page.wait_for_selector('#accountsTable table')
   assert not await page.get_by_text('Quản lý API Key',exact=True).count()
   await page.screenshot(path=str(OUT/'settings-desktop.png'),full_page=True)
   await page.get_by_role('button',name='Nâng cao: proxy',exact=True).click()
@@ -276,7 +278,7 @@ async def browser_journey():
   assert await page.locator('#diagnosticEvents article').count()>0
   assert 'fake-mock' not in await page.locator('#diagnosticEvents').inner_text()
 
-  await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
+  await page.keyboard.press('Escape');await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
   # Native directory import: multiline TXT + per-group images, actual restart, then ZIP.
   directory=ROOT/'folder-input'
   for name,color in [('A','red'),('B','blue')]:
@@ -360,6 +362,7 @@ async def browser_journey():
   await page.locator('#tab-videos').get_by_role('button',name='Bảng',exact=True).click()
   await page.locator('#myVideoTable input[data-video-select="'+refused_id+'"]').check()
   unclear_id=next(t['id'] for t in httpx.get(BASE+'/api/admin/tasks?limit=100',headers=login()).json()['tasks'] if t['status']=='unknown')
+  await page.locator('#librarySearch').fill(unclear_id)
   await page.locator('#myVideoTable input[data-video-select="'+unclear_id+'"]').check()
   await page.get_by_role('button',name='Duyệt / tạo lại lỗi đã chọn',exact=True).click()
   await page.wait_for_selector('#retryPanel',state='visible')
@@ -404,13 +407,13 @@ async def browser_journey():
   await page.screenshot(path=str(OUT/'retry-batch-mobile.png'),full_page=True)
   assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth')
   # Selected ZIP uses real completed artifacts and its manifest, not a worker stub.
-  await page.locator('#tab-videos').get_by_role('button',name='Chọn tất cả đang hiển thị',exact=True).click()
+  await page.locator('#tab-videos').get_by_role('button',name='Chọn trang này',exact=True).click()
   async with page.expect_download() as chosen_zip:
    await page.get_by_role('button',name='Tải ZIP đã chọn',exact=True).click()
   chosen_path=OUT/'selected-videos.zip';await (await chosen_zip.value).save_as(str(chosen_path))
   with zipfile.ZipFile(chosen_path) as archive:
    assert len(json.loads(archive.read('ket-qua.json'))['included'])==1
-  await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
+  await page.keyboard.press('Escape');await page.get_by_role('button',name='▶ Tạo video',exact=True).click()
   await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'studio-mobile.png'),full_page=True)
   assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'Mobile horizontal overflow'
   assert await page.locator('main').evaluate('(el)=>el.getBoundingClientRect().width>350'), 'Mobile content too narrow'

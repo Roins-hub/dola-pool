@@ -271,6 +271,10 @@ tên nhân vật, thiếu góc máy, hoặc do suy đoán bản quyền. Không 
 Giữ ngôn ngữ, nhân vật, hành động, bối cảnh và cấu trúc cảnh của prompt. Không ép one-take.
 Nếu chỉ nhận metadata ảnh, nói rõ chưa đánh giá pixel. Không hứa Dola sẽ chấp nhận hay trả đủ thời lượng.
 Chỉ viện dẫn source_ids từ rule được cung cấp, phân biệt giới hạn backend với giới hạn upstream.
+Nguồn community-guide là khuyến nghị, không phải bằng chứng giới hạn cứng của Dola.
+Với thời điểm cắt cảnh hoặc tính đồng nhất nhân vật, diễn đạt là khó bảo đảm hoặc cần thử nghiệm;
+không kết luận "không thể" nếu chưa có giới hạn xác nhận trên đúng model/provider.
+confidence là độ tin cậy tự đánh giá của bạn, không phải mức chắc chắn được upstream xác nhận.
 Mỗi vấn đề phải nêu đoạn trích đúng nguyên văn, lý do và bản thay thế nếu phù hợp; không bịa đoạn.
 occurrence là thứ tự lần xuất hiện, bắt đầu 1. Nhận xét không sửa trực tiếp dùng replacement null. Muốn xóa một đoạn lặp, dùng quote chính xác và replacement chuỗi rỗng. Nhận xét toàn prompt dùng quote rỗng và replacement null.
 Trả JSON duy nhất, tối đa 20 issues; mỗi chuỗi tối đa 4000 ký tự:
