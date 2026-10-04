@@ -185,7 +185,7 @@ function q(s){return fields[s];}function promptTemplates(){return [{id:'one',pro
 
 
 def test_selecting_another_video_clears_old_actions_before_response():
-    node("""let mySelectedId='A';const preview={textContent:'old video A',style:{}},drawer={open:true};function q(s){return s==='#mySelectedPreview'?preview:drawer;}function api(){return new Promise(()=>{});}function renderJobInto(){throw Error('Response has not arrived');}
+    node("""let mySelectedId='A';const preview={textContent:'old video A',style:{}},drawer={open:true},title={dataset:{}},field={};function q(s){return s==='#mySelectedPreview'?preview:s==='#libraryVideoTitle'?title:s==='#libraryDrawer'?drawer:field;}function api(){return new Promise(()=>{});}function renderJobInto(){throw Error('Response has not arrived');}
 """+js_function('selectMyVideo')+"\nselectMyVideo('B');if(!preview.textContent.includes('Đang tải')||preview.textContent.includes('old video A'))throw Error('Previous video controls still visible');")
 
 
@@ -200,3 +200,36 @@ if(box.innerHTML.includes('data-issue-id="note"')||!box.innerHTML.includes('data
 def test_navigation_closes_native_library_dialog():
     node("""let curTab,settingsTab;const drawer={open:true},field={style:{}};function q(s){return s==='#libraryDrawer'?drawer:field;}const document={querySelectorAll:()=>[]};function closeLibraryDetail(){drawer.open=false;}function refresh(){}
 """+js_function('switchTab')+"\nswitchTab('generate');if(drawer.open||curTab!=='generate')throw Error('Native dialog still blocks navigation');")
+
+
+def test_library_dates_use_local_midnight_and_exclusive_end():
+ node("""process.env.TZ='Asia/Ho_Chi_Minh';const fields={'#libraryFrom':{value:'2026-10-01'},'#libraryTo':{value:'2026-10-01'}};function q(s){return fields[s];}
+"""+js_function('libraryDateRange')+"""
+const r=libraryDateRange();if(r.created_after!==1790787600||r.created_before-r.created_after!==86400)throw Error(JSON.stringify(r));
+fields['#libraryTo'].value='2026-09-30';let rejected=false;try{libraryDateRange();}catch(e){rejected=true;}if(!rejected)throw Error('Reversed range accepted');
+""")
+
+
+def test_batch_review_includes_configuration_and_reference_scope():
+ node("""const fields={'#gen_model':{value:'seedance-2.5'},'#gen_duration':{value:'30'},'#gen_ratio':{value:'9:16'},'#gen_mode':{value:'folder'}};function q(s){return fields[s];}const selectedImages=[{},{}];
+"""+js_function('batchConfirmationText')+"""
+const s=batchConfirmationText([{reference_indices:[0]},{reference_indices:[1]}],2);for(const piece of ['2 prompt','4 video','30 giây','9:16','ảnh riêng','seedance-2.5'])if(!s.includes(piece))throw Error(s);
+fields['#gen_mode'].value='list';if(!batchConfirmationText([{},{}],1).includes('2 ảnh dùng chung'))throw Error('Missing shared image scope');
+""")
+
+
+def test_notice_sound_is_opt_in_and_handles_suspended_browser():
+ node("""let checked=false,count=0;function q(s){return {checked,textContent:''};}const noticeAudio={state:'running',currentTime:0,destination:{},createOscillator(){count++;return {frequency:{value:0},connect(){},start(){},stop(){}};},createGain(){return {gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){}};}};
+"""+js_function('playNoticeSound')+"""
+playNoticeSound();if(count)throw Error('Sound started without permission');checked=true;playNoticeSound();if(count!==1)throw Error('Enabled sound missing');noticeAudio.state='suspended';playNoticeSound();if(count!==1)throw Error('Suspended audio should not play');
+""")
+
+
+def test_title_draft_survives_same_job_poll():
+ node("""let mySelectedId='A';const preview={style:{}},drawer={open:true},title={value:'Bản đang gõ',dataset:{taskId:'A'}};function q(s){return s==='#mySelectedPreview'?preview:s==='#libraryVideoTitle'?title:drawer;}async function api(){return {id:'A',title:'Tên đã lưu',status:'completed'};}function renderJobInto(){}
+"""+js_function('selectMyVideo')+"\nselectMyVideo('A').then(()=>{if(title.value!=='Bản đang gõ')throw Error('Polling lost title draft');});")
+
+
+def test_sound_observes_terminal_jobs_while_settings_open():
+ node("""let noticePolling=false;const fields={'#noticeSound':{checked:true},'#loginMask':{style:{display:'none'}}};function q(s){return fields[s];}let reads=0,seen=false,missing=false;async function api(){reads++;return {tasks:[{id:'A',status:'completed'}],running_tasks:[]};}function observeJobs(rows){seen=rows.some(r=>r.id==='A'&&r.status==='completed');}async function observeMissingJobs(){missing=true;}
+"""+js_function('pollNoticeJobs')+"\npollNoticeJobs().then(()=>{if(!seen||!missing||noticePolling||reads!==1)throw Error('Settings lost completion observation');});")

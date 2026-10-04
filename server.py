@@ -2972,9 +2972,15 @@ def _task_display(row: dict) -> dict:
 
 @app.get("/api/admin/tasks")
 async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None), offset: int = 0,
-                      search: str = '', status: str = 'all', batch_id: str = ''):
+                      search: str = '', status: str = 'all', batch_id: str = '',
+                      created_after: float | None = None, created_before: float | None = None):
     _admin_auth(x_admin_key)
-    rows,total=store.library_tasks(min(max(limit,1),200),max(offset,0),search[:500],status,batch_id)
+    import math
+    if any(v is not None and (not math.isfinite(v) or v < 0) for v in (created_after,created_before)):
+        raise HTTPException(400, 'Khoảng ngày không hợp lệ')
+    if created_after is not None and created_before is not None and created_before <= created_after:
+        raise HTTPException(400, 'Ngày kết thúc phải bằng hoặc sau ngày bắt đầu')
+    rows,total=store.library_tasks(min(max(limit,1),200),max(offset,0),search[:500],status,batch_id,created_after,created_before)
     return {"tasks": [{**row, **_task_display(row), "target_duration": _target_duration(row), "file_exists": _task_file_exists(row)} for row in rows], "total":total,
             "running_tasks": [{**row, **_task_display(row), "target_duration": _target_duration(row)} for row in store.active_tasks()]}
 
@@ -2983,6 +2989,19 @@ async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=
 async def admin_list_batches(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     return {'batches':store.library_batches()}
+
+
+class VideoNameRequest(BaseModel):
+    title: str = Field(max_length=100)
+
+
+@app.patch('/api/admin/tasks/{task_id}/name')
+async def admin_name_video(task_id: str, body: VideoNameRequest, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    title=body.title.strip()
+    if not store.name_video(task_id,title):
+        raise HTTPException(404, 'Không tìm thấy video')
+    return {'id':task_id,'title':title}
 
 
 @app.get("/api/admin/tasks/{task_id}")
@@ -2995,6 +3014,7 @@ async def admin_get_task(task_id: str, x_admin_key: str | None = Header(default=
     return {
         **_task_display(row),
         "id": row["id"],
+        "title": row.get("title") or "",
         "status": row["status"],
         "model": row["model"],
         "prompt": row["prompt"],

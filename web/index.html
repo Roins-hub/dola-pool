@@ -318,7 +318,7 @@ body::before,body::after{display:none}body{background:#0d1420}
         <p id="retryMessage" role="status" aria-live="polite"></p>
         <div id="retryRows"></div>
       </section>
-      <button id="myBatchPause" class="btn" hidden onclick="toggleBatchPause()">Tạm dừng lượt gửi mới</button><p id="myBatchSummary" role="status"></p><button id="myBatchZip" class="btn" style="display:none" onclick="downloadBatchZip()">Tải ZIP kết quả</button><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';libraryOffset=0;saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div class="queue-toolbar"><button class="btn" onclick="setMyVideoView('grid')">Lưới</button><button class="btn" onclick="setMyVideoView('table')">Bảng</button><label for="myVideoFilter">Trạng thái</label><select id="myVideoFilter" onchange="libraryOffset=0;libraryVersion++;loadMyVideos()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option><option value="cancelled">Đã bỏ trước khi gửi</option></select></div><div id="myVideoTable" class="queue-table" style="display:none"></div><div id="myVideoJobs" class="my-video-jobs"></div><div class="queue-toolbar"><button id="libraryPrev" class="btn" onclick="pageLibrary(-1)">Trang trước</button><span id="libraryPage" class="tiny"></span><button id="libraryNext" class="btn" onclick="pageLibrary(1)">Trang sau</button></div><dialog id="libraryDrawer" class="dialog" aria-label="Chi tiết video" hidden><div class="box"><button class="btn" onclick="closeLibraryDetail()">Đóng chi tiết</button><article id="mySelectedPreview" class="video-job" style="display:none"></article></div></dialog>
+      <button id="myBatchPause" class="btn" hidden onclick="toggleBatchPause()">Tạm dừng lượt gửi mới</button><p id="myBatchSummary" role="status"></p><button id="myBatchZip" class="btn" style="display:none" onclick="downloadBatchZip()">Tải ZIP kết quả</button><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';libraryOffset=0;saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div class="queue-toolbar"><button class="btn" onclick="setMyVideoView('grid')">Lưới</button><button class="btn" onclick="setMyVideoView('table')">Bảng</button><label for="myVideoFilter">Trạng thái</label><select id="myVideoFilter" onchange="libraryOffset=0;libraryVersion++;loadMyVideos()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option><option value="cancelled">Đã bỏ trước khi gửi</option></select></div><div class="queue-toolbar"><label for="libraryFrom">Từ ngày</label><input type="date" id="libraryFrom" onchange="searchLibrary()"><label for="libraryTo">Đến ngày</label><input type="date" id="libraryTo" onchange="searchLibrary()"><button class="btn" onclick="q('#libraryFrom').value='';q('#libraryTo').value='';searchLibrary()">Bỏ lọc ngày</button></div><div id="myVideoTable" class="queue-table" style="display:none"></div><div id="myVideoJobs" class="my-video-jobs"></div><div class="queue-toolbar"><button id="libraryPrev" class="btn" onclick="pageLibrary(-1)">Trang trước</button><span id="libraryPage" class="tiny"></span><button id="libraryNext" class="btn" onclick="pageLibrary(1)">Trang sau</button></div><dialog id="libraryDrawer" class="dialog" aria-label="Chi tiết video" hidden><div class="box"><button class="btn" onclick="closeLibraryDetail()">Đóng chi tiết</button><details id="videoNameDetails"><summary>Đặt tên video</summary><label for="libraryVideoTitle">Tên video (tối đa 100 ký tự)</label><input id="libraryVideoTitle" maxlength="100" placeholder="Ví dụ: Mèo giao pizza"><button id="saveVideoNameButton" class="btn" onclick="saveVideoName(mySelectedId)">Lưu tên</button><p id="videoNameMessage" role="status"></p></details><article id="mySelectedPreview" class="video-job" style="display:none"></article></div></dialog>
     </div>
   </section>
 
@@ -326,7 +326,7 @@ body::before,body::after{display:none}body{background:#0d1420}
 
 
   <section id="tab-settings" style="display:none">
-    <div class="card"><h3>Cài đặt Studio</h3><p class="tiny">Tài khoản tạo video và kết nối hỗ trợ viết prompt.</p>
+    <div class="card"><h3>Cài đặt Studio</h3><p class="tiny">Tài khoản tạo video và kết nối hỗ trợ viết prompt.</p><label><input id="noticeSound" type="checkbox" onchange="toggleNoticeSound(this)"> Âm báo khi video có kết quả trong phiên này</label><p class="tiny">Mặc định tắt. Cần giữ trang mở; trình duyệt có thể hạn chế âm thanh khi chạy nền.</p><p id="noticeSoundMessage" role="status"></p>
     <details><summary>Thông tin kết nối nâng cao</summary><p id="studioNetworkInfo" class="tiny" style="margin-top:10px"></p></details>
     <div class="settings-nav"><button class="btn" onclick="switchSettings('accounts')">Tài khoản Dola</button><button class="btn" onclick="switchSettings('ai-settings')">Kết nối AI</button><button class="btn" onclick="switchSettings('proxies')">Nâng cao: proxy</button><button class="btn" onclick="switchSettings('dash')">Chẩn đoán</button></div></div>
   <section id="tab-accounts" style="display:none">
@@ -2257,7 +2257,8 @@ async function submitVideoBatch(){
     const copies=Number(q('#gen_copies').value),prompts=batchPromptList(),total=prompts.length*copies;
     if(!prompts.length||!Number.isInteger(copies)||copies<1||copies>10||total>50)return studioMessage('Nhập prompt và chọn 1–10 bản, tối đa 50 video mỗi mẻ.');
     const entries=prompts.map((prompt,i)=>{const group=q('#gen_mode').value==='folder'?folderGroups[i]:null;return {prompt,reference_roles:selectedImages.map((_,n)=>referenceRoles[n]||'other'),...(group?{reference_indices:group.reference_indices,reference_roles:group.reference_indices.map(n=>referenceRoles[n]||'other'),group:group.name}:{})};});
-    if(!confirm('Tạo '+total+' video? Mỗi video có thể dùng thêm điểm Dola. Các video là những kết quả riêng, không tự ghép.'))return;
+    if(!confirm(batchConfirmationText(entries,copies)))return;
+    if(snapshot!==generationSnapshot())return studioMessage('Bản nháp đã đổi; chưa gửi mẻ.');
     if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
     const fd=new FormData();fd.append('batch',JSON.stringify({skip_preflight:true,source_task_id:analysisTaskId||null,name:q('#gen_batch_name').value,request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
       prompts:entries}));for(const image of selectedImages)fd.append('images',image);
@@ -2271,6 +2272,10 @@ async function submitVideoBatch(){
     else studioMessage('Chưa xác định trạng thái mẻ: '+e.message+'. Kiểm tra Video của tôi; thử lại cùng bản nháp dùng cùng mã mẻ.');
   }
   finally{btn.disabled=false;btn.textContent='Tạo video';}
+}
+function batchConfirmationText(entries,copies){
+ const images=q('#gen_mode').value==='folder'?entries.map((e,i)=>'Nhóm '+(i+1)+': '+e.reference_indices.length+' ảnh riêng').join('; '):selectedImages.length+' ảnh dùng chung cho mỗi prompt';
+ return 'Tạo '+entries.length*copies+' video?\n'+entries.length+' prompt × '+copies+' bản mỗi prompt.\n'+q('#gen_model').value+' · '+q('#gen_duration').value+' giây · '+q('#gen_ratio').value+'\n'+images+'\nMỗi video có thể dùng thêm điểm Dola. Các video là những kết quả riêng, không tự ghép.';
 }
 function generationSnapshot(){return JSON.stringify({prompt:q('#gen_prompt').value,model:q('#gen_model').value,duration:q('#gen_duration').value,ratio:q('#gen_ratio').value,images:selectedImages.map((f,i)=>[f.name,f.size,f.lastModified,selectedImageDigests[i]||'',referenceRoles[i]||'other']),mode:q('#gen_mode').value,copies:q('#gen_copies').value,batchPrompts:q('#gen_batch_prompts').value,folderGroups});}
 async function doSubmitGenerate(){
@@ -2328,7 +2333,7 @@ function jobProgressMarkup(t){
   return html+'</div>';
 }
 function renderJobInto(el,t){
-  const fingerprint=JSON.stringify([t.id,t.status,t.phase,t.video_url,t.file_exists,t.error,t.continuation_task_id,t.video_duration]);
+  const fingerprint=JSON.stringify([t.id,t.status,t.phase,t.video_url,t.file_exists,t.error,t.continuation_task_id,t.video_duration,t.title]);
   const progress=el.querySelector('.job-progress');
   const open=!!el.querySelector('.dola-history[open]');
   if(el.dataset.jobFingerprint===fingerprint&&progress)progress.outerHTML=jobProgressMarkup(t);
@@ -2341,6 +2346,7 @@ function taskMarkup(t){
   let html=(curTab==='videos'?videoSelectionMarkup(t):'')+`<div class="job-heading"><strong>${esc(taskLabel(t))}</strong><span class="tiny">${esc(t.model||'')} · Mong muốn ${esc(target||'')} giây</span></div>`;
   if(t.batch_id)html+=`<p class="tiny">Mẻ ${esc(t.batch_id.slice(-8))} · Video ${esc(t.batch_index)} <button class="btn" onclick="viewVideoBatch('${esc(t.batch_id)}')">Xem mẻ</button></p>`;
   if(t.source_task_id)html+='<p class="tiny">Bản sửa từ video '+esc(t.source_task_id)+'</p>';
+  if(t.title)html+='<h4>'+esc(t.title)+'</h4>';
   html+='<details><summary>Prompt đã gửi</summary><pre class="technical-error">'+esc(t.prompt||'')+'</pre></details>';
   html+=jobProgressMarkup(t);
   if(t.video_url&&t.file_exists!==false){html+=`<video controls preload="metadata" src="${esc(t.video_url)}" class="studio-video"></video><p class="tiny">Thời lượng thực: ${Number(t.video_duration||0).toFixed(1)} giây${t.video_width?' · '+t.video_width+'×'+t.video_height:''}. Video Dola trả về; không cam kết 1080p native.</p><a class="btn btn-p" href="${esc(t.video_url)}" download>Tải video</a>`;
@@ -2381,12 +2387,25 @@ function queueMarkup(tasks,target,mode='table'){
   if(!tasks.length)return '<p class="tiny">Chưa có video trong bộ lọc này.</p>';
   const button=t=>(target==='my'?videoSelectionMarkup(t):'')+`<button class="btn" onclick="${target==='studio'?'trackStudioJob':'selectMyVideo'}('${esc(t.id)}')" aria-label="Xem video ${esc(t.id.slice(-8))}">Xem</button>`;
   if(mode==='grid')return '<div class="queue-grid">'+tasks.map(t=>`<article><strong>${esc(taskLabel(t))}</strong><p>${esc((t.prompt||'').slice(0,120))}</p><p class="tiny">${esc(t.model)} · ${Number(t.video_duration||t.duration).toFixed(1)} giây</p>${button(t)}</article>`).join('')+'</div>';
-  return '<table><thead><tr><th>Trạng thái</th><th>Prompt</th><th>Model / thời lượng</th><th></th></tr></thead><tbody>'+tasks.map(t=>`<tr><td>${esc(taskLabel(t))}</td><td title="${esc(t.prompt)}">${esc((t.prompt||'').slice(0,80))}</td><td>${esc(t.model)} · ${Number(t.video_duration||t.duration).toFixed(1)} giây</td><td>${button(t)}</td></tr>`).join('')+'</tbody></table>';
+  return '<table><thead><tr><th>Trạng thái</th><th>Tên / prompt</th><th>Model / thời lượng</th><th></th></tr></thead><tbody>'+tasks.map(t=>`<tr><td>${esc(taskLabel(t))}</td><td title="${esc(t.prompt)}">${esc((t.title||t.prompt||'').slice(0,80))}</td><td>${esc(t.model)} · ${Number(t.video_duration||t.duration).toFixed(1)} giây</td><td>${button(t)}</td></tr>`).join('')+'</tbody></table>';
 }
 function renderStudioQueue(){q('#studioRunningJobs').innerHTML=studioQueueRunning.map(t=>`<article class="analysis-issue" data-running-job="${esc(t.id)}"><strong>${esc(taskLabel(t))} · Video ${esc(t.id.slice(-8))}</strong><p class="tiny">${esc(t.model)} · ${esc(t.duration)} giây · ${esc(t.ratio)}</p>${t.phase==='paused'?'':`<progress aria-label="${esc(taskLabel(t))}" style="width:100%"></progress>`}<p>${esc(t.upstream_display?.at(-1)?.message_vi||'Chưa có phản hồi mới từ Dola.')}</p><button class="btn" onclick="trackStudioJob('${esc(t.id)}')">Xem chi tiết</button></article>`).join('');}
 function setQueueView(mode){queueView=mode;renderStudioQueue();}
 const observedJobs=new Map();
-function observeJobs(rows){for(const t of rows){const previous=observedJobs.get(t.id);observedJobs.set(t.id,t.status);if(previous&&['queued','processing'].includes(previous)&&['completed','failed','unknown'].includes(t.status)){q('#studioNoticeText').textContent='Video '+t.id.slice(-8)+' · '+taskLabel(t);q('#studioNotice').hidden=false;q('#studioNoticeView').onclick=()=>{q('#studioNotice').hidden=true;switchTab('videos');selectMyVideo(t.id);};}}}
+let noticeAudio=null;
+async function toggleNoticeSound(input){
+ if(!input.checked)return;try{noticeAudio=noticeAudio||new (window.AudioContext||window.webkitAudioContext)();await noticeAudio.resume();q('#noticeSoundMessage').textContent='Đã bật âm báo cho phiên này.';}catch(e){input.checked=false;q('#noticeSoundMessage').textContent='Trình duyệt chưa cho phép phát âm thanh.';}
+}
+let noticePolling=false;
+async function pollNoticeJobs(){
+ if(noticePolling||!q('#noticeSound').checked||q('#loginMask').style.display!=='none')return;
+ noticePolling=true;try{const r=await api('/api/admin/tasks?limit=1');observeJobs([...(r.tasks||[]),...(r.running_tasks||[])]);await observeMissingJobs(r.running_tasks||[]);}catch(e){/* Preserve last known states for the next poll. */}finally{noticePolling=false;}
+}
+function playNoticeSound(){
+ if(!q('#noticeSound').checked||!noticeAudio||noticeAudio.state!=='running')return;
+ try{const tone=noticeAudio.createOscillator(),volume=noticeAudio.createGain();tone.frequency.value=660;volume.gain.setValueAtTime(.08,noticeAudio.currentTime);volume.gain.exponentialRampToValueAtTime(.001,noticeAudio.currentTime+.2);tone.connect(volume);volume.connect(noticeAudio.destination);tone.start();tone.stop(noticeAudio.currentTime+.2);tone.onended=()=>{tone.disconnect();volume.disconnect();};}catch(e){q('#noticeSoundMessage').textContent='Không phát được âm báo; thông báo trên màn hình vẫn hoạt động.';}
+}
+function observeJobs(rows){for(const t of rows){const previous=observedJobs.get(t.id);observedJobs.set(t.id,t.status);if(previous&&['queued','processing'].includes(previous)&&['completed','failed','unknown'].includes(t.status)){q('#studioNoticeText').textContent='Video '+t.id.slice(-8)+' · '+taskLabel(t);q('#studioNotice').hidden=false;playNoticeSound();q('#studioNoticeView').onclick=()=>{q('#studioNotice').hidden=true;switchTab('videos');selectMyVideo(t.id);};}}}
 async function observeMissingJobs(active){const ids=new Set(active.map(t=>t.id));for(const [id,status] of observedJobs){if(['queued','processing'].includes(status)&&!ids.has(id)){try{observeJobs([await api('/api/admin/tasks/'+encodeURIComponent(id))]);}catch(e){/* Keep the last known state and retry on the next refresh. */}}}}
 async function loadStudioQueue(){
   const version=++studioQueueVersion;
@@ -2397,7 +2416,14 @@ function setMyVideoView(mode){myVideoView=mode;q('#myVideoJobs').style.display=m
 let libraryOffset=0,libraryTotal=0,librarySearchTimer,libraryVersion=0,libraryReload=false,lastLibraryBatchId='',libraryRows=new Map(),videosLoading=false;
 function closeLibraryDetail(){mySelectedId='';q('#libraryDrawer').close();q('#libraryDrawer').hidden=true;q('#librarySearch').focus();}
 async function selectMyVideo(id){
-const changed=mySelectedId!==id;mySelectedId=id;if(changed){q('#mySelectedPreview').textContent='Đang tải chi tiết video '+id.slice(-8)+'…';q('#mySelectedPreview').style.display='block';}const drawer=q('#libraryDrawer');if(!drawer.open){drawer.hidden=false;drawer.showModal();}try{const t=await api('/api/admin/tasks/'+encodeURIComponent(id));if(mySelectedId!==id)return;q('#mySelectedPreview').style.display='block';renderJobInto(q('#mySelectedPreview'),t);}catch(e){if(mySelectedId===id)q('#mySelectedPreview').textContent=e.message;}
+const changed=mySelectedId!==id;mySelectedId=id;if(changed){q('#libraryVideoTitle').value='';q('#libraryVideoTitle').dataset.taskId='';q('#libraryVideoTitle').disabled=true;q('#saveVideoNameButton').disabled=true;q('#videoNameMessage').textContent='';q('#videoNameDetails').open=false;q('#mySelectedPreview').textContent='Đang tải chi tiết video '+id.slice(-8)+'…';q('#mySelectedPreview').style.display='block';}const drawer=q('#libraryDrawer');if(!drawer.open){drawer.hidden=false;drawer.showModal();}try{const t=await api('/api/admin/tasks/'+encodeURIComponent(id));if(mySelectedId!==id)return;if(q('#libraryVideoTitle').dataset.taskId!==id){q('#libraryVideoTitle').value=t.title||'';q('#libraryVideoTitle').dataset.taskId=id;}q('#libraryVideoTitle').disabled=false;q('#saveVideoNameButton').disabled=false;q('#mySelectedPreview').style.display='block';renderJobInto(q('#mySelectedPreview'),t);}catch(e){if(mySelectedId===id)q('#mySelectedPreview').textContent=e.message;}
+}
+function libraryDateRange(){
+ const range={};for(const [id,key,extra] of [['#libraryFrom','created_after',0],['#libraryTo','created_before',1]]){const value=q(id).value;if(value){const [y,m,d]=value.split('-').map(Number);range[key]=new Date(y,m-1,d+extra).getTime()/1000;}}
+ if(range.created_after!==undefined&&range.created_before!==undefined&&range.created_before<=range.created_after)throw Error('Ngày kết thúc phải bằng hoặc sau ngày bắt đầu.');return range;
+}
+async function saveVideoName(id){
+ const title=q('#libraryVideoTitle').value;try{await api('/api/admin/tasks/'+encodeURIComponent(id)+'/name',{method:'PATCH',body:{title}});if(mySelectedId!==id)return;await selectMyVideo(id);q('#videoNameMessage').textContent='Đã lưu tên. Prompt và tác vụ tạo video được giữ nguyên.';await loadMyVideos();}catch(e){if(mySelectedId===id)q('#videoNameMessage').textContent='Chưa lưu được tên: '+e.message;}
 }
 function searchLibrary(){libraryOffset=0;libraryVersion++;clearTimeout(librarySearchTimer);librarySearchTimer=setTimeout(loadMyVideos,250);}
 function pageLibrary(delta){libraryOffset=Math.max(0,libraryOffset+delta*20);libraryVersion++;loadMyVideos();}
@@ -2420,15 +2446,16 @@ async function deleteLibrarySelection(){
 async function loadMyVideos(){
  if(videosLoading){libraryReload=true;return;}if(lastLibraryBatchId!==currentBatchId){lastLibraryBatchId=currentBatchId;selectedVideoIds.clear();libraryOffset=0;q('#librarySearch').value='';q('#myVideoFilter').value='all';}videosLoading=true;const version=libraryVersion,batchId=currentBatchId;
  try{
-  const search=q('#librarySearch').value.trim(),status=q('#myVideoFilter').value;
-  const r=await api(batchId?'/api/admin/videos/batches/'+encodeURIComponent(batchId):'/api/admin/tasks?'+new URLSearchParams({limit:20,offset:libraryOffset,search,status}));
+  const search=q('#librarySearch').value.trim(),status=q('#myVideoFilter').value,range=libraryDateRange();
+  const r=await api(batchId?'/api/admin/videos/batches/'+encodeURIComponent(batchId):'/api/admin/tasks?'+new URLSearchParams({limit:20,offset:libraryOffset,search,status,...range}));
   if(curTab!=='videos'||batchId!==currentBatchId||version!==libraryVersion){libraryReload=true;return;}
   q('#libraryConnection').textContent='';q('#myBatchZip').style.display=batchId?'inline-block':'none';q('#myBatchClear').style.display=batchId?'inline-block':'none';q('#myBatchPause').hidden=!batchId;currentBatchPaused=!!r.paused;q('#myBatchPause').textContent=currentBatchPaused?'Tiếp tục lượt gửi':'Tạm dừng lượt gửi mới';
   const members=r.tasks||[];observeJobs([...members,...(r.running_tasks||[])]);if(r.running_tasks)observeMissingJobs(r.running_tasks);let tasks=members;
-  if(batchId){tasks=filteredTasks(members,status).filter(t=>!search||(t.prompt||'').toLocaleLowerCase().includes(search.toLocaleLowerCase())||t.id.includes(search));libraryTotal=tasks.length;tasks=tasks.slice(libraryOffset,libraryOffset+20);currentBatchDownloadName=r.download_name||'dola-videos.zip';}
+  if(batchId){tasks=filteredTasks(members,status).filter(t=>!search||[t.prompt,t.title,t.id].some(v=>(v||'').toLocaleLowerCase().includes(search.toLocaleLowerCase()))).filter(t=>(range.created_after===undefined||t.created_at>=range.created_after)&&(range.created_before===undefined||t.created_at<range.created_before));libraryTotal=tasks.length;tasks=tasks.slice(libraryOffset,libraryOffset+20);currentBatchDownloadName=r.download_name||'dola-videos.zip';}
   else libraryTotal=r.total||0;
+  if(libraryTotal&&libraryOffset>=libraryTotal){libraryOffset=Math.floor((libraryTotal-1)/20)*20;libraryReload=true;return;}
   myVisibleTasks=tasks;for(const t of tasks)libraryRows.set(t.id,t);
-  q('#myVideoTable').innerHTML=queueMarkup(tasks,'my');q('#myVideoJobs').innerHTML=tasks.length?tasks.map(t=>`<article class="video-job" data-task-id="${esc(t.id)}">${videoSelectionMarkup(t)}<strong>${esc(taskLabel(t))}</strong><h4>${esc((t.prompt||'').slice(0,110))}</h4><p class="tiny">${esc(t.model)} · ${Number(t.video_duration||t.duration).toFixed(1)} giây · ${esc(t.ratio)}</p><button class="btn" onclick="selectMyVideo('${esc(t.id)}')">Xem video / chi tiết</button></article>`).join(''):'<p>Không có video phù hợp. Thử đổi bộ lọc hoặc tạo video mới.</p>';
+  q('#myVideoTable').innerHTML=queueMarkup(tasks,'my');q('#myVideoJobs').innerHTML=tasks.length?tasks.map(t=>`<article class="video-job" data-task-id="${esc(t.id)}">${videoSelectionMarkup(t)}<strong>${esc(taskLabel(t))}</strong><h4>${esc((t.title||t.prompt||'').slice(0,110))}</h4><p class="tiny">${esc(t.model)} · ${Number(t.video_duration||t.duration).toFixed(1)} giây · ${esc(t.ratio)}</p><button class="btn" onclick="selectMyVideo('${esc(t.id)}')">Xem video / chi tiết</button></article>`).join(''):'<p>Không có video phù hợp. Thử đổi bộ lọc hoặc tạo video mới.</p>';
   q('#myBatchSummary').textContent=batchId?(r.name||'Mẻ '+batchId.slice(-8))+': '+members.length+' video · '+members.filter(t=>t.status==='completed').length+' hoàn tất'+(currentBatchPaused?' · Tạm dừng lượt chưa gửi':''):'';
   q('#videoStat').textContent=libraryTotal+' video phù hợp';q('#libraryPage').textContent=libraryTotal?'Trang '+(Math.floor(libraryOffset/20)+1)+' / '+Math.ceil(libraryTotal/20):'Không có kết quả';q('#libraryPrev').disabled=libraryOffset===0;q('#libraryNext').disabled=libraryOffset+20>=libraryTotal;
   updateLibrarySelection();if(mySelectedId&&!q('#libraryDrawer').hidden)await selectMyVideo(mySelectedId);
@@ -2581,6 +2608,7 @@ async function saveAiSettings(){
 for(const id of ['gen_model','gen_duration','gen_ratio'])q('#'+id).addEventListener('change',()=>{invalidateAnalysis();saveStudioDraft();});
 timer=setInterval(()=>{if(autoRefresh)refresh();},10000);
 setInterval(()=>{if(autoRefresh&&curTab==='generate'&&q('#loginMask').style.display==='none')loadStudioQueue().catch(()=>{});},3000);
+setInterval(()=>{if(curTab==='settings'||(curTab==='videos'&&!autoRefresh))pollNoticeJobs();},3000);
 setInterval(()=>{if(autoRefresh&&curTab==='videos'&&q('#loginMask').style.display==='none')loadMyVideos().catch(()=>{});},3000);
 </script>
 </body>

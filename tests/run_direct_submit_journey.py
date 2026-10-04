@@ -16,6 +16,7 @@ async def journey():
  async with async_playwright() as pw:
   browser=await pw.chromium.launch(headless=True,channel="chrome");page=await browser.new_page(viewport={'width':1440,'height':1000})
   errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+  await page.add_init_script("""window.AudioContext=class{constructor(){this.state='running';this.currentTime=0;this.destination={};}async resume(){}createGain(){return {gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){},disconnect(){}};}createOscillator(){return {frequency:{value:0},connect(){},start(){document.documentElement.dataset.noticeBeeps=String(Number(document.documentElement.dataset.noticeBeeps||0)+1);},stop(){},disconnect(){}};}};""")
   await page.goto(BASE);await page.locator('#loginUser').fill('admin');await page.locator('#loginPassword').fill('admin123');await page.locator('#loginPassword').press('Enter')
   await page.wait_for_selector('#tab-generate',state='visible')
   async def forbid_ai(route):raise AssertionError('Create requested AI preflight')
@@ -32,10 +33,13 @@ async def journey():
   assert len(events('ai'))==1 and len(events('submit'))==1
   await page.route('**/api/admin/prompts/preflight',forbid_ai)
   await page.locator('#gen_mode').select_option('list');await page.locator('#gen_batch_prompts').fill('Mèo ngồi\nThuyền đi');await page.locator('#gen_copies').fill('2')
-  page.on('dialog',lambda d:asyncio.create_task(d.accept()))
+  confirmations=[]
+  async def confirm_dialog(d):confirmations.append(d.message);await d.accept()
+  page.on('dialog',confirm_dialog)
   await page.locator('#btn_submit_gen').click()
   await page.wait_for_function("document.querySelector('#myBatchSummary').textContent.includes('4 hoàn tất')")
   assert len(events('submit'))==5 and len(events('ai'))==1
+  assert any('2 prompt × 2 bản' in message and 'ảnh dùng chung' in message and 'seedance-2.5' in message for message in confirmations)
   await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'direct-mobile.png'),full_page=True)
   assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
   await page.set_viewport_size({'width':1440,'height':1000})
@@ -64,6 +68,9 @@ async def journey():
   await page.screenshot(path=str(OUT/'independent-jobs-desktop.png'),full_page=True)
   await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'independent-jobs-mobile.png'),full_page=True)
   assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+  await page.get_by_role('button',name='⚙ Cài đặt',exact=True).click()
+  assert not await page.locator('#noticeSound').is_checked()
+  await page.locator('#noticeSound').check()
   (ROOT/'hold').unlink()
   for _ in range(200):
    with sqlite3.connect(ROOT/'tasks.db') as db:
@@ -71,6 +78,8 @@ async def journey():
    if done==2:break
    await asyncio.sleep(.1)
   assert done==2 and len(events('submit'))==7 and len(events('ai'))==1
+  await page.wait_for_function("Number(document.documentElement.dataset.noticeBeeps)>0")
+  assert await page.locator('#tab-settings').is_visible()
   # Pagination/search use persisted fixture history older than 100 results.
   with sqlite3.connect(ROOT/'tasks.db') as db:
    for i in range(121):
@@ -89,7 +98,26 @@ async def journey():
   await page.locator('#myVideoJobs button').first.click()
   await page.wait_for_selector('#libraryDrawer[open]')
   assert 'Thời gian chờ dự kiến' not in await page.locator('#mySelectedPreview').inner_text()
+  await page.wait_for_selector('#mySelectedPreview details summary')
+  try:await page.locator('#libraryDrawer').get_by_text('Đặt tên video',exact=True).click(timeout=5000)
+  except Exception:
+   await page.screenshot(path=str(OUT/'name-failure.png'),full_page=True)
+   (OUT/'name-failure.html').write_text(await page.content())
+   raise
+  assert await page.locator('#libraryVideoTitle').count()==1
+  await page.locator('#libraryVideoTitle').fill('Mèo giao pizza lưu trữ')
+  await page.wait_for_timeout(3500)
+  assert await page.locator('#libraryVideoTitle').input_value()=='Mèo giao pizza lưu trữ'
+  await page.get_by_role('button',name='Lưu tên',exact=True).click()
+  await page.wait_for_function("document.querySelector('#videoNameMessage').textContent.includes('Đã lưu tên')")
   await page.keyboard.press('Escape');assert not await page.locator('#libraryDrawer').is_visible()
+  await page.locator('#librarySearch').fill('Mèo giao pizza lưu trữ')
+  await page.wait_for_function("document.querySelector('#videoStat').textContent==='1 video phù hợp'")
+  with sqlite3.connect(ROOT/'tasks.db') as db:assert db.execute("SELECT title FROM tasks WHERE id='archive-120'").fetchone()[0]=='Mèo giao pizza lưu trữ'
+  await page.locator('#libraryFrom').fill('2000-01-01');await page.locator('#libraryTo').fill('2000-01-02')
+  await page.wait_for_function("document.querySelector('#videoStat').textContent==='0 video phù hợp'")
+  await page.get_by_role('button',name='Bỏ lọc ngày',exact=True).click()
+  await page.wait_for_function("document.querySelector('#videoStat').textContent==='1 video phù hợp'")
   await page.locator('#btnDelVideos').click()
   await page.wait_for_function("document.querySelector('#videoStat').textContent==='0 video phù hợp'")
   with sqlite3.connect(ROOT/'tasks.db') as db:assert not db.execute("SELECT id FROM tasks WHERE id='archive-120'").fetchone()
@@ -108,7 +136,7 @@ async def journey():
   await page.reload();await page.wait_for_selector('#tab-generate',state='visible')
   assert await page.locator('#promptTemplates option').count()==2
   assert not errors,errors
-  (OUT/'result.json').write_text(json.dumps({'passed':True,'library_search_over_100':True,'shared_selection_delete':True,'prompt_templates_reload':True,'dialog_keyboard_escape':True,'settings_change_keeps_active_job':True,'two_jobs_independent_configuration':True,'all_active_jobs_visible':True,'create_ai_calls':0,'explicit_check_ai_calls':1,'single_double_click_submissions':1,'batch_submissions':4,'real_worker_scheduler_database':True,'live_dola_generations':0,'errors':errors},indent=2))
+  (OUT/'result.json').write_text(json.dumps({'passed':True,'video_name_search_persistence':True,'local_date_filter':True,'batch_input_review':True,'sound_settings_observation_mock_audio':True,'library_search_over_100':True,'shared_selection_delete':True,'prompt_templates_reload':True,'dialog_keyboard_escape':True,'settings_change_keeps_active_job':True,'two_jobs_independent_configuration':True,'all_active_jobs_visible':True,'create_ai_calls':0,'explicit_check_ai_calls':1,'single_double_click_submissions':1,'batch_submissions':4,'real_worker_scheduler_database':True,'live_dola_generations':0,'errors':errors},indent=2))
   await browser.close()
 log=(OUT/'mock.log').open('w')
 p=subprocess.Popen([sys.executable,str(REPO/'tests/studio_mock_server.py')],env={**os.environ,'DOLA_STUDIO_TEST_ROOT':str(ROOT),'DOLA_TEST_PORT':str(PORT)},stdout=log,stderr=log)

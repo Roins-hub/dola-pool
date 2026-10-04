@@ -111,3 +111,9 @@ Video của tôi dùng một bộ lựa chọn cho tải ZIP, bỏ lượt chưa
 Mẫu prompt của tôi lưu tối đa 50 mẫu (prompt/cấu hình/chỉ dẫn sửa) trong trình duyệt; ảnh cần chọn riêng. Dùng mẫu có xác nhận thay bản đang soạn, có hoàn tác và vô hiệu hóa phân tích cũ; không giữ nguồn sửa lỗi của video khác. Thông báo trong app xuất hiện khi job đã được theo dõi chuyển sang hoàn tất/thất bại/chưa rõ. Không gọi AI hoặc gửi video cho các chức năng này.
 
 Cài đặt hiển thị card tài khoản và hạn mức upstream kèm thời điểm ghi nhận. Kho, nhóm, proxy và thao tác vận hành vẫn ở phần nâng cao. Khi mất kết nối thư viện giữ dữ liệu cũ và báo lỗi tại chỗ. Không thay framework/provider/database, không xóa dữ liệu trong migration.
+
+## Hoàn thiện thư viện và thông báo
+
+Thư viện lọc **Từ ngày / Đến ngày** theo múi giờ trên máy bạn, bao gồm cả ngày kết thúc; tìm kiếm, trạng thái và mẻ vẫn kết hợp được. Mở chi tiết → **Đặt tên video** để lưu tên tối đa 100 ký tự và tìm lại theo tên. Đặt tên chỉ sửa metadata, giữ prompt, tài khoản, conversation, thời gian và media; để trống để bỏ tên. Tên đang gõ không bị polling ghi đè. File tải vẫn dùng mã tác vụ hiện có.
+
+Xác nhận mẻ hiển thị số prompt/bản/video, model, thời lượng, tỉ lệ và ảnh dùng chung hoặc số ảnh riêng từng nhóm; không gọi AI. Cài đặt có **Âm báo khi video có kết quả trong phiên này**, mặc định tắt. Khi bật, Studio vẫn kiểm tra job khi bạn ở Cài đặt; không gửi lại video. Tải lại trang cần bật âm báo lại. Trình duyệt có thể hạn chế âm thanh hoặc timer khi trang chạy nền.

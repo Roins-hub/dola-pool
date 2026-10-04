@@ -105,6 +105,7 @@ class TaskStore:
                 ("input_fingerprint", "TEXT"),
                 ("export_error", "TEXT"),
                 ("reference_roles", "TEXT"),
+                ("title", "TEXT DEFAULT ''"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -651,23 +652,32 @@ class TaskStore:
                 ).fetchall()
         return [dict(r) for r in rows]
 
-    def library_tasks(self, limit=50, offset=0, search='', status='all', batch_id=''):
+    def library_tasks(self, limit=50, offset=0, search='', status='all', batch_id='', created_after=None, created_before=None):
         clauses, args = [], []
         if search:
             value=search.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')
-            clauses.append("(prompt LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')")
-            args.extend(['%'+value+'%']*2)
+            clauses.append("(prompt LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')")
+            args.extend(['%'+value+'%']*3)
         if status=='running':
             clauses.append("status IN ('queued','processing')")
         elif status!='all':
             clauses.append('status=?'); args.append(status)
         if batch_id:
             clauses.append('batch_id=?'); args.append(batch_id)
+        if created_after is not None:
+            clauses.append('created_at>=?'); args.append(created_after)
+        if created_before is not None:
+            clauses.append('created_at<?'); args.append(created_before)
         where=' WHERE '+' AND '.join(clauses) if clauses else ''
         with _LOCK:
             total=self._conn.execute('SELECT COUNT(*) FROM tasks'+where,args).fetchone()[0]
             rows=self._conn.execute('SELECT * FROM tasks'+where+' ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?',[*args,limit,offset]).fetchall()
         return [dict(r) for r in rows], total
+
+    def name_video(self, task_id, title):
+        # Metadata edits must not reset lifecycle timestamps or recovery deadlines.
+        with _LOCK, self._conn:
+            return self._conn.execute('UPDATE tasks SET title=? WHERE id=?', (title,task_id)).rowcount > 0
 
     def library_batches(self):
         with _LOCK:
