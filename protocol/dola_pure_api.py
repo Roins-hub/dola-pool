@@ -252,6 +252,8 @@ def apply_state(session: requests.Session) -> dict[str, Any]:
 def apply_state_cookies(session: requests.Session, state: dict[str, Any]) -> None:
     """Load Chrome-exported Dola cookies into a Python requests cookie jar."""
     cookie_list = state.get("cookies_list")
+    if cookie_list is None and isinstance(state.get("cookies"), list):
+        cookie_list = state.get("cookies")
     if isinstance(cookie_list, list) and cookie_list:
         for c in cookie_list:
             if not isinstance(c, dict) or not c.get("name"):
@@ -285,6 +287,8 @@ def state_cookie_header(state: dict[str, Any]) -> str:
     parts: list[str] = []
     seen: set[str] = set()
     cookie_list = state.get("cookies_list")
+    if cookie_list is None and isinstance(state.get("cookies"), list):
+        cookie_list = state.get("cookies")
     if isinstance(cookie_list, list):
         for c in cookie_list:
             if not isinstance(c, dict):
