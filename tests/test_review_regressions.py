@@ -161,7 +161,7 @@ function closeLibraryDetail(){}function onModelChange(){}function onPromptInput(
 def test_shared_batch_analysis_preserves_selected_image_roles():
     node("""let sent,adminKey='fixture';const referenceHashPromise=Promise.resolve();let selectedImages=[],referenceRoles=['character'],analysisTaskId='';
 selectedImages=[new Blob(['image'])];function q(s){return {value:s==='#gen_duration'?'15':s==='#gen_ratio'?'16:9':'seedance-2.5'};}
-function isBatchGeneration(){return true;}function showLogin(){}
+function isBatchGeneration(){return true;}function showLogin(){}function localizeResponse(v){return v;}
 async function fetch(url,args){sent=JSON.parse(args.body.get('analysis'));return {ok:true,status:200,json:async()=>({status:'allow'})};}
 """+js_function('requestPreflight')+"\nrequestPreflight('cat').then(()=>{if(sent.reference_roles[0]!=='character')throw Error('Selected batch role was ignored');});")
 

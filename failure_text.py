@@ -259,9 +259,9 @@ def present(text: str, *, code: str = '', category: str = '') -> dict:
     category = category or 'unknown'
     message, action = _MESSAGES[category]
     if category == 'quota' and used and left:
-        message = f'Dola báo yêu cầu này cần {used} lượt tạo nhưng tài khoản chỉ còn {left} lượt.'
+        message = f'Dola báo yêu cầu này cần {used} điểm nhưng tài khoản chỉ còn {left} điểm.'
     if category == 'generation' and re.search(r'未扣除|not deducted', raw, re.I):
-        message += ' Dola báo chưa trừ lượt tạo.'
+        message += ' Dola báo chưa trừ điểm.'
     safe_code = str(code or '')
     if not safe_code:
         match = re.search(r'(?<!\d)710022002(?!\d)', raw)
@@ -303,9 +303,9 @@ def present_update(update: dict) -> dict:
     used, left = _quota_facts(raw)
     if result['category'] == 'progress' and update.get('status') == 'pending':
         if used:
-            result['message_vi'] += f' Dola dự kiến dùng {used} lượt tạo.'
+            result['message_vi'] += f' Dola dự kiến dùng {used} điểm.'
         if left:
-            result['message_vi'] += f' Theo phản hồi này, tài khoản còn {left} lượt.'
+            result['message_vi'] += f' Theo phản hồi này, tài khoản còn {left} điểm.'
     wait = str(update.get('wait_minutes') or '')
     wait = wait.replace('小时',' giờ').replace('分钟',' phút').replace('秒',' giây').strip()
     result.update(at=update.get('at'), status=update.get('status'),

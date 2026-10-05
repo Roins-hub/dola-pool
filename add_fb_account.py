@@ -140,7 +140,7 @@ async def add_fb_account_flow(account: str, fb_line: str, force_login: bool = Fa
 
             # Click Continue on FB OAuth
             continue_btn = await fb_page.wait_for_selector(
-                '[aria-label*="Continue"], div[role="button"]:has-text("Continue"), div[role="button"]:has-text("Tiếp tục")',
+                '[aria-label*="Continue"], div[role="button"]:has-text("Continue"), div[role="button"]:has-text("Tiếp tục"), [aria-label*="Continuar"], div[role="button"]:has-text("Continuar")',
                 timeout=20000,
             )
             await continue_btn.click()

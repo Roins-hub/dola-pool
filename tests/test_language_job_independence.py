@@ -61,3 +61,19 @@ async def test_running_job_does_not_disappear_behind_newer_history(studio):
     response=await server.admin_tasks(limit=1,x_admin_key='test')
     assert [r['id'] for r in response['running_tasks']]==['running']
     assert response['running_tasks'][0]['duration']==30 and response['running_tasks'][0]['ratio']=='9:16'
+
+
+def test_vietnamese_duration_question_is_not_generation_in_progress():
+    question='Tôi sẽ tạo video theo yêu cầu của bạn với tỉ lệ 16:9. Thời lượng bạn muốn là bao nhiêu giây? (Video hỗ trợ từ 4 đến 15 giây)'
+    status,reasons=dola.classify_chain_outcome([], [question])
+    assert status=='duration_split' and reasons==[question]
+    # A real creation acknowledgement in the same conversation takes precedence.
+    ack='本次使用 Dreamina Seedance 2.5 生成，将消耗 2 个视频生成额度，预计等待 25 分钟。'
+    assert dola.classify_chain_outcome([], [question,ack])[0]=='pending'
+    assert not dola.looks_like_duration_confirm('Tôi sẽ tạo video với thời lượng 15 giây. Đang xử lý...')
+
+
+def test_upstream_generation_credit_is_displayed_as_points_not_video_count():
+    ack='本次使用 Dreamina Seedance 2.5 生成，将消耗 2 个视频生成额度。今日剩余 2 个视频生成额度。'
+    result=ft.present_update({'status':'pending','texts':[ack]})
+    assert '2 điểm' in result['message_vi'] and '2 lượt' not in result['message_vi']

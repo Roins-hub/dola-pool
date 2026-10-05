@@ -6,7 +6,11 @@ import pytest
 import image_gen
 from ai_provider import AiProviderCallError, AiProviderNotConfiguredError
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 20
+import io
+from PIL import Image
+_buffer = io.BytesIO()
+Image.new("RGB", (2, 2), "blue").save(_buffer, format="PNG")
+PNG = _buffer.getvalue()
 CFG = {"base_url": "http://gw.invalid/v1", "api_key": "sk-test-secret-key-123456", "model": "m"}
 
 
@@ -65,3 +69,18 @@ def test_settings_image_model_roundtrip_and_no_key_leak(tmp_path):
     assert pub["openai"]["image_model"] == "x/y" and "k-123456" not in str(pub)
     cfg = ai_settings.get_image_config(enc, key)
     assert cfg == {"base_url": "http://127.0.0.1:20128/v1", "api_key": "k-123456", "model": "x/y"}
+
+
+def test_gateway_non_image_bytes_are_rejected():
+    def h(request):
+        return httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(b'<html>gateway error</html>').decode()}]})
+    with pytest.raises(AiProviderCallError, match='ảnh'):
+        asyncio.run(image_gen.generate_image(CFG, 'cat', client=client(h)))
+
+
+def test_gateway_malformed_response_is_safe():
+    def h(request):
+        return httpx.Response(200, text='gateway failed '+CFG['api_key'])
+    with pytest.raises(AiProviderCallError) as e:
+        asyncio.run(image_gen.generate_image(CFG, 'cat', client=client(h)))
+    assert CFG['api_key'] not in str(e.value)

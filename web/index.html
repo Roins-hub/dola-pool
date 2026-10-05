@@ -667,13 +667,54 @@ function hide(id){document.getElementById(id).style.display='none';}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function fmt(ts){if(!ts)return '-';const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function fmtHM(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}`;}
+const FOREIGN_RESPONSE_FIELDS=new Set(['error','reason','reply','details','detail','message','message_vi','next_action_vi','wait_minutes','failure_reasons','creation_statuses','texts','export_error','note','group_reason','quality_summary','reason_vi','replacement','evidence','source','suggestions','anchor_error']);
+function responseVi(value){
+  const s=String(value??'');const han=/[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(s);
+  const vietnamese=/[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/i.test(s);
+  if(!han&&vietnamese)return s;
+  if(!han&&/only allows|maximum.{0,20}(duration|seconds)|too many users|try again later|rate.?limit|timed? ?out|timeout|task_id|login expired|session expired|no available accounts|invalid .*format/i.test(s)){
+    if(/too many users|rate.?limit|try again later/i.test(s))return 'Dola đang đông người dùng hoặc giới hạn tạm thời. Hãy đợi rồi kiểm tra lại yêu cầu này.';
+    if(/only allows|maximum.{0,20}(duration|seconds)/i.test(s))return 'Dola yêu cầu điều chỉnh thời lượng theo giới hạn của chế độ đã chọn.';
+    if(/timed? ?out|timeout/i.test(s))return 'Yêu cầu hết thời gian chờ khi kết nối với Dola.';
+    if(/task_id/i.test(s))return 'Dola chưa trả mã tác vụ tạo video.';
+    if(/login expired|session expired/i.test(s))return 'Phiên đăng nhập Dola đã hết hạn; cần đăng nhập lại.';
+    if(/no available accounts/i.test(s))return 'Không có tài khoản đang sẵn sàng trong kho.';
+    if(/invalid .*format/i.test(s))return 'Dữ liệu gửi lên không đúng định dạng.';
+  }
+  if(!han){
+    if(vietnamese||!/[A-Za-z]{3}/.test(s))return s;
+    if(/^\s*\d+(?:[.:]\d+)?\s*$/.test(s))return s;
+    return 'Phản hồi từ Dola chưa phải tiếng Việt; Studio đã ẩn nguyên văn để giao diện chỉ hiển thị tiếng Việt.';
+  }
+  const groups={'满额':'Đủ hạn mức','半额':'Còn hạn mức','冷却':'Tạm nghỉ','生成中':'Đang tạo video','风控':'Cần kiểm tra tài khoản','待激活':'Chờ kích hoạt','异常':'Bất thường'};
+  if(groups[s])return groups[s];
+  if(/当前使用人数较多|稍后再试|服务繁忙|系统繁忙/.test(s))return 'Dola đang đông người dùng hoặc xử lý bận. Hãy đợi rồi kiểm tra lại yêu cầu này.';
+  if(/今日.*(次数|上限)|生成次数.*上限|达到.*上限/.test(s))return 'Dola báo tài khoản đã hết lượt tạo trong ngày.';
+  if(/积分不足|额度不足|视频生成额度|剩余\s*\d+/.test(s)){const used=s.match(/消耗\s*(\d+)\s*个视频生成额度/),left=s.match(/剩余\s*(\d+)\s*个视频生成额度/);return used&&left?`Dola báo yêu cầu cần ${used[1]} điểm, tài khoản còn ${left[1]} điểm.`:'Dola báo hạn mức hiện có không đủ cho yêu cầu này.';}
+  if(/肖像|人脸|未认证/.test(s))return 'Dola yêu cầu kiểm tra ảnh tham chiếu và quyền sử dụng hình ảnh khuôn mặt.';
+  if(/版权|侵权|未授权/.test(s))return 'Dola báo nội dung có thể liên quan đến bản quyền hoặc quyền sử dụng hình ảnh.';
+  if(/内容审核|违规|不合规|审核不通过/.test(s))return 'Dola từ chối nội dung theo bước kiểm duyệt.';
+  if(/视频时长|时长.*支持|仅支持.*秒/.test(s))return 'Dola yêu cầu điều chỉnh thời lượng video theo giới hạn của chế độ đã chọn.';
+  if(/登录过期|登录失效|请登录|会话过期/.test(s))return 'Phiên đăng nhập Dola đã hết hạn; cần đăng nhập lại.';
+  if(/网络|连接|超时|请求失败/.test(s))return 'Dola báo kết nối bị gián đoạn hoặc yêu cầu đã hết thời gian chờ.';
+  return 'Dola đã phản hồi bằng ngôn ngữ khác; Studio đã ẩn nguyên văn để giao diện chỉ hiển thị tiếng Việt.';
+}
+function localizeResponse(value,key=''){
+  if(typeof value==='string'){
+    const structural=['group','status','model','id','task_id','source_task_id','request_id','batch_id','account','account_name','video_url','prompt'].includes(key);
+    return FOREIGN_RESPONSE_FIELDS.has(key)||(!structural&&/[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(value))?responseVi(value):value;
+  }
+  if(Array.isArray(value))return value.map(item=>localizeResponse(item,key));
+  if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,localizeResponse(v,k)]));
+  return value;
+}
 
 async function api(path,opts={}){
   const r=await fetch(path,{method:opts.method||'GET',headers:{'Content-Type':'application/json','X-Admin-Key':adminKey,...(opts.headers||{})},body:opts.body?JSON.stringify(opts.body):undefined});
   if(r.status===401){showLogin();throw new Error('unauthorized');}
   const text=await r.text();
-  let data={};try{data=text?JSON.parse(text):{};}catch(e){if(r.ok)throw new Error('Phản hồi từ Studio bị gián đoạn; chưa xác định kết quả yêu cầu.');}
-  if(!r.ok){const error=new Error(data.message_vi||(typeof data.detail==='object'?JSON.stringify(data.detail):(data.detail||`${r.status} ${text.slice(0,120)}`)));error.details=data.failure_display?.details;error.status=r.status;throw error;}
+  let data={};try{data=text?localizeResponse(JSON.parse(text)):{};}catch(e){if(r.ok)throw new Error('Phản hồi từ Studio bị gián đoạn; chưa xác định kết quả yêu cầu.');}
+  if(!r.ok){const error=new Error(data.message_vi||(typeof data.detail==='object'?JSON.stringify(data.detail):(data.detail||responseVi(`${r.status} ${text.slice(0,120)}`))));error.details=data.failure_display?.details;error.status=r.status;throw error;}
   return data;
 }
 
@@ -801,7 +842,7 @@ const GROUP_ACTIVE=['满额','半额','冷却','生成中'];
 function groupBadge(a){
   const g=a.group||'';
   if(!g)return '<span class="tiny">—</span>';
-  const name=GROUP_NAMES[g]||g;
+  const name=GROUP_NAMES[g]||responseVi(g);
   const display=a.group_reason_display||{},reason=display.message_vi||name;
   return '<span class="badge '+(GROUP_STYLE[g]||'b-gray')+'" title="'+esc(reason)+'">'+esc(name)+'</span><div class="tiny">'+esc(reason)+'</div>'+(display.details?'<details><summary>Chi tiết</summary><pre>'+esc(display.details)+'</pre></details>':'');
 }
@@ -870,7 +911,7 @@ async function loadAccounts(){
   const rows=pageSlice().map(x=>{
     const jb=jobs[x.name];
     const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">Đang nạp nick...</span>'
-      :(jb&&jb.kind==='add'&&jb.status==='failed')?'<span class="badge b-red">Nạp nick thất bại</span>'
+      :(jb&&jb.kind==='add'&&jb.status==='failed'&&!x.login_ok)?'<span class="badge b-red">Nạp nick thất bại</span>'
       :statusBadge(x);
     // 动态代理账号：显示当前出口 IP，并提供换IP/探测
     const ipInfo=x.proxy_mode==='dynamic'
@@ -878,7 +919,7 @@ async function loadAccounts(){
          <a href="javascript:;" onclick="rotateIp('${x.name}')">Đổi IP</a>
          <a href="javascript:;" onclick="probeIp('${x.name}')">Kiểm tra IP</a></div>`
       :'';
-    const warn=(jb&&jb.status==='failed')?' <span class="tiny" title="'+esc(jb.failure_display?.message_vi||'Đăng nhập thất bại')+'">⚠</span>':'';
+    const warn=(jb&&jb.status==='failed'&&!x.login_ok)?' <span class="tiny" title="'+esc(jb.failure_display?.message_vi||'Đăng nhập thất bại')+'">⚠</span>':'';
     return [
       `<input type="checkbox" data-name="${esc(x.name)}" ${selAccounts.has(x.name)?'checked':''} onchange="toggleSel('${x.name}',this.checked)">`,
       `<span class="account-id">${esc(x.name)}</span>`,
@@ -978,7 +1019,7 @@ async function recoverAccount(name,kind){
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/recover',
       {method:'POST',body:{kind:kind}});
-    alert(`${name} đã được khôi phục, nhóm hiện tại: ${(r.account&&r.account.group)||'-'}`);
+    const currentGroup=(r.account&&r.account.group)||'';alert(`${name} đã được khôi phục, nhóm hiện tại: ${GROUP_NAMES[currentGroup]||responseVi(currentGroup)||'-'}`);
   }catch(e){return alert(e.message);}
   refresh();
 }
@@ -1849,7 +1890,7 @@ async function loadTasks(){
   const r=await api('/api/admin/tasks?limit=50');
   TASK_MAP={};
   r.tasks.forEach(t=>{TASK_MAP[t.id]=t;});
-  const sb={'queued':'<span class="badge b-gray">Đang chờ</span>','processing':'<span class="badge b-blue">Đang sinh video</span>','completed':'<span class="badge b-green">Hoàn thành</span>','failed':'<span class="badge b-red">Thất bại (Failed)</span>','风控':'<span class="badge b-orange">Bị kiểm soát</span>'};
+  const sb={'queued':'<span class="badge b-gray">Đang chờ</span>','processing':'<span class="badge b-blue">Đang sinh video</span>','completed':'<span class="badge b-green">Hoàn thành</span>','failed':'<span class="badge b-red">Thất bại</span>','风控':'<span class="badge b-orange">Bị kiểm soát</span>'};
   const rows=r.tasks.map(t=>[
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
     '<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>'
@@ -1858,7 +1899,7 @@ async function loadTasks(){
     accChain(t),
     t.api_key_name||'—',
     (t.duration||10)+'s',
-    sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
+    sb[t.status]||'<span class="badge b-gray">'+esc(responseVi(t.status))+'</span>',
     fmt(t.created_at),
     t.video_url
       ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">Xem link</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">Xem trước</button></div>'
@@ -2019,7 +2060,7 @@ async function requestPreflight(prompt,indices=null){
   const roles=indices===null?selectedImages.map((_,i)=>referenceRoles[i]||'other'):indices.map(i=>referenceRoles[i]||'other');
   const fd=new FormData();fd.append('analysis',JSON.stringify({prompt,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,reference_roles:roles,...(analysisTaskId?{upstream_task_id:analysisTaskId}:{})}));
   for(const image of inputImages)fd.append('images',image);
-  const response=await fetch('/api/admin/prompts/preflight',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await response.json();
+  const response=await fetch('/api/admin/prompts/preflight',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=localizeResponse(await response.json());
   if(response.status===401)showLogin();
   if(!response.ok){const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không phân tích được prompt'));error.details=data.failure_display?.details;error.status=response.status;throw error;}
   return data;
@@ -2338,7 +2379,7 @@ async function submitVideoBatch(){
     if(!pendingRequestId||pendingSnapshot!==snapshot){pendingRequestId=crypto.randomUUID();pendingSnapshot=snapshot;saveStudioDraft();}
     const fd=new FormData();fd.append('batch',JSON.stringify({skip_preflight:true,source_task_id:analysisTaskId||null,name:q('#gen_batch_name').value,request_id:pendingRequestId,copies,model:q('#gen_model').value,duration:Number(q('#gen_duration').value),ratio:q('#gen_ratio').value,
       prompts:entries}));for(const image of selectedImages)fd.append('images',image);
-    btn.textContent='Đang gửi mẻ…';const resp=await fetch('/api/admin/videos/batches',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=await resp.json();
+    btn.textContent='Đang gửi mẻ…';const resp=await fetch('/api/admin/videos/batches',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});const data=localizeResponse(await resp.json());
     if(!resp.ok){const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không nhận được mẻ'));error.details=data.failure_display?.details;error.status=resp.status;throw error;}
     currentBatchId=data.batch_id;if(studioPollTimer)clearInterval(studioPollTimer);studioPollTimer=null;currentActiveTaskId='';hide('gen_job_card');pendingRequestId='';pendingSnapshot='';analysisTaskId='';renderDraftSource();saveStudioDraft();switchTab('videos');
     studioMessage('Đã nhận mẻ gồm '+data.tasks.length+' video. Bạn có thể đóng trang; hàng đợi được lưu ở backend.');
@@ -2369,7 +2410,7 @@ async function doSubmitGenerate(){
     fd.append('reference_roles',JSON.stringify(selectedImages.map((_,i)=>referenceRoles[i]||'other')));fd.append('request_id',pendingRequestId);if(analysisTaskId)fd.append('source_task_id',analysisTaskId);fd.append('skip_preflight','true');
     for(const image of selectedImages)fd.append('images',image);
     const resp=await fetch('/api/admin/videos/generations',{method:'POST',headers:{'x-admin-key':adminKey},body:fd});
-    const data=await resp.json();if(resp.status===401)showLogin();if(!resp.ok){currentPreflight=null;const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu'));error.details=data.failure_display?.details;error.confirmed=true;throw error;}
+    const data=localizeResponse(await resp.json());if(resp.status===401)showLogin();if(!resp.ok){currentPreflight=null;const error=new Error(data.message_vi||(typeof data.detail==='string'?data.detail:'Không gửi được yêu cầu'));error.details=data.failure_display?.details;error.confirmed=true;throw error;}
     pendingRequestId='';pendingSnapshot='';currentBatchId='';analysisTaskId='';renderDraftSource();trackStudioJob(data.id);studioMessage('Đã gửi. Bạn có thể đóng trang và xem lại trong Video của tôi.');
   }catch(e){studioMessage(e.confirmed?'Chưa gửi video: '+e.message:'Chưa xác định trạng thái gửi: '+e.message+'. Kiểm tra Video của tôi; gửi lại cùng bản nháp sẽ dùng cùng mã yêu cầu.',e.details);}
   finally{btn.disabled=false;btn.textContent='Tạo video';}

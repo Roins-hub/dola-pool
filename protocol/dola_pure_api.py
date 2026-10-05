@@ -2785,6 +2785,9 @@ def looks_like_our_duration_split_reply(text: str) -> bool:
 def looks_like_duration_confirm(text: str) -> bool:
     compact = _compact_duration_text(text)
     lower = str(text or "").lower()
+    # A question is not a creation acknowledgement; do not wait 30 minutes for it.
+    if "thời lượng" in lower and "bao nhiêu giây" in lower and "?" in lower:
+        return True
     if "supports durations from 4 to 15 seconds" in lower or "nearest supported duration" in lower or "proceed with a 15-second" in lower:
         return True
     if "duration" in lower and "15 seconds" in lower and ("proceed" in lower or "confirm" in lower or "support" in lower):

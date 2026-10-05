@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
+import io
+
+from PIL import Image
 from typing import Any, Optional
 
 import httpx
@@ -12,6 +16,19 @@ from ai_provider import AiProviderCallError, AiProviderNotConfiguredError, sanit
 TIMEOUT_SECONDS = 180.0
 MAX_PARALLEL = 4
 SIZES = ("1024x1024", "1792x1024", "1024x1792")
+
+
+def _verified_image(data: bytes) -> bytes:
+    if len(data) > 15 * 1024 * 1024:
+        raise AiProviderCallError("Ảnh gateway trả về vượt quá 15 MB")
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            if im.format not in ("PNG", "JPEG", "WEBP"):
+                raise ValueError("unsupported image format")
+            im.verify()
+    except Exception as exc:
+        raise AiProviderCallError("Gateway không trả tệp ảnh PNG, JPG hoặc WEBP hợp lệ") from exc
+    return data
 
 
 async def generate_image(cfg: dict[str, Any], prompt: str, size: str = "1024x1024",
@@ -27,13 +44,24 @@ async def generate_image(cfg: dict[str, Any], prompt: str, size: str = "1024x102
         r = await client.post(url, json=body, headers={"Authorization": f"Bearer {key}"})
         if r.status_code != 200:
             raise AiProviderCallError(f"Tạo ảnh lỗi {r.status_code}: {sanitize_secret(r.text[:300], key)}", r.status_code)
-        item = (r.json().get("data") or [{}])[0]
+        try:
+            payload = r.json()
+            items = payload.get("data") if isinstance(payload, dict) else None
+            item = items[0] if isinstance(items, list) and items else {}
+            if not isinstance(item, dict):
+                raise ValueError("invalid image record")
+        except (ValueError, TypeError) as exc:
+            raise AiProviderCallError("Gateway trả phản hồi tạo ảnh không hợp lệ") from exc
         if item.get("b64_json"):
-            return base64.b64decode(item["b64_json"])
+            try:
+                data = base64.b64decode(item["b64_json"], validate=True)
+            except (ValueError, TypeError, binascii.Error) as exc:
+                raise AiProviderCallError("Gateway trả dữ liệu ảnh không hợp lệ") from exc
+            return _verified_image(data)
         if item.get("url"):  # ponytail: chỉ tin URL do chính gateway trả về, không theo redirect ngoài
             img = await client.get(item["url"])
             if img.status_code == 200:
-                return img.content
+                return _verified_image(img.content)
         raise AiProviderCallError("Gateway không trả dữ liệu ảnh")
     except httpx.TimeoutException as exc:
         raise AiProviderCallError("Hết thời gian chờ tạo ảnh") from exc
