@@ -67,6 +67,9 @@ def _get_fernet(keyfile: Optional[Path] = None) -> Fernet:
     return Fernet(_get_key(keyfile))
 
 
+DEFAULT_IMAGE_MODEL = "antigravity/gemini-3.1-flash-image"
+
+
 def _default_state() -> dict[str, Any]:
     return {
         "active_provider": None,  # "gemini" | "openai" | None
@@ -77,6 +80,7 @@ def _default_state() -> dict[str, Any]:
         "openai": {
             "base_url": "https://api.openai.com/v1",
             "model": "gpt-4o-mini",
+            "image_model": DEFAULT_IMAGE_MODEL,
             "api_key": "",
         },
     }
@@ -110,6 +114,7 @@ def load_raw_settings(encfile: Optional[Path] = None, keyfile: Optional[Path] = 
         if isinstance(data.get("openai"), dict):
             base["openai"]["base_url"] = str(data["openai"].get("base_url") or base["openai"]["base_url"])
             base["openai"]["model"] = str(data["openai"].get("model") or base["openai"]["model"])
+            base["openai"]["image_model"] = str(data["openai"].get("image_model") or DEFAULT_IMAGE_MODEL)
             base["openai"]["api_key"] = str(data["openai"].get("api_key") or "")
 
         return base
@@ -159,6 +164,7 @@ def get_public_settings(encfile: Optional[Path] = None, keyfile: Optional[Path] 
         "openai": {
             "base_url": _public_base_url(raw["openai"].get("base_url", "https://api.openai.com/v1")),
             "model": raw["openai"].get("model", "gpt-4o-mini"),
+            "image_model": raw["openai"].get("image_model") or DEFAULT_IMAGE_MODEL,
             "has_api_key": bool(raw["openai"].get("api_key")),
         },
     }
@@ -217,6 +223,8 @@ def update_settings(
             current["openai"]["base_url"] = str(o["base_url"]).strip().rstrip("/")
         if "model" in o and o["model"]:
             current["openai"]["model"] = str(o["model"]).strip()
+        if o.get("image_model") and str(o["image_model"]).strip():
+            current["openai"]["image_model"] = str(o["image_model"]).strip()
         if o.get("clear_api_key"):
             current["openai"]["api_key"] = ""
         elif o.get("api_key") and str(o["api_key"]).strip():
@@ -239,6 +247,14 @@ def get_active_provider_config(encfile: Optional[Path] = None, keyfile: Optional
         "provider": active,
         **conf
     }
+
+
+def get_image_config(encfile: Optional[Path] = None, keyfile: Optional[Path] = None) -> Optional[dict[str, Any]]:
+    """Cấu hình tạo ảnh: dùng khối OpenAI-compatible (9router...) dù provider chữ đang là Gemini."""
+    conf = load_raw_settings(encfile, keyfile)["openai"]
+    if not conf.get("api_key"):
+        return None
+    return {"base_url": conf["base_url"], "api_key": conf["api_key"], "model": conf.get("image_model") or DEFAULT_IMAGE_MODEL}
 
 
 def compute_config_fingerprint(encfile: Optional[Path] = None, keyfile: Optional[Path] = None) -> str:

@@ -228,28 +228,52 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
 @media(max-width:600px){.studio-options{grid-template-columns:1fr}.studio-options select{padding:9px 12px!important}}
 
 #studioNotice{position:fixed;bottom:16px;right:16px;z-index:60;width:min(420px,calc(100vw - 32px))}
-/* Studio UX: one editor, one active panel, one library selection. */
-body::before,body::after{display:none}body{background:#0d1420}
-:root{--glass:#162130;--blur:none;--shadow:none;--r:12px;--sub:#b0bfd0;--stroke:#344256;--accent:#42d6b0}
-.nav-item.on,.btn-p{box-shadow:none}.card h3{font-size:17px}.studio-intro{margin-bottom:16px}
-#tab-generate{grid-template-columns:minmax(0,1.65fr) minmax(320px,1fr);gap:20px;align-items:start}
-#tab-generate>div{min-width:0}.studio-results{display:block}.creator-body{grid-template-columns:1fr}.creator-references{border:0;padding:0}.creator-references .drop-zone{min-height:80px}
-.rewrite-panel,.draft-library{margin:14px 0}summary{cursor:pointer;padding:8px 0}.rewrite-controls{margin:8px 0;padding:12px}
-.library-search{display:grid;grid-template-columns:auto minmax(100px,1fr) auto minmax(100px,240px);gap:10px;align-items:center;margin:16px 0}.library-search input,.library-search select{width:100%;padding:10px}
-#librarySelectionActions{padding:12px;border:1px solid var(--accent);border-radius:10px}
-[hidden]{display:none!important}#libraryDrawer .box{width:min(820px,94vw);max-height:90vh;overflow:auto}.video-job h4{font-size:15px;line-height:1.5;margin:10px 0}.video-job .job-actions{margin-top:12px}.job-detail{border-top:1px solid var(--stroke);margin-top:16px;padding-top:16px}
-#studioRunningJobs{max-height:420px;overflow:auto}#studioRunningJobs:empty::after{content:'Chưa có video đang chạy. Bạn có thể bắt đầu bằng một ý tưởng mới.';color:var(--sub)}
-#studio_queue_card>.tiny{display:none}#gen_prompt{min-height:180px}.prompt-history{margin-bottom:8px!important}
-@media(max-width:1050px){#tab-generate{grid-template-columns:1fr}.library-search{grid-template-columns:1fr 1fr}.library-search label{grid-column:1/-1}.library-search input,.library-search select{grid-column:1/-1}}
+/* Personal Studio: calm surfaces and a clear creation hierarchy. */
+:root{--bg:#0e0f11;--glass:#17191d;--glass-hi:#202328;--text:#f1f2f4;--sub:#a1a5af;--stroke:#303339;--stroke-hi:#484d56;--line:#2a2d33;--accent:#c4ef86;--accent-d:#c4ef86;--blue:#a4bff2;--r:16px;--blur:none;--shadow:none}
+body{background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.5}
+body::before,body::after{display:none}
+.sidebar{inset:0 auto 0 0;width:208px;padding:30px 18px 20px;border:0;border-right:1px solid var(--line);border-radius:0;background:#121316;gap:36px}
+.brand{font-size:18px;letter-spacing:-.5px;padding:0 10px}.dot{background:var(--accent);box-shadow:none;border-radius:50%;width:9px;height:9px}
+.side-nav{gap:8px}.nav-item{border-radius:9px;padding:12px 14px;color:var(--sub)}.nav-item.on{background:#24292a;border-color:transparent;color:var(--accent);box-shadow:none}.nav-item:hover{background:#202328}
+.side-foot{gap:10px}.side-foot .btn{justify-content:center;background:transparent}.side-foot .btn-danger{color:var(--sub)}
+main{margin-left:208px;padding:38px 36px 60px;max-width:1800px}
+.page-header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:28px}.page-header h1{font-size:30px;line-height:1.2;letter-spacing:-1px;font-weight:650;margin-bottom:9px}.page-header p{color:var(--sub);font-size:14px}.workspace-label{border:1px solid var(--line);border-radius:30px;padding:7px 12px;color:var(--sub);font-size:12px;white-space:nowrap}
+.card{background:var(--glass);border:1px solid var(--line);border-radius:16px;padding:26px;box-shadow:none}.card h3{font-size:17px;letter-spacing:-.3px;margin-bottom:12px}.studio-intro{font-size:13px;margin-bottom:22px;color:var(--sub);line-height:1.6}
+#tab-generate{grid-template-columns:minmax(0,1.65fr) minmax(300px,1fr);gap:24px;align-items:start}#tab-generate>div{min-width:0}.studio-results{display:block}
+.creator-body{display:block}.creator-prompt{display:flex;flex-direction:column}.creator-prompt>.draft-library{order:8}.creator-prompt>#gen_batch_summary{order:9}.creator-references{padding:0;border:0;margin-top:20px}.creator-references .drop-zone{min-height:80px;padding:18px;display:grid;grid-template-columns:28px 1fr;gap:2px 12px;text-align:left;border:1px dashed #42464e;background:#141619;border-radius:12px}.creator-references .drop-zone svg{grid-row:1/3;align-self:center;margin:0!important}.creator-references .drop-zone:hover{border-color:var(--accent)}
+#gen_prompt{min-height:190px;background:#101215;font-size:16px!important;line-height:1.8!important;padding:18px!important;border-radius:12px;resize:vertical}
+input:not([type=checkbox]):not([type=radio]),select,textarea{background:#101215;border-color:#353941;color:var(--text);border-radius:8px;min-height:40px}
+select option{background:#17191d}input::placeholder,textarea::placeholder{color:#7f8591}input:not([type=checkbox]):not([type=radio]):focus,select:focus,textarea:focus{border-color:#86a75b;box-shadow:0 0 0 3px #c4ef8610;background:#101215}
+.btn{background:#25282e;border:1px solid #353941;border-radius:8px;padding:9px 14px;font-size:13px;box-shadow:none;backdrop-filter:none;transition:background .15s}.btn:hover{background:#30343b;border-color:#555b66}.btn-p,.btn-p:hover{background:var(--accent);color:#172311;border-color:var(--accent);font-weight:650;box-shadow:none}.btn-p:hover{background:#d2f5a1}.btn-danger{color:#f39a9a}
+.creator-actions{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(150px,1.3fr);gap:12px!important;padding-top:20px;border-top:1px solid var(--line);margin-top:20px!important}.creator-actions .btn{justify-content:center;min-height:46px;font-size:14px}.creator-actions #btn_submit_gen{order:2}.creator-actions #gen_action_msg{grid-column:1/-1;order:3;margin:0!important}
+.studio-options{gap:12px;margin-top:22px;margin-bottom:0}.studio-options label,.job-heading label{font-size:12px!important;color:var(--sub)}.job-heading{gap:12px;padding-bottom:20px;border-bottom:1px solid var(--line);margin-bottom:22px}.job-heading>div:first-child{flex:1}.job-heading select{width:100%}
+.rewrite-panel,.draft-library,.prompt-history{margin:10px 0!important;border-top:1px solid var(--line);padding-top:8px}.rewrite-panel summary,.draft-library summary,.prompt-history summary{font-size:13px;color:#c6cad2;padding:8px 0;cursor:pointer}.rewrite-controls{background:#121417;border:0;padding:16px;margin:10px 0;border-radius:10px}.rewrite-controls textarea{padding:12px}.prompt-history textarea,.prompt-history select{width:100%;padding:12px;margin:10px 0}.draft-library input,.draft-library select{max-width:100%;padding:8px;margin:6px 0}.draft-library label{display:block;color:var(--sub);font-size:12px}
+#studio_queue_card{background:#131518}#studio_queue_card>.tiny{display:none}.studio-health{padding-bottom:18px;margin-bottom:16px;border-bottom:1px solid var(--line);line-height:1.6}#studioRunningJobs{max-height:500px;overflow:auto}#studioRunningJobs:empty{min-height:150px;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;background:#101215;border-radius:12px;margin-bottom:16px}#studioRunningJobs:empty::after{content:'Video của bạn sẽ xuất hiện ở đây.\A Tiến độ được cập nhật trong khi bạn làm việc.';white-space:pre-line;line-height:1.8;color:#9299a5;font-size:13px}#studio_queue_card>button{width:100%;justify-content:center;background:transparent}
+.job-detail{border-top:1px solid var(--line);padding-top:20px;margin-top:20px}.job-progress{background:#111316;border:0;padding:14px;border-radius:10px}.job-steps{gap:5px}.job-steps li{background:#21242a;color:#9299a5}.job-steps .reached{color:var(--accent)}.job-steps .current{border-color:#668144;background:#c4ef8610}.job-progress progress{height:6px;accent-color:var(--accent)}.analysis-issue{border-color:var(--line);background:#17191d}.video-job{background:#17191d;border-color:var(--line);border-radius:12px;padding:18px}.video-job h4{font-size:15px;line-height:1.6;margin:12px 0}.video-job .job-actions{margin-top:14px}.my-video-jobs{grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr));gap:16px}.video-job>.tiny{margin-bottom:16px}.video-job>strong{display:block;margin:10px 0 4px}.video-job>label{display:block}.video-job>label input{margin-right:6px}#studio_queue_card:has(#gen_job_card:not([style*="none"])) #studioRunningJobs:empty{display:none}.video-job>button{width:100%;justify-content:center}
+.library-search{display:grid;grid-template-columns:auto minmax(120px,1fr) auto minmax(120px,240px);gap:12px;align-items:center;margin:20px 0}.library-search input,.library-search select{width:100%;padding:10px}.queue-toolbar{gap:10px}.queue-toolbar input{padding:8px;min-width:0}.queue-toolbar label{font-size:12px;color:var(--sub)}.library-dates{padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}#librarySelectionActions{padding:14px;background:#c4ef8608;border:1px solid #6c814f;border-radius:10px}.queue-table th:last-child,.queue-table td:last-child{background:#17191d}.queue-table th{padding:14px 10px}.queue-table td{padding:16px 10px}
+[hidden]{display:none!important}#libraryDrawer{background:transparent;border:0;padding:0;backdrop-filter:none}#libraryDrawer::backdrop{background:#0009;backdrop-filter:blur(4px)}#libraryDrawer .box{background:#17191d;width:min(820px,94vw);max-height:90vh;border-color:var(--line);border-radius:16px;padding:24px}#libraryDrawer details{padding:8px 0}#libraryVideoTitle{padding:10px}#studioNotice{background:#252b20;max-width:380px;padding:14px;line-height:1.6;border-color:#536243;box-shadow:0 12px 40px #0005}
+.settings-nav{gap:10px;margin-top:18px}.settings-nav .btn{padding:10px 16px}#tab-settings>.card{margin-bottom:24px}.account-advanced{margin-top:18px}#studioAccountCards .video-job h4{font-size:17px}.mask .box{background:#17191d;border-color:var(--line);border-radius:16px}.mask h2{font-size:20px}.b-green{color:#c4ef86;background:#c4ef8610;border-color:#6c814f}
+@media(max-width:1200px){main{padding:30px 24px}#tab-generate{grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr);gap:18px}}
+@media(max-width:1050px){#tab-generate{grid-template-columns:1fr}.studio-results{max-width:100%}.library-search{grid-template-columns:1fr 1fr}.library-search label{grid-column:1/-1}.library-search input,.library-search select{grid-column:1/-1}}
+@media(max-width:920px){.sidebar{position:sticky!important;top:0!important;inset:auto!important;width:100%!important;padding:10px 12px!important;border-radius:0!important;border:0;border-bottom:1px solid var(--line)}.sidebar .side-nav{gap:6px}.sidebar .nav-item{font-size:13px!important;border-radius:8px}.brand,.side-foot{display:none!important}main{margin-left:0!important;padding:24px 16px 40px!important}.page-header{margin-bottom:20px}.page-header h1{font-size:26px}.workspace-label{display:none}.card{padding:20px}.studio-options{grid-template-columns:repeat(3,minmax(0,1fr))}.studio-options select{font-size:12px;padding:10px 5px!important}#gen_prompt{min-height:200px}.creator-references .drop-zone{padding:14px}.queue-toolbar{flex-wrap:wrap}}
+@media(max-width:480px){.card{padding:16px}.studio-options{grid-template-columns:1fr}.studio-options select{font-size:14px;padding:10px 12px!important}.creator-actions{grid-template-columns:1fr!important}.creator-actions #btn_submit_gen{order:0}.creator-actions #btn_preflight{order:1}.page-header h1{font-size:25px}.page-header p{font-size:13px}.library-search{gap:8px}.library-dates{display:grid;grid-template-columns:64px minmax(0,1fr)}.library-dates .btn{grid-column:1/-1;justify-content:center}.job-heading>div:first-child{min-width:0}.job-heading input{max-width:100%}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);max-width:min(480px,92vw);padding:12px 18px;border-radius:10px;background:#2a2d33;border:1px solid var(--stroke-hi,#484d56);color:var(--text,#f1f2f4);font-size:14px;line-height:1.5;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:100}#toast.show{opacity:1;transform:translateX(-50%)}@media(prefers-reduced-motion:reduce){#toast{transition:none}}
+.btn.on{background:#30343b;border-color:var(--accent);color:var(--accent)}.settings-nav .btn.on{background:var(--accent);color:#172311;border-color:var(--accent)}
+.batch-options{margin-top:22px;padding:18px 0 0;border-top:1px solid var(--line);border-bottom:0}.batch-options select,.batch-options input{width:100%}
+.mobile-account{display:none;margin-top:18px;gap:10px;flex-wrap:wrap}@media(max-width:920px){.mobile-account{display:flex}}
+.groupbar .btn,.queue-toolbar .btn{min-height:36px}#btn_ai_gemini,#btn_ai_openai,#btn_ai_none{flex:1 1 auto}#card_gemini_config .btn,#card_openai_config .btn{min-height:36px}.settings-nav,.job-actions{flex-wrap:wrap}div:has(>#btn_ai_gemini){display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.quick-help{margin-top:18px;border-top:1px solid var(--line);padding-top:8px}.quick-help summary{cursor:pointer;padding:8px 0;color:#c6cad2;font-size:13px}.quick-help h4{margin:14px 0 4px;font-size:13px;color:var(--text)}.quick-help p{margin:0;font-size:13px;line-height:1.7;color:var(--sub);max-width:62ch}
+.library-dates-box{margin:8px 0}.library-dates-box summary{cursor:pointer;padding:8px 0;font-size:13px;color:#c6cad2}.library-dates-box .library-dates{border:0;padding:6px 0}
+.image-maker{margin-top:16px;border-top:1px solid var(--line);padding-top:8px}.image-maker summary{cursor:pointer;padding:8px 0;font-size:13px;color:#c6cad2}.image-maker textarea,.image-maker select{width:100%;margin:6px 0 10px;padding:10px}.image-maker .btn{width:100%;justify-content:center;min-height:40px}
 </style>
 </head>
 <body>
 <div id="loginMask" class="mask" style="display:none">
   <div class="box">
-    <h2>Đăng nhập quản trị hệ thống</h2>
-    <input id="loginUser" placeholder="Tên đăng nhập (Username)" autocomplete="username" onkeydown="if(event.key==='Enter')q('#loginPassword').focus()">
-    <input id="loginPassword" type="password" placeholder="Mật khẩu (Password)" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
+    <h2>Đăng nhập Dola Studio</h2>
+    <input id="loginUser" placeholder="Tên đăng nhập" autocomplete="username" onkeydown="if(event.key==='Enter')q('#loginPassword').focus()">
+    <input id="loginPassword" type="password" placeholder="Mật khẩu" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
     <div class="err" id="loginErr">Tên đăng nhập hoặc mật khẩu không chính xác</div>
     <button class="btn btn-p" onclick="submitLogin()">Đăng nhập</button>
   </div>
@@ -274,6 +298,7 @@ body::before,body::after{display:none}body{background:#0d1420}
 </aside>
 
 <main>
+<header class="page-header"><div><h1 id="pageTitle">Tạo video</h1><p id="pageSubtitle">Biến ý tưởng của bạn thành một thước phim.</p></div><span class="workspace-label">Studio cá nhân</span></header>
 
 
 
@@ -290,16 +315,15 @@ body::before,body::after{display:none}body{background:#0d1420}
         <h3 style="margin:0">Video của tôi</h3>
         <div style="display:flex;gap:8px">
 
-          <button class="btn" onclick="loadVideos()">Làm mới</button>
+          <button class="btn" onclick="loadMyVideos()">Làm mới</button>
         </div>
       </div>
-      <div class="library-search"><label for="librarySearch">Tìm video</label><input id="librarySearch" type="search" placeholder="Tìm theo prompt hoặc mã video" oninput="searchLibrary()"><label for="libraryBatch">Mẻ video</label><select id="libraryBatch" onchange="chooseLibraryBatch(this.value)"><option value="">Tất cả mẻ</option></select></div><div id="videoStat" class="tiny" role="status"></div><p id="libraryConnection" role="status"></p><button class="btn" onclick="selectVisibleVideos(true)">Chọn trang này</button>
+      <div class="library-search"><label for="librarySearch">Tìm video</label><input id="librarySearch" type="search" placeholder="Tìm theo tên, prompt hoặc mã video" oninput="searchLibrary()"><label for="libraryBatch">Mẻ video</label><select id="libraryBatch" onchange="chooseLibraryBatch(this.value)"><option value="">Tất cả mẻ</option></select></div><div id="videoStat" class="tiny" role="status"></div><p id="libraryConnection" role="status"></p><button class="btn" onclick="selectVisibleVideos(true)">Chọn trang này</button>
       <div id="librarySelectionActions" class="queue-toolbar" aria-label="Thao tác video đã chọn" hidden><span id="librarySelectionCount"></span><button class="btn btn-danger" id="btnDelVideos" onclick="deleteLibrarySelection()" disabled>Xóa đã chọn</button>
 
-        <button class="btn" onclick="selectVisibleVideos(true)">Chọn tất cả đang hiển thị</button>
         <button class="btn" onclick="selectVisibleVideos(false)">Bỏ chọn</button>
         <button class="btn" onclick="downloadSelectedJobs()">Tải ZIP đã chọn</button>
-        <button class="btn" onclick="cancelSelectedJobs()">Bỏ job chưa gửi</button>
+        <button class="btn" onclick="cancelSelectedJobs()">Hủy video chưa gửi</button>
         <button class="btn btn-p" onclick="openRetrySelection()">Duyệt / tạo lại lỗi đã chọn</button>
       </div>
       <p id="queueActionMessage" role="status" aria-live="polite"></p>
@@ -318,7 +342,7 @@ body::before,body::after{display:none}body{background:#0d1420}
         <p id="retryMessage" role="status" aria-live="polite"></p>
         <div id="retryRows"></div>
       </section>
-      <button id="myBatchPause" class="btn" hidden onclick="toggleBatchPause()">Tạm dừng lượt gửi mới</button><p id="myBatchSummary" role="status"></p><button id="myBatchZip" class="btn" style="display:none" onclick="downloadBatchZip()">Tải ZIP kết quả</button><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';libraryOffset=0;saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div class="queue-toolbar"><button class="btn" onclick="setMyVideoView('grid')">Lưới</button><button class="btn" onclick="setMyVideoView('table')">Bảng</button><label for="myVideoFilter">Trạng thái</label><select id="myVideoFilter" onchange="libraryOffset=0;libraryVersion++;loadMyVideos()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option><option value="cancelled">Đã bỏ trước khi gửi</option></select></div><div class="queue-toolbar"><label for="libraryFrom">Từ ngày</label><input type="date" id="libraryFrom" onchange="searchLibrary()"><label for="libraryTo">Đến ngày</label><input type="date" id="libraryTo" onchange="searchLibrary()"><button class="btn" onclick="q('#libraryFrom').value='';q('#libraryTo').value='';searchLibrary()">Bỏ lọc ngày</button></div><div id="myVideoTable" class="queue-table" style="display:none"></div><div id="myVideoJobs" class="my-video-jobs"></div><div class="queue-toolbar"><button id="libraryPrev" class="btn" onclick="pageLibrary(-1)">Trang trước</button><span id="libraryPage" class="tiny"></span><button id="libraryNext" class="btn" onclick="pageLibrary(1)">Trang sau</button></div><dialog id="libraryDrawer" class="dialog" aria-label="Chi tiết video" hidden><div class="box"><button class="btn" onclick="closeLibraryDetail()">Đóng chi tiết</button><details id="videoNameDetails"><summary>Đặt tên video</summary><label for="libraryVideoTitle">Tên video (tối đa 100 ký tự)</label><input id="libraryVideoTitle" maxlength="100" placeholder="Ví dụ: Mèo giao pizza"><button id="saveVideoNameButton" class="btn" onclick="saveVideoName(mySelectedId)">Lưu tên</button><p id="videoNameMessage" role="status"></p></details><article id="mySelectedPreview" class="video-job" style="display:none"></article></div></dialog>
+      <button id="myBatchPause" class="btn" hidden onclick="toggleBatchPause()">Tạm dừng lượt gửi mới</button><p id="myBatchSummary" role="status"></p><button id="myBatchZip" class="btn" style="display:none" onclick="downloadBatchZip()">Tải ZIP kết quả</button><button id="myBatchClear" class="btn" style="display:none" onclick="currentBatchId='';libraryOffset=0;saveStudioDraft();loadMyVideos()">Xem tất cả video</button><div class="queue-toolbar"><button class="btn on" data-view="grid" onclick="setMyVideoView('grid')">Lưới</button><button class="btn" data-view="table" onclick="setMyVideoView('table')">Bảng</button><label for="myVideoFilter">Trạng thái</label><select id="myVideoFilter" onchange="libraryOffset=0;libraryVersion++;loadMyVideos()"><option value="all">Tất cả</option><option value="running">Đang chờ / tạo</option><option value="unknown">Chưa rõ kết quả</option><option value="completed">Hoàn tất</option><option value="failed">Thất bại</option><option value="cancelled">Đã bỏ trước khi gửi</option></select></div><details class="library-dates-box" open><summary>Lọc theo ngày</summary><div class="queue-toolbar library-dates"><label for="libraryFrom">Từ ngày</label><input type="date" id="libraryFrom" onchange="searchLibrary()"><label for="libraryTo">Đến ngày</label><input type="date" id="libraryTo" onchange="searchLibrary()"><button class="btn" onclick="q('#libraryFrom').value='';q('#libraryTo').value='';searchLibrary()">Bỏ lọc ngày</button></div></details><div id="myVideoTable" class="queue-table" style="display:none"></div><div id="myVideoJobs" class="my-video-jobs"></div><div class="queue-toolbar"><button id="libraryPrev" class="btn" onclick="pageLibrary(-1)">Trang trước</button><span id="libraryPage" class="tiny"></span><button id="libraryNext" class="btn" onclick="pageLibrary(1)">Trang sau</button></div><dialog id="libraryDrawer" class="dialog" aria-label="Chi tiết video" hidden><div class="box"><button class="btn" onclick="closeLibraryDetail()">Đóng chi tiết</button><details id="videoNameDetails"><summary>Đặt tên video</summary><label for="libraryVideoTitle">Tên video (tối đa 100 ký tự)</label><input id="libraryVideoTitle" maxlength="100" placeholder="Ví dụ: Mèo giao pizza"><button id="saveVideoNameButton" class="btn" onclick="saveVideoName(mySelectedId)">Lưu tên</button><p id="videoNameMessage" role="status"></p></details><article id="mySelectedPreview" class="video-job" style="display:none"></article></div></dialog>
     </div>
   </section>
 
@@ -327,8 +351,10 @@ body::before,body::after{display:none}body{background:#0d1420}
 
   <section id="tab-settings" style="display:none">
     <div class="card"><h3>Cài đặt Studio</h3><p class="tiny">Tài khoản tạo video và kết nối hỗ trợ viết prompt.</p><label><input id="noticeSound" type="checkbox" onchange="toggleNoticeSound(this)"> Âm báo khi video có kết quả trong phiên này</label><p class="tiny">Mặc định tắt. Cần giữ trang mở; trình duyệt có thể hạn chế âm thanh khi chạy nền.</p><p id="noticeSoundMessage" role="status"></p>
+    <details><summary>Thư mục xuất video</summary><p class="tiny">Nhập thư mục đã tồn tại trên máy chạy Studio. Video mới hoàn tất được sao chép vào đây; file gốc vẫn được giữ. Truy cập từ xa dùng tải ZIP.</p><label for="exportDirectory">Thư mục xuất</label><input id="exportDirectory" placeholder="/Users/.../Videos"><button class="btn" onclick="saveOutputDirectory()">Lưu</button><button class="btn" onclick="openOutputDirectory()">Mở thư mục</button><p id="exportMessage" role="status"></p></details>
     <details><summary>Thông tin kết nối nâng cao</summary><p id="studioNetworkInfo" class="tiny" style="margin-top:10px"></p></details>
-    <div class="settings-nav"><button class="btn" onclick="switchSettings('accounts')">Tài khoản Dola</button><button class="btn" onclick="switchSettings('ai-settings')">Kết nối AI</button><button class="btn" onclick="switchSettings('proxies')">Nâng cao: proxy</button><button class="btn" onclick="switchSettings('dash')">Chẩn đoán</button></div></div>
+    <div class="mobile-account"><button class="btn" onclick="refresh()">Làm mới</button><button class="btn btn-danger" onclick="logout()">Đăng xuất</button></div>
+    <div class="settings-nav"><button class="btn" data-s="accounts" onclick="switchSettings('accounts')">Tài khoản Dola</button><button class="btn" data-s="ai-settings" onclick="switchSettings('ai-settings')">Kết nối AI</button><button class="btn" data-s="proxies" onclick="switchSettings('proxies')">Nâng cao: proxy</button><button class="btn" data-s="dash" onclick="switchSettings('dash')">Chẩn đoán</button></div></div>
   <section id="tab-accounts" style="display:none">
     <div class="card">
       <div class="toolbar">
@@ -344,8 +370,8 @@ body::before,body::after{display:none}body{background:#0d1420}
           <details class="account-advanced"><summary>Thao tác nâng cao</summary><div class="settings-nav">
           <button class="btn btn-danger" id="btnDelSel" onclick="delSelected()" disabled>Xóa đã chọn</button>
           <button class="btn" id="btnVerifySel" onclick="batchVerifySelected()" disabled>Kiểm tra đăng nhập</button>
-          <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="Gửi tin nhắn Hello kiểm tra tài khoản: Nếu bị đăng xuất hoặc không phản hồi -> Chuyển vào nhóm Bị kiểm soát (Risk Flagged). Áp dụng cho các tài khoản đang chọn hoặc toàn bộ bộ lọc hiện tại.">Kiểm tra phản hồi Dola</button>
-          <button class="btn" id="btnBatchRecover" onclick="batchRecover()" title="Khôi phục các tài khoản đã chọn từ nhóm Bị kiểm soát / Bất thường về trạng thái Chờ kích hoạt (Pending). Nên chạy Kiểm tra phản hồi Dola ngay sau đó.">Khôi phục tài khoản</button>
+          <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="Gửi tin nhắn Hello kiểm tra tài khoản: Nếu bị đăng xuất hoặc không phản hồi -> Chuyển vào nhóm Bị kiểm soát. Áp dụng cho các tài khoản đang chọn hoặc toàn bộ bộ lọc hiện tại.">Kiểm tra phản hồi Dola</button>
+          <button class="btn" id="btnBatchRecover" onclick="batchRecover()" title="Khôi phục các tài khoản đã chọn từ nhóm Bị kiểm soát / Bất thường về trạng thái Chờ kích hoạt. Nên chạy Kiểm tra phản hồi Dola ngay sau đó.">Khôi phục tài khoản</button>
           <button class="btn" id="btnProxySel" onclick="openBatchProxy()" disabled>Đổi Proxy hàng loạt</button>
           <button class="btn" onclick="resetAllQuotas()" title="Chỉ đặt lại bộ đếm trên tool; không cấp thêm điểm Dola.">Đặt lại bộ đếm cục bộ</button>
           <button class="btn" onclick="openBatchAdd()">+ Nạp hàng loạt</button>
@@ -368,7 +394,7 @@ body::before,body::after{display:none}body{background:#0d1420}
       </div>
 
       <div style="margin-bottom:16px">
-        <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:8px">Lựa chọn Provider đang hoạt động</label>
+        <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:8px">Nhà cung cấp AI đang dùng</label>
         <div style="display:flex;gap:10px">
           <button class="btn" id="btn_ai_gemini" onclick="selectAiProvider('gemini')">Google Gemini API</button>
           <button class="btn" id="btn_ai_openai" onclick="selectAiProvider('openai')">OpenAI-compatible</button>
@@ -406,6 +432,11 @@ body::before,body::after{display:none}body{background:#0d1420}
             <input id="ai_openai_model" style="width:100%;padding:8px 12px" value="gpt-4o-mini" placeholder="gpt-4o-mini">
           </div>
           <div style="margin-bottom:10px">
+            <label style="display:block;font-size:12px;color:var(--sub);margin-bottom:4px">Model tạo ảnh (9router)</label>
+            <input id="ai_openai_image_model" style="width:100%;padding:8px 12px" value="antigravity/gemini-3.1-flash-image" placeholder="antigravity/gemini-3.1-flash-image">
+            <div class="tiny">Dùng chung Base URL và API Key ở đây (ví dụ http://127.0.0.1:20128/v1). Chỉ cần lưu key; không bắt buộc bật làm nhà cung cấp chính.</div>
+          </div>
+          <div style="margin-bottom:10px">
             <label style="display:block;font-size:12px;color:var(--sub);margin-bottom:4px">API Key</label>
             <input id="ai_openai_key" type="password" style="width:100%;padding:8px 12px" placeholder="Nhập OpenAI API Key">
             <div id="ai_openai_key_status" class="tiny" style="margin-top:4px;color:var(--sub)"></div>
@@ -426,10 +457,9 @@ body::before,body::after{display:none}body{background:#0d1420}
         <button class="btn btn-p" onclick="openAddProxy()">+ Thêm Proxy</button>
       </div>
       <div class="hint" style="margin-bottom:12px">
-        Hỗ trợ thiết lập Proxy HTTP / SOCKS5: <b>IP Tĩnh (Static IP)</b> dùng một địa chỉ cố định; <b>IP Động xoay (Dynamic Pool)</b> không cần điền IP/Port cố định,<br>        hệ thống nạp danh sách Node từ API hoặc dán danh sách <code>host:port:user:pass</code>. Mỗi Node cấp phát riêng cho từng tài khoản.<br>        Gán Proxy trực tiếp trong bảng tài khoản hoặc chọn nhiều tài khoản rồi bấm "Đổi Proxy hàng loạt".<br>        Tài khoản không chỉ định Proxy sẽ sử dụng Proxy mặc định từ biến môi trường
-        <span id="defaultProxyShow" style="font-family:monospace"></span>。
+        Hỗ trợ thiết lập Proxy HTTP / SOCKS5: <b>IP Tĩnh</b> dùng một địa chỉ cố định; <b>IP Động xoay (Dynamic Pool)</b> không cần điền IP/Port cố định,<br>        hệ thống nạp danh sách Node từ API hoặc dán danh sách <code>host:port:user:pass</code>. Mỗi Node cấp phát riêng cho từng tài khoản.<br>        Gán Proxy trực tiếp trong bảng tài khoản hoặc chọn nhiều tài khoản rồi bấm "Đổi Proxy hàng loạt".<br>        Tài khoản không chỉ định Proxy sẽ sử dụng Proxy mặc định từ biến môi trường
+        <span id="defaultProxyShow" style="font-family:monospace"></span>.
       </div>
-      <details><summary>Thư mục xuất video</summary><p class="tiny">Nhập thư mục đã tồn tại trên máy chạy Studio. Video mới hoàn tất được sao chép vào đây; file gốc vẫn được giữ. Truy cập từ xa dùng tải ZIP.</p><label for="exportDirectory">Thư mục xuất</label><input id="exportDirectory" placeholder="/Users/.../Videos"><button class="btn" onclick="saveOutputDirectory()">Lưu</button><button class="btn" onclick="openOutputDirectory()">Mở thư mục</button><p id="exportMessage" role="status"></p></details>
       <div id="proxiesTable"></div>
       <details><summary>Nhật ký và chẩn đoán kết nối</summary>
         <div class="queue-toolbar"><label>Mã tác vụ <input id="diagTask"></label><label>Tài khoản <input id="diagAccount"></label>
@@ -449,11 +479,7 @@ body::before,body::after{display:none}body{background:#0d1420}
   </section>
   <section id="tab-generate" style="display:none">
     <div class="card">
-      <h3>Tạo video từ ý tưởng của bạn</h3><p class="studio-intro">Mô tả cảnh, thêm ảnh nếu cần, rồi tạo video. Bạn có thể nhờ AI chỉnh prompt trước khi gửi.</p>
-      <div class="job-heading">
-        <div><label for="gen_mode">Cách tạo</label><select id="gen_mode" onchange="batchInputsChanged()"><option value="single">Một prompt</option><option value="folder">Thư mục TXT + ảnh</option><option value="list">Danh sách prompt / TXT</option></select></div>
-        <div><label for="gen_copies">Số video mỗi prompt</label><input id="gen_copies" type="number" min="1" max="10" value="1" oninput="batchInputsChanged()" style="width:85px"></div>
-      </div>
+      <h3>Ý tưởng của bạn</h3><p class="studio-intro">Nhập prompt, chọn ảnh tham chiếu nếu cần, rồi bấm Tạo video.</p>
       <div class="creator-body"><div class="creator-prompt">
       <div id="gen_folder_editor" style="display:none;margin-bottom:14px">
         <label for="gen_folder_picker">Chọn thư mục chứa TXT và ảnh</label><input id="gen_folder_picker" type="file" webkitdirectory multiple onchange="importPromptFolder(this)">
@@ -476,7 +502,7 @@ body::before,body::after{display:none}body{background:#0d1420}
           <label for="gen_prompt" style="font-size:13px;color:var(--sub)">Ý tưởng và mô tả cảnh</label>
           <span style="font-size:12px;color:var(--sub)">Ký tự: <b id="prompt_char_count">0</b></span>
         </div>
-        <textarea id="gen_prompt" rows="5" style="width:100%;padding:10px 14px;font-size:14px;line-height:1.6" placeholder="Nhập mô tả video bạn muốn tạo (ví dụ: Cảnh tiên nhân áo trắng đứng trên vách đá ngắm hoàng hôn, góc quay tracking cinematic, ánh sáng vàng cam...)" oninput="onPromptInput()"></textarea>
+        <textarea id="gen_prompt" rows="5" style="width:100%;padding:10px 14px;font-size:14px;line-height:1.6" placeholder="Ví dụ: Một chú mèo đen nhìn ra cửa sổ lúc bình minh. Máy quay tiến chậm, ánh sáng tự nhiên, không khí yên tĩnh." oninput="onPromptInput()"></textarea>
       </div>
 
       <details class="rewrite-panel"><summary>Chỉnh prompt với AI</summary><div class="rewrite-controls">
@@ -495,7 +521,7 @@ body::before,body::after{display:none}body{background:#0d1420}
         </div>
       </div>
 
-      </details><details class="prompt-history" style="margin-bottom:18px"><summary>Bản gốc và lịch sử chỉnh sửa</summary>
+      </details><details class="prompt-history" style="margin-bottom:18px"><summary>Lịch sử chỉnh prompt</summary>
         <label for="gen_original">Ý tưởng ban đầu</label><textarea id="gen_original" rows="3" readonly></textarea>
         <button class="btn" onclick="restoreOriginalPrompt()">Dùng lại bản gốc</button>
         <label for="gen_history">Các lần AI chỉnh prompt</label><select id="gen_history" onchange="chooseRewriteHistory(this.value)"><option value="">Chọn bản đề xuất trước</option></select>
@@ -504,7 +530,7 @@ body::before,body::after{display:none}body{background:#0d1420}
       <div id="gen_preflight_alert" style="display:none"></div>
       <div id="gen_analysis" style="display:none" aria-live="polite"></div>
       </div><aside class="creator-references" aria-label="Ảnh tham chiếu">
-      <!-- Khung ảnh tham chiếu (Reference Images) -->
+      <!-- Khung ảnh tham chiếu -->
       <div style="margin-bottom:14px">
         <label style="display:block;font-size:13px;color:var(--sub);margin-bottom:6px">Ảnh tham chiếu (Tùy chọn, tối đa 15MB/ảnh - JPG, PNG, WEBP)</label>
         <input type="file" id="gen_file_input" accept="image/jpeg,image/png,image/webp" multiple style="display:none" onchange="handleImageSelection(this.files)">
@@ -514,6 +540,15 @@ body::before,body::after{display:none}body{background:#0d1420}
           <div class="tiny" style="color:var(--sub);margin-top:2px">Hỗ trợ tải lên nhiều ảnh tham chiếu cùng lúc</div>
         </div>
         <div id="gen_image_previews" class="image-previews"></div>
+        <details class="image-maker"><summary>Tạo ảnh tham chiếu bằng AI</summary>
+          <p class="tiny">Mỗi dòng là một ảnh. Tạo song song tối đa 4 ảnh một lúc; ảnh xong được thêm thẳng vào danh sách ảnh tham chiếu theo thứ tự dòng. Cần nhập API Key 9router ở Cài đặt → Kết nối AI.</p>
+          <label for="img_prompts">Prompt ảnh (mỗi dòng một ảnh, tối đa 8)</label>
+          <textarea id="img_prompts" rows="5" placeholder="Một nhân vật tiên hiệp áo trắng, nền xám trơn&#10;Một đấu trường đá trên đỉnh núi trôi lúc hoàng hôn"></textarea>
+          <label for="img_size">Khung ảnh</label>
+          <select id="img_size"><option value="1024x1024">Vuông 1:1 (nhân vật)</option><option value="1792x1024">Ngang 16:9 (bối cảnh)</option><option value="1024x1792">Dọc 9:16</option></select>
+          <button class="btn btn-p" id="btn_img_gen" onclick="generateReferenceImages()">Tạo ảnh</button>
+          <p id="img_msg" class="tiny" role="status" aria-live="polite"></p>
+        </details>
       </div>
 
       </aside></div>
@@ -548,20 +583,38 @@ body::before,body::after{display:none}body{background:#0d1420}
         </div>
       </div>
 
+      <div class="job-heading batch-options">
+        <div><label for="gen_mode">Cách tạo</label><select id="gen_mode" onchange="batchInputsChanged()"><option value="single">Một prompt</option><option value="folder">Thư mục TXT + ảnh</option><option value="list">Danh sách prompt / TXT</option></select></div>
+        <div><label for="gen_copies">Số video mỗi prompt</label><input id="gen_copies" type="number" min="1" max="10" value="1" oninput="batchInputsChanged()" style="width:85px"></div>
+      </div>
       <!-- Nút thao tác -->
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px">
-        <button class="btn" id="btn_preflight" onclick="doPreflightCheck()">Kiểm tra nội dung</button>
+      <div class="creator-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px">
+        <button class="btn" id="btn_preflight" onclick="doPreflightCheck()" title="Kiểm tra prompt trước khi tạo. Dùng AI nếu đã bật ở Cài đặt → Kết nối AI.">Kiểm tra nội dung</button>
         <button class="btn btn-p" id="btn_submit_gen" onclick="doSubmitGenerate()">Tạo video</button>
         <span id="gen_action_msg" role="status" aria-live="polite" class="tiny" style="color:var(--sub);margin-left:6px"></span>
       </div>
     </div>
 
     <div class="studio-results">
-    <div class="card" id="studio_queue_card"><h3>Công việc đang chạy</h3>
+    <div class="card" id="studio_queue_card"><h3>Tiến độ tạo video</h3>
       <p id="studioHealth" class="studio-health" role="status">Đang lấy trạng thái backend…</p>
       <p class="tiny">Đổi prompt, model, thời lượng hoặc tỉ lệ chỉ áp dụng cho video tạo tiếp theo. Các video đã gửi tiếp tục chạy với cấu hình riêng.</p>
       <div id="studioRunningJobs" aria-label="Tất cả video đang chạy"></div>
       <button class="btn" onclick="switchTab('videos')">Xem tất cả video</button>
+      <details class="quick-help"><summary>Hướng dẫn nhanh</summary>
+        <h4>Tạo một video</h4>
+        <p>Viết cảnh, hành động và góc máy trong một đoạn. Thêm ảnh nhân vật hoặc bối cảnh nếu cần giữ đúng ngoại hình. Bấm <b>Tạo video</b>; nút này gửi ngay, không qua AI.</p>
+        <h4>Tạo nhiều video</h4>
+        <p>Ở ô <b>Cách tạo</b> (phía trên nút tạo) chọn danh sách prompt hoặc thư mục TXT + ảnh; đặt <b>Số video mỗi prompt</b> để ra nhiều bản. Tối đa 50 video mỗi mẻ. Đóng trang không làm mất mẻ.</p>
+        <h4>Điểm và thời lượng</h4>
+        <p>Mỗi tài khoản có 4 điểm mỗi ngày. Seedance 2.5 tốn 2 điểm mỗi video, Seedance 2.0 tốn 3 điểm. Điểm tính theo model, không theo thời lượng. 30 giây chỉ có ở 2.5; 2.0 tối đa 15 giây.</p>
+        <h4>Ảnh tham chiếu</h4>
+        <p>JPG, PNG, WEBP; tối đa 15 MB mỗi ảnh, 30 ảnh, 60 MB tổng. Prompt tối đa 20.000 ký tự.</p>
+        <h4>Khi video chậm hoặc lỗi</h4>
+        <p>Video không có thanh phần trăm vì Dola không báo phần trăm; bạn sẽ thấy bước đang chạy và thông báo của Dola. Trạng thái <b>Chưa rõ kết quả</b> không phải thất bại: vào Video của tôi và bấm Kiểm tra lại kết quả, đừng tạo lại ngay. Video lỗi thường không bị trừ điểm.</p>
+        <h4>Mẹo</h4>
+        <p>Mỗi video nên có một cảnh và một chuyển động chính. Yêu cầu cắt cảnh đúng giây thứ 15 thường không được; hãy tạo hai video 15 giây rồi ghép. Dùng <b>Kiểm tra nội dung</b> để biết prompt có dễ bị từ chối không; AI chỉ gợi ý, Dola vẫn có thể từ chối.</p>
+      </details>
     <!-- Khung theo dõi tiến độ Job đang chạy -->
     <div id="gen_job_card" class="job-detail" style="display:none">
       <h3>Video đang xem</h3><button class="btn" onclick="hide('gen_job_card')">Thu gọn chi tiết</button>
@@ -588,7 +641,7 @@ body::before,body::after{display:none}body{background:#0d1420}
 </div>
 <div id="thumbModal" class="dialog" style="display:none">
   <div class="box" style="width:520px">
-    <h2>Ảnh tham chiếu (Reference Image)</h2>
+    <h2>Ảnh tham chiếu</h2>
     <img id="thumbImg" alt="Ảnh tham chiếu">
     <div class="row"><button class="btn" onclick="hide('thumbModal')">Đóng</button></div>
   </div>
@@ -602,6 +655,8 @@ body::before,body::after{display:none}body{background:#0d1420}
 </div>
 
 <script>
+function toast(m){let t=document.getElementById('toast');if(!t){t=document.createElement('div');t.id='toast';t.setAttribute('role','status');t.setAttribute('aria-live','polite');document.body.appendChild(t);}t.textContent=String(m);t.className='show';clearTimeout(t._h);t._h=setTimeout(()=>t.className='',5000);}
+window.alert=toast;
 const LS_KEY='dola_admin_key';
 let adminKey=localStorage.getItem(LS_KEY)||'';
 let autoRefresh=true, curTab='generate', timer=null;
@@ -637,9 +692,9 @@ function logout(){adminKey='';localStorage.removeItem(LS_KEY);showLogin();}
 
 let settingsTab='accounts';
 function switchSettings(t){
-  settingsTab=t;
+  settingsTab=t;document.querySelectorAll('.settings-nav [data-s]').forEach(b=>b.classList.toggle('on',b.dataset.s===t));
   ['accounts','ai-settings','proxies','dash'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
-  if(t==='accounts')loadAccounts();else if(t==='ai-settings')loadAiSettings();else if(t==='proxies'){loadProxies();loadOutputDirectory();}else loadDash();
+  if(t==='accounts')loadAccounts();else if(t==='ai-settings')loadAiSettings();else if(t==='proxies'){loadProxies();}else loadDash();
 }
 function switchTab(t){
   if(q('#libraryDrawer')?.open)closeLibraryDetail();
@@ -647,9 +702,11 @@ function switchTab(t){
   if(t==='tasks')t='videos';
   if(!['generate','videos','settings'].includes(t))t='generate';
   curTab=t;
+  if(q('#pageTitle'))q('#pageTitle').textContent={generate:'Tạo video',videos:'Video của tôi',settings:'Cài đặt'}[t];
+  if(q('#pageSubtitle'))q('#pageSubtitle').textContent={generate:'Biến ý tưởng của bạn thành một thước phim.',videos:'Tất cả kết quả và tác vụ, trong một nơi.',settings:'Tài khoản Dola và kết nối hỗ trợ sáng tạo.'}[t];
   document.querySelectorAll('.side-nav .nav-item').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
   ['generate','settings','tasks','videos'].forEach(x=>{const el=q('#tab-'+x);if(el)el.style.display=x===t?(x==='generate'?'grid':'block'):'none';});
-  if(t==='settings'){switchSettings(settingsTab);api('/api/admin/studio-info').then(info=>q('#studioNetworkInfo').textContent=info.transport_mode==='relay'?'Pure API dùng relay hiện có; proxy tài khoản chỉ áp dụng cho trình duyệt. Theo dõi tự động tối đa '+Math.round(info.observation_seconds/60)+' phút.':'Pure API và trình duyệt dùng tuyến proxy đã chọn. Proxy hỏng sẽ báo lỗi, không tự chuyển sang direct.').catch(()=>{});}
+  if(t==='settings'){switchSettings(settingsTab);loadOutputDirectory();api('/api/admin/studio-info').then(info=>q('#studioNetworkInfo').textContent=info.transport_mode==='relay'?'Pure API dùng relay hiện có; proxy tài khoản chỉ áp dụng cho trình duyệt. Theo dõi tự động tối đa '+Math.round(info.observation_seconds/60)+' phút.':'Pure API và trình duyệt dùng tuyến proxy đã chọn. Proxy hỏng sẽ báo lỗi, không tự chuyển sang direct.').catch(()=>{});}
   refresh();
 }
 
@@ -659,11 +716,7 @@ async function refresh(){
   try{
     if(curTab==='settings'){if(settingsTab==='accounts')await loadAccounts();}
     else if(curTab==='generate'){await initGenerateTab();await loadStudioQueue();}
-    else if(curTab==='accounts')await loadAccounts();
-    else if(curTab==='proxies')await loadProxies();
-    else if(curTab==='tasks')await loadTasks();
     else if(curTab==='videos'){await loadMyVideos();}
-    else if(curTab==='ai-settings')await loadAiSettings();
   }catch(e){if(e.message!=='unauthorized'){/* 静默 */}}
 }
 
@@ -740,9 +793,9 @@ const GROUP_NAMES={
   '半额':'Còn hạn mức',
   '冷却':'Tạm nghỉ (Cooldown)',
   '生成中':'Đang render (Busy)',
-  '风控':'Bị kiểm soát (Risk Flagged)',
-  '待激活':'Chờ kích hoạt (Pending)',
-  '异常':'Bất thường (Abnormal)'
+  '风控':'Bị kiểm soát',
+  '待激活':'Chờ kích hoạt',
+  '异常':'Bất thường'
 };
 const GROUP_ACTIVE=['满额','半额','冷却','生成中'];
 function groupBadge(a){
@@ -763,12 +816,12 @@ function renderGroupBar(d,container,jump){
   const sep='<span class="sep"></span>';
   q(container||'#groupBar').innerHTML=
     btn('all','Tất cả',d.all_count||0,'Hiển thị toàn bộ tài khoản (kể cả Risk Flagged / Pending)')+
-    btn('valid','Hoạt động (Active)',d.valid_count||0,'Nhóm được theo dõi theo bộ đếm và trạng thái hiện có')+sep+
+    btn('valid','Hoạt động',d.valid_count||0,'Nhóm được theo dõi theo bộ đếm và trạng thái hiện có')+sep+
     btn('满额','Hạn mức đầy',n('满额'),'Theo bộ đếm của Studio; số dư Dola có thể khác')+
     btn('半额','Còn hạn mức',n('半额'),'Theo bộ đếm của Studio, chưa bảo đảm đủ điểm cho mọi video')+
     btn('冷却','Tạm nghỉ',n('冷却'),'Chờ bộ đếm hoặc thời gian nghỉ; làm mới trạng thái để kiểm tra')+
     btn('生成中','Đang render',n('生成中'),'Tài khoản đang trong tiến trình sinh video')+sep+
-    btn('风控','Kiểm soát (Risk)',n('风控'),'Bị đăng xuất hoặc nghi ngờ checkpoint: Cần khôi phục thủ công')+
+    btn('风控','Bị kiểm soát',n('风控'),'Bị đăng xuất hoặc nghi ngờ checkpoint: Cần khôi phục thủ công')+
     btn('待激活','Chờ kích hoạt',n('待激活'),'Tài khoản mới nạp, chưa chạy kiểm tra kích hoạt ban đầu')+
     btn('异常','Bất thường',n('异常'),'Quá thời gian phản hồi (timeout > 5 phút), tự động giải phóng khi hết cooldown')+sep+
     '<span class="gbtn points" title="Bộ đếm cục bộ của Studio; chưa bảo đảm số dư hoặc chi phí Dola">Hạn mức ghi nhận <b>'+pts+'</b></span>';
@@ -783,8 +836,8 @@ function matchGroup(x){
 
 function srcBadge(x){
   if(x.source==='facebook')return '<span class="badge b-blue">Facebook</span>';
-  if(x.source==='login')return '<span class="badge b-green" title="Đăng nhập tài khoản Google">Google Login</span>';
-  if(x.source==='cookie')return '<span class="badge b-orange" title="Nạp bằng Cookie">Cookie Import</span>';
+  if(x.source==='login')return '<span class="badge b-green" title="Đăng nhập tài khoản Google">Google</span>';
+  if(x.source==='cookie')return '<span class="badge b-orange" title="Nạp bằng Cookie">Cookie</span>';
   return '<span class="tiny">—</span>';
 }
 let inventoryPools=[];
@@ -920,7 +973,7 @@ async function probeHello(name){
   refresh();
 }
 async function recoverAccount(name,kind){
-  if(!confirm(`Bạn có chắc chắn muốn khôi phục ${name} từ nhóm 【${kind==='abnormal'?'Bất thường (Abnormal)':'Bị kiểm soát (Risk Flagged)'}】?\n`
+  if(!confirm(`Bạn có chắc chắn muốn khôi phục ${name} từ nhóm 【${kind==='abnormal'?'Bất thường':'Bị kiểm soát'}】?\n`
     +(kind==='risk'?'(Tài khoản sau khi khôi phục sẽ trở về trạng thái Chờ kích hoạt, cần chạy lại Hello Probe để xác nhận)': '')))return;
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/recover',
@@ -1106,7 +1159,7 @@ async function batchProbeHello(){
   const list=sel.length?sel:allAccounts.filter(x=>matchGroup(x)&&(srcFilterVal==='all'||x.source===srcFilterVal)).map(x=>x.name);
   if(!list.length)return alert('Không có tài khoản nào để kiểm tra: Vui lòng chọn tài khoản hoặc dùng bộ lọc nhóm.');
   if(!confirm(`Gửi lệnh thăm dò Hello Probe tới ${list.length} tài khoản để kiểm tra trạng thái hoạt động?\n`
-    +`· Bị đăng xuất -> Đưa ngay vào nhóm Bị kiểm soát (Risk Flagged); Không phản hồi -> Thử lại 1 lần trước khi chuyển nhóm\n`
+    +`· Bị đăng xuất -> Đưa ngay vào nhóm Bị kiểm soát; Không phản hồi -> Thử lại 1 lần trước khi chuyển nhóm\n`
     +`· Lỗi mạng hoặc bị ByteDance bóp băng thông (710022002) -> Chỉ ghi nhận Chưa hoàn thành, không khóa nick\n`
     +`· Chạy song song không giới hạn, hoàn tất trong vài giây; các nick bị rate-limit sẽ hiện trạng thái Chưa hoàn thành.`))return;
   let r;
@@ -1130,7 +1183,7 @@ async function pollProbeBatch(jobId){
   const prog=q('#probeProg'),out=q('#probeOut');
   if(!prog||!out)return;
   const pct=j.total?Math.round((j.done/j.total)*100):0;
-  prog.textContent=`Tiến độ: ${j.done}/${j.total} (${pct}%)  Thành công: ${j.ok_count||0}  Thất bại (Risk): ${j.failed_count||0}  Chưa xong: ${j.skipped_count||0}`
+  prog.textContent=`Tiến độ: ${j.done}/${j.total} (${pct}%)  Thành công: ${j.ok_count||0}  Thất bại: ${j.failed_count||0}  Chưa xong: ${j.skipped_count||0}`
     +(j.current?`\nĐang xử lý: ${j.current}`:'')+(j.status==='completed'?'\nHoàn tất ✓':'');
   out.textContent=(j.results||[]).slice().reverse()
     .map(x=>`${x.ok===true?'✓':(x.ok===false?'✗':'–')} ${x.name}  [${x.group||'-'}]  ${x.message||''}`
@@ -1146,7 +1199,7 @@ async function batchRecover(){
       &&(x.group==='风控'||x.group==='异常')).map(x=>x.name);
   if(!list.length)return alert('Không có tài khoản cần khôi phục: Vui lòng chọn tài khoản hoặc lọc nhóm Bị kiểm soát / Bất thường trước.');
   if(!confirm(`Khôi phục ${list.length} tài khoản từ nhóm Bị kiểm soát / Bất thường?\n`
-    +`· Tài khoản bị kiểm soát sau khi khôi phục sẽ trở về trạng thái Chờ kích hoạt (Pending)\n`
+    +`· Tài khoản bị kiểm soát sau khi khôi phục sẽ trở về trạng thái Chờ kích hoạt\n`
     +`· Khuyên dùng: Chạy Kiểm tra phản hồi Dola sau khi khôi phục để xác nhận lại phiên đăng nhập.`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-recover',{method:'POST',body:{kind:'risk',names:list}});}
@@ -1556,9 +1609,9 @@ async function loadProxies(){
     ['Tên Proxy','Loại Proxy','Giao thức','Host / IP','Cổng (Port)','Username','Tài khoản đã gán','IP Thoát hiện tại','Ghi chú','Thao tác'],
     proxyCache.map(p=>[
       esc(p.name),
-      p.mode==='extract'?(p.extract_url?'<span class="badge b-blue">API Pool</span>'
-                                        :'<span class="badge b-blue">Node List</span>')
-        :p.is_dynamic?'<span class="badge b-blue">Gateway Xoay</span>':'<span class="tiny">IP Tĩnh</span>',
+      p.mode==='extract'?(p.extract_url?'<span class="badge b-blue">Danh sách qua API</span>'
+                                        :'<span class="badge b-blue">Danh sách node</span>')
+        :p.is_dynamic?'<span class="badge b-blue">Cổng xoay</span>':'<span class="tiny">IP Tĩnh</span>',
       esc(p.protocol),
       p.host?esc(p.host):'<span class="tiny">(Node Pool)</span>',
       p.port?p.port:'<span class="tiny">—</span>',
@@ -1796,7 +1849,7 @@ async function loadTasks(){
   const r=await api('/api/admin/tasks?limit=50');
   TASK_MAP={};
   r.tasks.forEach(t=>{TASK_MAP[t.id]=t;});
-  const sb={'queued':'<span class="badge b-gray">Đang chờ (Queued)</span>','processing':'<span class="badge b-blue">Đang sinh video (Generating)</span>','completed':'<span class="badge b-green">Hoàn thành (Done)</span>','failed':'<span class="badge b-red">Thất bại (Failed)</span>','风控':'<span class="badge b-orange">Kiểm soát (Risk)</span>'};
+  const sb={'queued':'<span class="badge b-gray">Đang chờ</span>','processing':'<span class="badge b-blue">Đang sinh video</span>','completed':'<span class="badge b-green">Hoàn thành</span>','failed':'<span class="badge b-red">Thất bại (Failed)</span>','风控':'<span class="badge b-orange">Bị kiểm soát</span>'};
   const rows=r.tasks.map(t=>[
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
     '<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>'
@@ -1943,6 +1996,7 @@ function onModelChange(){
   if(m === 'seedance-2.0'){
     durSel.innerHTML = '<option value="15">15 giây</option><option value="10">10 giây</option><option value="5">5 giây</option>';
     durSel.value = (prevVal === '10' || prevVal === '5' || prevVal === '15') ? prevVal : '15';
+    if(prevVal==='30'&&typeof studioMessage==='function')studioMessage('Seedance 2.0 tối đa 15 giây; đã chuyển về 15 giây.');
   } else {
     durSel.innerHTML = '<option value="30">30 giây</option><option value="15">15 giây</option><option value="10">10 giây</option><option value="5">5 giây</option>';
     durSel.value = (prevVal === '5' || prevVal === '10' || prevVal === '15' || prevVal === '30') ? prevVal : '30';
@@ -2099,6 +2153,28 @@ function renderImagePreviews(){
     role.innerHTML='<option value="other">Ảnh tham chiếu</option><option value="character">Nhân vật</option><option value="scene">Bối cảnh</option><option value="style">Phong cách</option>';role.value=referenceRoles[idx]||'other';role.onchange=()=>changeReferenceRole(idx,role.value);item.appendChild(role);
     box.appendChild(item);
   });
+}
+
+async function generateReferenceImages(){
+  if(q('#gen_mode').value==='folder'){studioMessage('Chế độ thư mục dùng ảnh trong thư mục; đổi sang Một prompt hoặc Danh sách prompt để thêm ảnh tạo bằng AI.');return;}
+  const prompts=q('#img_prompts').value.split('\n').map(x=>x.trim()).filter(Boolean),msg=q('#img_msg'),btn=q('#btn_img_gen');
+  if(!prompts.length){msg.textContent='Nhập ít nhất một prompt ảnh.';return;}
+  if(prompts.length>8){msg.textContent='Tối đa 8 ảnh mỗi lần.';return;}
+  btn.disabled=true;msg.textContent='Đang tạo '+prompts.length+' ảnh… có thể mất vài chục giây.';
+  try{
+    const res=await api('/api/admin/images/generate',{method:'POST',body:{prompts,size:q('#img_size').value}});
+    let ok=0,fail=[];
+    res.images.forEach((im,i)=>{
+      if(!im.b64){fail.push('Dòng '+(i+1)+': '+im.error);return;}
+      const bin=atob(im.b64),u=new Uint8Array(bin.length);for(let k=0;k<bin.length;k++)u[k]=bin.charCodeAt(k);
+      const type=u[0]===0xff?'image/jpeg':(u[0]===0x52?'image/webp':'image/png'),ext={'image/jpeg':'jpg','image/webp':'webp','image/png':'png'}[type];
+      selectedImages.push(new File([u],'ai-'+Date.now()+'-'+(i+1)+'.'+ext,{type}));referenceRoles.push('other');ok++;
+    });
+    if(ok){renderImagePreviews();refreshReferenceHashes();document.body.dataset.imagesSaved='pending';
+      imageDraftStore(selectedImages).then(()=>document.body.dataset.imagesSaved='saved').catch(()=>{document.body.dataset.imagesSaved='failed';});}
+    msg.textContent='Đã thêm '+ok+'/'+prompts.length+' ảnh vào danh sách tham chiếu.'+(fail.length?' Lỗi: '+fail.join(' | '):'');
+  }catch(e){msg.textContent='Không tạo được ảnh: '+e.message;}
+  finally{btn.disabled=false;}
 }
 
 async function doRewritePrompt(){
@@ -2380,7 +2456,7 @@ function toggleVideoSelection(id,value){if(value&&selectedVideoIds.size>=50&&!se
 function selectVisibleVideos(value){if(value){selectedVideoIds.clear();for(const t of myVisibleTasks.slice(0,50))selectedVideoIds.add(t.id);}else selectedVideoIds.clear();toggleVideoSelection('',false);if(value&&myVisibleTasks.length>50)q('#queueActionMessage').textContent='Đã chọn 50 video đầu tiên; mỗi lượt xử lý tối đa 50 video.';}
 async function viewVideoBatch(id){libraryOffset=0;currentBatchId=id;selectedVideoIds.clear();saveStudioDraft();switchTab('videos');await loadMyVideos();}
 async function toggleBatchPause(){if(!currentBatchId)return;const id=currentBatchId,btn=q('#myBatchPause');btn.disabled=true;try{await api('/api/admin/videos/batches/'+encodeURIComponent(id)+'/control',{method:'POST',body:{paused:!currentBatchPaused}});await loadMyVideos();}catch(e){q('#queueActionMessage').textContent=e.message;}finally{btn.disabled=false;}}
-async function cancelSelectedJobs(){const ids=[...selectedVideoIds];if(!ids.length)return q('#queueActionMessage').textContent='Chọn video trước khi bỏ job.';if(!confirm('Bỏ các job đã chọn còn chưa gửi? Video đã gửi Dola vẫn được theo dõi.'))return;try{const r=await api('/api/admin/tasks/cancel-unsent',{method:'POST',body:{ids}});q('#queueActionMessage').textContent='Đã bỏ '+r.cancelled.length+' job chưa gửi; giữ '+r.skipped.length+' job đã gửi hoặc đã kết thúc.';await loadMyVideos();}catch(e){q('#queueActionMessage').textContent=e.message;}}
+async function cancelSelectedJobs(){const ids=[...selectedVideoIds];if(!ids.length)return q('#queueActionMessage').textContent='Chọn video trước khi hủy.';if(!confirm('Hủy các video đã chọn còn chưa gửi? Video đã gửi Dola vẫn được theo dõi.'))return;try{const r=await api('/api/admin/tasks/cancel-unsent',{method:'POST',body:{ids}});q('#queueActionMessage').textContent='Đã bỏ '+r.cancelled.length+' video chưa gửi; giữ '+r.skipped.length+' video đã gửi hoặc đã kết thúc.';await loadMyVideos();}catch(e){q('#queueActionMessage').textContent=e.message;}}
 async function downloadSelectedJobs(){const ids=[...selectedVideoIds];if(!ids.length)return q('#queueActionMessage').textContent='Chọn video cần tải.';try{const r=await fetch('/api/admin/videos/selected-download',{method:'POST',headers:{'x-admin-key':adminKey,'Content-Type':'application/json'},body:JSON.stringify({ids})});if(!r.ok)throw new Error('Không tải được ZIP; kiểm tra kết nối và đăng nhập.');const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download='video-da-chon.zip';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);}catch(e){q('#queueActionMessage').textContent=e.message;}}
 function filteredTasks(tasks,value){return tasks.filter(t=>value==='all'||(value==='running'?['queued','processing'].includes(t.status):t.status===value));}
 function queueMarkup(tasks,target,mode='table'){
@@ -2412,7 +2488,7 @@ async function loadStudioQueue(){
   try{const r=await api('/api/admin/tasks?limit=100');if(version!==studioQueueVersion||curTab!=='generate')return;observeJobs([...(r.tasks||[]),...(r.running_tasks||[])]);studioQueueTasks=r.tasks||[];studioQueueRunning=r.running_tasks||studioQueueTasks.filter(t=>['queued','processing'].includes(t.status));renderStudioQueue();observeMissingJobs(studioQueueRunning);q('#studioHealth').textContent='Backend đã kết nối · '+studioQueueRunning.length+' video đang chờ/tạo. Các video tiếp tục chạy khi bạn sửa bản nháp hoặc tạo video khác.';}
   catch(e){if(version===studioQueueVersion)q('#studioHealth').textContent='Mất kết nối backend; thông tin hàng đợi đang là bản đã nhận trước đó.';}
 }
-function setMyVideoView(mode){myVideoView=mode;q('#myVideoJobs').style.display=mode==='grid'?'grid':'none';q('#myVideoTable').style.display=mode==='table'?'block':'none';loadMyVideos();}
+function setMyVideoView(mode){myVideoView=mode;document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('on',b.dataset.view===mode));q('#myVideoJobs').style.display=mode==='grid'?'grid':'none';q('#myVideoTable').style.display=mode==='table'?'block':'none';loadMyVideos();}
 let libraryOffset=0,libraryTotal=0,librarySearchTimer,libraryVersion=0,libraryReload=false,lastLibraryBatchId='',libraryRows=new Map(),videosLoading=false;
 function closeLibraryDetail(){mySelectedId='';q('#libraryDrawer').close();q('#libraryDrawer').hidden=true;q('#librarySearch').focus();}
 async function selectMyVideo(id){
@@ -2438,7 +2514,7 @@ async function deleteLibrarySelection(){
  const ids=[...selectedVideoIds];if(!ids.length)return;
  const rows=await Promise.all(ids.map(id=>api('/api/admin/tasks/'+encodeURIComponent(id))));const completed=rows.filter(t=>t.status==='completed');
  if(!completed.length)return q('#queueActionMessage').textContent='Chỉ xóa video đã hoàn tất; giữ các video đang chạy.';
- if(!confirm('Xóa '+completed.length+' video đã hoàn tất, gồm file và lịch sử? Các job khác được giữ.'))return;
+ if(!confirm('Xóa '+completed.length+' video đã hoàn tất, gồm file và lịch sử? Các video khác được giữ.'))return;
  let done=0;for(const row of completed){try{await api('/api/admin/videos/'+encodeURIComponent(row.id),{method:'DELETE'});selectedVideoIds.delete(row.id);libraryRows.delete(row.id);if(mySelectedId===row.id)closeLibraryDetail();done++;}catch(e){q('#queueActionMessage').textContent=e.message;}}
  q('#queueActionMessage').textContent='Đã xóa '+done+' video. Giữ '+selectedVideoIds.size+' video chưa xóa.';await loadMyVideos();updateLibrarySelection();
  }catch(e){q('#queueActionMessage').textContent='Chưa xóa được video: '+e.message;}
@@ -2506,11 +2582,11 @@ async function submitRetryRows(){
     if(chosen.some(r=>!r.checked||r.checked.prompt!==r.prompt||r.checked.expires_at*1000<=Date.now()))return retryMessage('Kiểm tra lại các prompt đã chọn trước khi tạo.');
     if(chosen.some(r=>!['allow','review'].includes(r.checked.status)))return retryMessage('Bỏ chọn hoặc chỉnh các dòng bị chặn; chưa gửi video.');
     if(chosen.some(r=>r.checked.status==='review'&&!r.confirm_review))return retryMessage('Xem lý do và xác nhận từng dòng cần xem xét.');
-    if(!confirm('Tạo '+chosen.length+' video mới từ các dòng đã duyệt? Có thể dùng thêm điểm Dola; job gốc được giữ.'))return;
+    if(!confirm('Tạo '+chosen.length+' video mới từ các dòng đã duyệt? Có thể dùng thêm điểm Dola; video gốc được giữ.'))return;
     if(retryPendingSnapshot!==snapshot||!retryPendingId){retryPendingId=crypto.randomUUID();retryPendingSnapshot=snapshot;}saveRetryDraft();
     const result=await api('/api/admin/videos/retry-batch',{method:'POST',body:{request_id:retryPendingId,entries:chosen.map(r=>({source_task_id:r.source_task_id,prompt:r.prompt,preflight_token:r.checked.token,confirm_review:!!r.confirm_review}))}});
     if(!result.batch_id||!Array.isArray(result.tasks))throw new Error('Thiếu thông tin mẻ đã nhận; cần kiểm tra lại mã yêu cầu.');
-    currentBatchId=result.batch_id;finishRetryRows(chosen,result.batch_id);selectedVideoIds.clear();saveStudioDraft();await loadMyVideos();retryMessage('Đã nhận mẻ tạo lại. Bản gốc và liên kết với job lỗi được giữ.');
+    currentBatchId=result.batch_id;finishRetryRows(chosen,result.batch_id);selectedVideoIds.clear();saveStudioDraft();await loadMyVideos();retryMessage('Đã nhận mẻ tạo lại. Bản gốc và liên kết với video lỗi được giữ.');
   }catch(e){retryMessage('Chưa xác nhận được lượt tạo lại: '+e.message+'. Bản nháp và mã yêu cầu được giữ; thử lại cùng bản sẽ tìm mẻ cũ trước.');}
   finally{retryBusy=false;q('#retrySubmit').disabled=false;}
 }
@@ -2534,6 +2610,7 @@ async function loadAiSettings(clearMsg = true){
 
     q('#ai_openai_base').value = st.openai.base_url || 'https://api.openai.com/v1';
     q('#ai_openai_model').value = st.openai.model || 'gpt-4o-mini';
+    q('#ai_openai_image_model').value = st.openai.image_model || 'antigravity/gemini-3.1-flash-image';
     q('#ai_openai_key').value = '';
     q('#ai_openai_key').placeholder = st.openai.has_api_key ? 'Đã lưu (Bỏ trống để giữ nguyên)' : 'Nhập OpenAI API Key';
     q('#ai_openai_key_status').textContent = st.openai.has_api_key ? '✓ Đã cấu hình API Key' : 'Chưa có API Key';
@@ -2583,6 +2660,7 @@ async function saveAiSettings(){
     openai: {
       base_url: q('#ai_openai_base')?.value?.trim() || 'https://api.openai.com/v1',
       model: q('#ai_openai_model')?.value?.trim() || 'gpt-4o-mini',
+      image_model: q('#ai_openai_image_model')?.value?.trim() || 'antigravity/gemini-3.1-flash-image',
       api_key: q('#ai_openai_key')?.value?.trim() || '',
       clear_api_key: clearKeyFlags.openai,
     }

@@ -51,10 +51,12 @@ from add_account import add_account_flow
 from add_fb_account import add_fb_account_flow
 from ai_settings import (
     get_public_settings,
+    get_image_config,
     update_settings,
     AiSettingsError,
     AiSettingsDecryptError,
 )
+import image_gen
 from ai_provider import (
     rewrite_prompt_text,
     preflight_check_prompt,
@@ -1669,6 +1671,11 @@ class AiSettingsUpdate(BaseModel):
     openai: dict[str, Any] | None = None
 
 
+class ImageGenRequest(BaseModel):
+    prompts: list[str] = Field(min_length=1, max_length=8)
+    size: str = "1024x1024"
+
+
 class PromptRewriteRequest(BaseModel):
     prompt: str
     instructions: str = Field(default="", max_length=4000)
@@ -3279,6 +3286,22 @@ async def admin_put_ai_settings(body: AiSettingsUpdate, x_admin_key: str | None 
         raise HTTPException(400, str(exc))
     except Exception as exc:
         raise HTTPException(500, str(exc))
+
+
+@app.post("/api/admin/images/generate")
+async def admin_generate_images(body: ImageGenRequest, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    prompts = [p.strip() for p in body.prompts if p.strip()]
+    if not prompts or any(len(p) > 4000 for p in prompts):
+        raise HTTPException(422, "Prompt ảnh trống hoặc quá dài (tối đa 4.000 ký tự)")
+    if body.size not in image_gen.SIZES:
+        raise HTTPException(422, "Kích thước ảnh không hỗ trợ")
+    cfg = get_image_config()
+    if not cfg:
+        raise HTTPException(400, "Chưa cấu hình gateway ảnh. Vào Cài đặt → Kết nối AI → OpenAI-compatible, nhập Base URL và API Key của 9router.")
+    results = await image_gen.generate_many(cfg, prompts, body.size)
+    import base64
+    return {"images": [{"prompt": r["prompt"], **({"b64": base64.b64encode(r["data"]).decode()} if "data" in r else {"error": r["error"]})} for r in results]}
 
 
 @app.post("/api/admin/prompts/rewrite")

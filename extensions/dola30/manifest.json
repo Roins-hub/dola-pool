@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "豆包 Dola 15秒去水印助手",
+  "name": "Dola 30 · Tải video gốc",
   "version": "1.0.0",
-  "description": "支持15秒配置，并提取豆包和 Dola 的无水印图片、视频资源。",
+  "description": "Hỗ trợ cấu hình video 30 giây và tìm tài nguyên ảnh, video gốc từ Doubao và Dola.",
   "permissions": [
     "debugger",
     "tabs",
@@ -29,6 +29,6 @@
     }
   ],
   "action": {
-    "default_title": "豆包 Dola 15秒去水印助手"
+    "default_title": "Dola 30 · Tải video gốc"
   }
 }

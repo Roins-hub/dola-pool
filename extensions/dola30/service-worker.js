@@ -245,7 +245,7 @@ async function inspectChainSingleResponse(tabId, event, source) {
     await sendToTab(tabId, {
       type: "MEDIA_STATUS",
       sourceKey,
-      text: "未提取到资源"
+      text: "Không tìm thấy tài nguyên"
     });
   }
 

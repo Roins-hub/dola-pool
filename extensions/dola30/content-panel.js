@@ -138,13 +138,13 @@
         background: #1d4ed8;
       }
     </style>
-    <section class="panel" aria-label="无水印资源面板">
+    <section class="panel" aria-label="Bảng tài nguyên không watermark">
       <div class="header">
-        <div class="title">无水印资源</div>
+        <div class="title">Tài nguyên không watermark</div>
         <div class="count">0</div>
       </div>
       <div class="list">
-        <div class="empty">等待捕获资源</div>
+        <div class="empty">Đang chờ tìm tài nguyên</div>
       </div>
     </section>
   `;
@@ -152,7 +152,7 @@
   const list = shadow.querySelector(".list");
   const count = shadow.querySelector(".count");
   let currentSourceKey = "";
-  let statusText = "等待捕获资源";
+  let statusText = "Đang chờ tìm tài nguyên";
 
   chrome.runtime.onMessage.addListener((message) => {
     if (!message) {
@@ -171,7 +171,7 @@
       resetForSource(message.sourceKey);
       items.clear();
       addItems(message.items);
-      statusText = items.size ? "" : "未提取到资源";
+      statusText = items.size ? "" : "Không tìm thấy tài nguyên";
       render();
       return;
     }
@@ -188,7 +188,7 @@
       return;
     }
 
-    statusText = items.size ? "" : "正在获取豆包无水印视频";
+    statusText = items.size ? "" : "Đang lấy video gốc từ Doubao";
     render();
 
     const foundItems = [];
@@ -204,7 +204,7 @@
     }
 
     addItems(foundItems);
-    statusText = items.size ? "" : "未提取到资源";
+    statusText = items.size ? "" : "Không tìm thấy tài nguyên";
     render();
   }
 
@@ -247,7 +247,7 @@
     if (!items.size) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = statusText || "等待捕获资源";
+      empty.textContent = statusText || "Đang chờ tìm tài nguyên";
       list.appendChild(empty);
       return;
     }
@@ -262,7 +262,7 @@
 
       const tag = document.createElement("span");
       tag.className = `tag ${item.type}`;
-      tag.textContent = item.type === "image" ? "图片" : "视频";
+      tag.textContent = item.type === "image" ? "Ảnh" : "Video";
 
       const indexText = document.createElement("span");
       indexText.textContent = String(index + 1);
@@ -271,7 +271,7 @@
 
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = "下载";
+      button.textContent = "Tải xuống";
       button.addEventListener("click", () => {
         chrome.runtime.sendMessage({ type: "DOWNLOAD_MEDIA", url: item.url });
       });
