@@ -1560,6 +1560,18 @@ function accChain(t){
     :esc(arr[0]);
 }
 let TASK_MAP={};
+/** 任务耗时：主显示生成耗时（开始生成→结束），有明显排队时下方补一行含排队的总耗时。 */
+function costCell(t){
+  const now=Date.now()/1000,c=t.created_at||0,s=t.started_at||0,f=t.finished_at||0;
+  if(t.status==='queued')return c?'<span class="tiny">排队 '+fmtDur(now-c)+'</span>':'—';
+  if(t.status==='processing')return s?'<span style="color:#2f6fde">已 '+fmtDur(now-s)+'</span>':'—';
+  if(!f)return '—';
+  const total=c?f-c:0,gen=s?f-s:0,queue=(s&&c)?s-c:0;
+  const tip='排队 '+fmtDur(queue)+' · 生成 '+fmtDur(gen)+' · 总计 '+fmtDur(total);
+  if(!gen)return '<span title="未开始生成即结束；'+esc(tip)+'">'+(total?fmtDur(total):'—')+'</span>';
+  return '<span title="'+esc(tip)+'">'+fmtDur(gen)+'</span>'
+    +(queue>=5?'<div class="tiny">含排队 '+fmtDur(total)+'</div>':'');
+}
 async function loadTasks(){
   const r=await api('/api/admin/tasks?limit=50');
   TASK_MAP={};
@@ -1574,6 +1586,7 @@ async function loadTasks(){
     t.api_key_name||'—',
     (t.duration||10)+'秒',
     sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
+    costCell(t),
     fmt(t.created_at),
     t.video_url
       ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">打开</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">预览</button></div>'
@@ -1585,7 +1598,7 @@ async function loadTasks(){
       :'<span class="tiny">—</span>'
   ]);
   q('#tasksTable').innerHTML=table(
-    ['ID','提示词','参考图','账号','客户','时长','状态','创建时间','视频','报错/备注'],rows);
+    ['ID','提示词','参考图','账号','客户','时长','状态','耗时','创建时间','视频','报错/备注'],rows);
 }
 
 function refThumbs(t){
