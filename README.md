@@ -35,7 +35,30 @@
 5. 全池都已达每日上限或积分不足时立即返回 429，不空等；
 6. 已拿到会话、只是轮询超时的任务**不换号重提**，避免 Dola 端重复出片、重复扣额度。
 
-## 快速开始
+## 一键部署（推荐）
+
+**Linux 服务器**（Ubuntu 20.04+ / Debian 11+），一条命令装好并注册为系统服务：
+
+```bash
+# 直接用 IP:8002 访问
+curl -fsSL https://github.com/Roins-hub/dola-pool/releases/latest/download/install.sh | sudo bash
+
+# 带域名 + 自动 HTTPS（先把域名 A 记录解析到这台服务器）
+curl -fsSL https://github.com/Roins-hub/dola-pool/releases/latest/download/install.sh | sudo DOLA_DOMAIN=video.example.com bash
+```
+
+装完会打印面板地址、默认账号（`admin` / `admin123`，请立即修改）和随机生成的 API Key。
+再次执行同一条命令即升级，配置与数据都会保留。可选参数（安装目录、端口、服务名等）见 [`deploy/install.sh`](deploy/install.sh) 开头的注释。
+
+**本地电脑**：下载 [Release](https://github.com/Roins-hub/dola-pool/releases/latest) 的源码包并解压，然后
+
+- Windows：双击 `start-local.bat`
+- macOS / Linux：`bash start-local.sh`
+
+首次运行会自动建虚拟环境、装依赖、下载 Chromium，然后打开 `http://127.0.0.1:8002/`。
+需要提前装好 Python 3.10+ 和 Node.js 18+。本机不在日本 / 韩国时需要配代理（见 [`USAGE.md`](USAGE.md)）。
+
+## 手动部署
 
 需要 Python 3.10+。dola.com 要求日本/韩国出口，服务器在大陆时必须配置代理。
 

@@ -3,7 +3,7 @@
 > 这份手册写给**第一次接触 dola-pool 的人**：它是什么、管理面板每个按钮干什么、日常怎么操作、出了问题怎么看。
 >
 > - 想**调用接口生成视频**（写代码对接）→ 看 [`API.md`](API.md)
-> - 想**部署到服务器** → 看 [`README.md`](README.md) 的「快速开始」和 [`deploy/README.md`](deploy/README.md)
+> - 想**部署到服务器 / 本地运行** → 看 [`README.md`](README.md) 的「一键部署」（一条命令装好）
 > - 想**改代码** → 看 [`DEVELOPMENT.md`](DEVELOPMENT.md)
 
 ---

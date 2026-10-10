@@ -1,7 +1,17 @@
 # 更新日志
 
-## 未发布 — 2026-10-10
+## 2.1.4 — 2026-10-10
 
+首个带一键部署的 Release。
+
+- **一键部署脚本 `deploy/install.sh`**（Ubuntu 20.04+ / Debian 11+）：自动装系统依赖、Node.js（缺失或低于 16 时）、
+  Python 虚拟环境与依赖、Chromium；生成 `dola.env`（随机 API Key）；注册 systemd 服务（含 Xvfb）；
+  设置 `DOLA_DOMAIN` 时自动配 nginx 反代 + Let's Encrypt 证书。重复执行即升级，保留配置、账号、数据库与视频。
+  支持 `curl -fsSL https://github.com/Roins-hub/dola-pool/releases/latest/download/install.sh | sudo bash`。
+- **本地一键启动**：Windows 双击 `start-local.bat`，macOS/Linux 执行 `bash start-local.sh`；
+  依赖、pip 缓存、浏览器都放在项目目录内。
+- 新增配置模板 `deploy/dola.env.example`。
+- 新增使用手册 `USAGE.md`（README 顶部有入口）。
 - **任务列表新增「耗时」列**（状态与创建时间之间）：完成/失败显示生成耗时（`finished_at - started_at`），排队超过 5 秒时下方补「含排队 X」总耗时（`finished_at - created_at`），悬停看「排队 · 生成 · 总计」拆分；生成中实时显示「已 X」，排队中显示「排队 X」。纯前端，用的是已有的 `started_at` / `finished_at` 字段。
 - `deploy/nginx-site.conf.example`：`location /` 加 `Cache-Control: no-cache`，避免面板更新后浏览器仍展示缓存的旧页面。
 
