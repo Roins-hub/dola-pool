@@ -195,6 +195,22 @@ FAIL_SCORE_CAP = int(os.getenv("DOLA_FAIL_SCORE_CAP", "0"))
 # 变量保留只为兼容旧 run.sh，不再被任何代码读取。
 TRANSIENT_COOLDOWN_SEC = int(os.getenv("DOLA_TRANSIENT_COOLDOWN_SEC", "600"))
 
+# ---- 出口限流退避（2.1.5）----
+# 上游 710022002「访问频繁」本质是按**出口 IP** 限流：同一出口上的号换来换去只会继续撞墙，
+# 越撞限得越久。所以改成按出口退避：某出口一被拒，就在这段时间内不再从它派任务/做探测，
+# 任务原地排队等出口恢复。连续被拒按 2 倍递增（120 → 240 → 480 → 900 封顶），
+# 成功一次即清零。0 = 关闭退避（恢复旧行为：立刻换号重试）。
+EGRESS_THROTTLE_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_SECONDS", "120"))
+EGRESS_THROTTLE_MAX_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_MAX_SECONDS", "900"))
+# 距上次被拒超过该秒数，递增计数清零，重新从 EGRESS_THROTTLE_SECONDS 起算。
+EGRESS_THROTTLE_RESET_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_RESET_SECONDS", "1800"))
+# 出口被限流时，动态代理/提取节点的号顺手换一个出口 IP（静态代理换不了，只能等）。
+EGRESS_THROTTLE_ROTATE = os.getenv("DOLA_EGRESS_THROTTLE_ROTATE", "1") == "1"
+# 没有任务总时限（deadline）的调用方，等出口恢复最多等多久（秒）。
+EGRESS_THROTTLE_MAX_WAIT_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_MAX_WAIT_SECONDS", "600"))
+# 面板提示：同一出口 IP 上的号超过这个数就标黄提醒（0 = 不提示）。
+EGRESS_SHARE_WARN = int(os.getenv("DOLA_EGRESS_SHARE_WARN", "3"))
+
 # 【异常】组的自动恢复时长（秒）：5 分钟无回执 / 连续失败 3 次 / profile 缺失时进组，
 # 到期自动恢复。
 ABNORMAL_COOLDOWN_SEC = int(os.getenv("DOLA_ABNORMAL_COOLDOWN_SEC", "1800"))

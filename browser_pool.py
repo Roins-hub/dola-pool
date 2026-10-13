@@ -211,6 +211,9 @@ class BrowserPool:
         self._fail_until: dict[str, float] = {}
         self._fail_streak: dict[str, int] = {}   # 连续失败计数（内存，成功即清零）
         self._probe_cache: dict[str, tuple[float, dict]] = {}   # 你好探测结果缓存
+        # 出口限流退避（内存）：egress -> {"until", "streak", "last", "reason"}。
+        # 引擎每次 _sync_engine 都会重建，所以不能放进引擎的 _egress_unhealthy 里。
+        self._egress_throttle: dict[str, dict] = {}
         # isolation_level=None（自动提交）：号池的 sqlite 连接是**多线程共用**的
         # （出片回调 on_balance、探测都在线程池里跑），sqlite3 模块的隐式事务会让
         # 两个线程的 BEGIN/COMMIT 互相踩，冒出 `cannot commit - no transaction is active`
@@ -699,6 +702,13 @@ class BrowserPool:
             return {**cached[1], "cached": True, "probed": False}
 
         state = self._pure_state(name)
+        throttled = self.egress_throttle_remaining(name) if state is not None else 0
+        if throttled > 0:
+            # 出口还在退避：这时候发「你好」只会再吃一次 710022002，还会把退避越拖越长
+            return {"ok": False, "status": "error", "login_ok": None, "replied": False,
+                    "cached": False, "probed": False, "throttled": True,
+                    "reason": f"出口被上游限流中，还需 {int(throttled)} 秒，本次未发请求",
+                    "reply": "", "elapsed": 0.0}
         if state is None:
             result = {"ok": True, "status": "skipped", "login_ok": True, "replied": True,
                       "cached": False, "probed": False,
@@ -725,10 +735,20 @@ class BrowserPool:
         重试仍失败才 apply_risk=True —— 单次「没回复」很可能是上游抖动，
         一次就锁号会把好号误封（线上实测踩过）。
         """
-        self._probe_cache[name] = (time.time(), result)
-        self._ensure_meta(name)
         remark = str(result.get("reason") or "")[:200]
+        if result.get("throttled"):
+            # 出口退避中、根本没发请求：不落库、不缓存，等出口恢复后再真探
+            print(f"[pool] {name} 你好探测跳过（{remark}）", flush=True)
+            return result
+        if (result.get("status") == "error"
+                and classify_upstream_failure(remark) == "transient"):
+            self.note_egress_throttle(name, remark)
+        else:
+            # 限流类失败不进缓存：出口恢复后要能立刻重探，而不是被 5 分钟缓存挡住
+            self._probe_cache[name] = (time.time(), result)
+        self._ensure_meta(name)
         if result.get("ok"):
+            self.clear_egress_throttle(name)
             was_risk = bool(self._meta(name) and self._meta(name)["risk_control"])
             print(f"[pool] {name} 你好探测通过（{result.get('elapsed')}s，"
                   f"回复 {len(str(result.get('reply') or ''))} 字）"
@@ -1014,6 +1034,69 @@ class BrowserPool:
     def _egress_for(self, name: str) -> str:
         """账号出口身份。动态代理带上该号自己的 sticky session。"""
         return proxy_store.egress_key_for(name)
+
+    # ===== 出口限流退避（2.1.5）=====
+
+    def _safe_egress(self, name: str) -> str:
+        try:
+            return self._egress_for(name)
+        except Exception:  # noqa: BLE001 - 出口解析失败按直连算，不能影响主流程
+            return "direct"
+
+    def egress_throttle_remaining(self, name: str) -> float:
+        """该号所在出口还要被限流多少秒（0 = 没被限流）。线程安全：只读字典。"""
+        rec = self._egress_throttle.get(self._safe_egress(name))
+        if not rec:
+            return 0.0
+        return max(0.0, rec["until"] - time.time())
+
+    def note_egress_throttle(self, name: str, reason: str = "") -> int:
+        """该号的出口被上游判「访问频繁」：整个出口退避一段时间，返回退避秒数。
+
+        同一出口上的号一起停：710022002 是按出口 IP 限的，换同出口的号继续提交只会
+        越撞越久。连续被拒按 2 倍递增，封顶 EGRESS_THROTTLE_MAX_SECONDS。
+        """
+        base = config.EGRESS_THROTTLE_SECONDS
+        if base <= 0:
+            return 0
+        egress = self._safe_egress(name)
+        now = time.time()
+        rec = self._egress_throttle.get(egress)
+        if rec and now < rec["until"]:
+            return int(rec["until"] - now)   # 已经在退避中：并发任务同时被拒，不重复加码
+        streak = 1
+        if rec and now - rec["last"] < config.EGRESS_THROTTLE_RESET_SECONDS:
+            streak = rec["streak"] + 1
+        seconds = min(base * (2 ** (streak - 1)), max(base, config.EGRESS_THROTTLE_MAX_SECONDS))
+        self._egress_throttle[egress] = {"until": now + seconds, "streak": streak,
+                                         "last": now, "reason": (reason or "")[:200]}
+        sharing = sum(1 for n in self.accounts if self._safe_egress(n) == egress)
+        print(f"[pool] 出口 {egress} 被上游限流（{(reason or '')[:80]}）→ 该出口 {sharing} 个号"
+              f"暂停 {seconds} 秒（第 {streak} 次）", flush=True)
+        if config.EGRESS_THROTTLE_ROTATE and egress != "direct":
+            # 动态代理/提取节点：顺手换出口 IP，换完出口身份变了就不再受这条退避影响
+            try:
+                self._on_egress_unhealthy(egress, f"上游限流: {(reason or '')[:80]}")
+            except Exception:  # noqa: BLE001
+                pass
+        return seconds
+
+    def clear_egress_throttle(self, name: str) -> None:
+        """该号走通了（探测通过/出片成功）：出口恢复，递增计数清零。"""
+        self._egress_throttle.pop(self._safe_egress(name), None)
+
+    def egress_throttle_snapshot(self) -> list[dict]:
+        """面板用：当前正在退避的出口（出口 key 已去掉代理凭据）。"""
+        now = time.time()
+        out = []
+        for egress, rec in self._egress_throttle.items():
+            if rec["until"] <= now:
+                continue
+            out.append({"egress": egress, "remaining": int(rec["until"] - now),
+                        "streak": rec["streak"], "reason": rec["reason"],
+                        "accounts": sorted(n for n in self.accounts
+                                           if self._safe_egress(n) == egress)})
+        return sorted(out, key=lambda x: -x["remaining"])
 
     def _egress_blocked(self, name: str) -> bool:
         """同出口隔离：该出口是否已被其它 in-flight 号占用，或已被标记为异常。"""
@@ -1454,6 +1537,9 @@ class BrowserPool:
             wait_deadline = 0.0
             group_deadline = 0.0
             group_wait = False
+            throttle_wait = False
+            throttle_deadline = 0.0
+            throttle_announced = False
             # max_attempts <= 0：不限次数，只要没到 deadline 就一轮轮换号重试。
             unlimited = max_attempts <= 0
 
@@ -1467,6 +1553,8 @@ class BrowserPool:
                 picked = False
                 waiting_possible = False
                 group_wait = False
+                throttle_wait = False
+                throttle_min = float("inf")
                 for a in self._ordered_candidates(allowed_groups):
                     if a["name"] in tried or self._recently_failed(a["name"]):
                         continue
@@ -1478,6 +1566,12 @@ class BrowserPool:
                         group_wait = True
                         continue
                     if not self._schedulable(a) or a["remaining"] < cost:
+                        continue
+                    # 出口被上游限流（710022002）中：同出口的号都先别动，等出口恢复
+                    throttled = self.egress_throttle_remaining(a["name"])
+                    if throttled > 0:
+                        throttle_wait = True
+                        throttle_min = min(throttle_min, throttled)
                         continue
                     if config.ISOLATE_SHARED_EGRESS and self._egress_blocked(a["name"]):
                         continue
@@ -1527,6 +1621,7 @@ class BrowserPool:
                                 (time.time(), account))
                             self._conn.commit()
                             self._fail_streak.pop(account, None)   # 出片成功 → 连续失败清零
+                            self.clear_egress_throttle(account)    # 出口走通 → 退避清零
                             return result
                         except CreditInsufficientError as e:
                             print(f"[pool] {account} 生成前积分不足，跳过: {e}", flush=True)
@@ -1582,13 +1677,31 @@ class BrowserPool:
                             last_err = e
                         except Exception as e:
                             message = str(e)
-                            self._note_upstream_failure(account, message, attempt)
+                            if self._note_upstream_failure(account, message, attempt) == "transient":
+                                self.note_egress_throttle(account, message)
                             last_err = e
                         self._mark_attempt_failed(account)
                         tried.add(account)
                         tried_order.append(account)
                         if not attempts_left() or not time_left():
                             break
+                if not picked and throttle_wait:
+                    # 还有号，只是它们的出口都在被上游限流：原地排队等出口恢复，
+                    # 而不是换号硬撞（越撞限得越久），也不是立刻判失败。
+                    if deadline is not None:
+                        limit = deadline
+                    else:
+                        if throttle_deadline == 0:
+                            throttle_deadline = time.time() + config.EGRESS_THROTTLE_MAX_WAIT_SECONDS
+                        limit = throttle_deadline
+                    now = time.time()
+                    if now < limit:
+                        if not throttle_announced:
+                            throttle_announced = True
+                            print(f"[pool] 可用账号的出口都在被上游限流，排队等待出口恢复"
+                                  f"（约 {int(throttle_min)} 秒）", flush=True)
+                        await asyncio.sleep(max(1.0, min(throttle_min, 10.0, limit - now)))
+                        continue
                 if not picked:
                     # 只剩被其他并发任务占用的账号：有界等待重扫，而不是立刻误判“无可用账号”。
                     if waiting_possible:
@@ -1638,6 +1751,10 @@ class BrowserPool:
                     f"{f'排队 {waited} 分钟仍' if waited and config.V20_WAIT_SECONDS > 0 else ''}"
                     f"没有可用的{need}，{model} 暂时无法开工，请稍后重试"
                 )
+            if throttle_wait and last_err is None:
+                raise RuntimeError(
+                    "可用账号的出口 IP 都被上游限流（710022002 当前服务访问频繁）且等待超时，"
+                    "请稍后重试；长期出现请给账号绑定更多不同出口的代理")
             if last_err is not None:
                 chain = "、".join(tried_order) if tried_order else str(last_err)
                 timed_out = deadline is not None and time.time() >= deadline

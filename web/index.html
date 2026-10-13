@@ -111,6 +111,10 @@ input::placeholder,textarea::placeholder{color:#6d7c90}
 select option{background:#111827;color:var(--text)}
 input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
 #accountsTable,#proxiesTable,#tasksTable,#videosTable,#keysTable,#usersTable,#perAccount{overflow-x:auto}
+/* egress-warn：出口限流 / 共用出口提醒 */
+.ew{padding:8px 12px;border-radius:8px;font-size:13px;line-height:1.6;margin:6px 0}
+.ew-red{background:rgba(229,72,77,.12);border:1px solid rgba(229,72,77,.35);color:#e5484d}
+.ew-yellow{background:rgba(245,166,35,.12);border:1px solid rgba(245,166,35,.35);color:#d48806}
 /* nowrap-fix：窄屏时按钮/标题不折字，工具栏整体换行 */
 .btn,.toolbar h3,.toolbar select{white-space:nowrap}
 .toolbar{flex-wrap:wrap;gap:10px}
@@ -240,6 +244,7 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
         </div>
       </div>
       <div class="groupbar" id="groupBar"></div>
+      <div id="egressWarn"></div>
       <div id="accountsTable"></div>
     </div>
   </section>
@@ -482,6 +487,33 @@ function renderGroupBar(d,container,jump){
       +'seedance-2.5 每条 2 点、seedance-2.0 每条 3 点">剩余额度 <b>'+pts+'</b> 点'
       +'<span class="n">≈2.5 可出 '+Math.floor(pts/2)+' 条</span></span>';
 }
+/** 出口显示名：直连 / 绑定的代理名 + host:port（egress 本身已去掉代理凭据）。 */
+function egressLabel(e,accs){
+  if(!e||e==='direct')return '服务器直连（未配代理）';
+  const names=[...new Set(accs.filter(x=>x.effective_egress===e&&x.proxy_name).map(x=>x.proxy_name))];
+  const host=e.replace(/^[a-z0-9]+:\/\//i,'').replace(/#.*$/,'');
+  return (names.length?names.join(' / ')+' · ':'')+host;
+}
+/** 账号页提示：哪些出口正被上游限流（710022002）、哪些出口挂的号太多。 */
+function renderEgressWarn(a){
+  const box=q('#egressWarn');if(!box)return;
+  const accs=a.accounts||[];
+  const lines=(a.egress_throttle||[]).map(t=>
+    '<div class="ew ew-red">⏳ 出口 <b>'+esc(egressLabel(t.egress,accs))+'</b> 被上游限流（710022002 访问频繁），'
+    +t.accounts.length+' 个号暂停派发和探测，约 '+fmtDur(t.remaining)+' 后自动恢复'
+    +(t.streak>1?'（连续第 '+t.streak+' 次，退避时间已加倍）':'')+'</div>');
+  const warn=a.egress_share_warn||0;
+  if(warn>0){
+    const groups={};
+    accs.forEach(x=>{if(!x.scheduling)return;const e=x.effective_egress||'direct';(groups[e]=groups[e]||[]).push(x.name);});
+    Object.entries(groups).filter(([,l])=>l.length>warn).sort((x,y)=>y[1].length-x[1].length).forEach(([e,l])=>{
+      lines.push('<div class="ew ew-yellow">⚠ '+l.length+' 个号共用出口 <b>'+esc(egressLabel(e,accs))+'</b>'
+        +'（建议每个出口不超过 '+warn+' 个）。同一出口的号越多越容易被上游判「访问频繁」(710022002)，'
+        +'请给账号绑定更多不同 IP 的代理'+(e==='direct'?'；服务器不在日本/韩国时必须配代理':'')+'。</div>');
+    });
+  }
+  box.innerHTML=lines.join('');
+}
 function setGroupFilter(key){groupFilterVal=key;accPage=1;loadAccounts();}
 function setGroupFilterGo(key){groupFilterVal=key;accPage=1;switchTab('accounts');}
 function matchGroup(x){
@@ -503,6 +535,7 @@ async function loadAccounts(){
   const hint=q('#resetHint');
   if(hint&&a.next_reset_at)hint.textContent=`额度重置：${a.reset_tz} 每天 ${a.reset_hour}:00（下次 ${fmt(a.next_reset_at)}）`;
   renderGroupBar(a);
+  renderEgressWarn(a);
   // 新增的号排最前（按创建时间倒序）；没有 created_at 的老号沉底，保持原有相对顺序
   const sorted=[...a.accounts].sort((x,y)=>(y.created_at||0)-(x.created_at||0));
   filteredAccounts=sorted.filter(x=>

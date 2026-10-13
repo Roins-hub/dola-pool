@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.1.4"
+APP_VERSION = "2.1.5"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -127,12 +127,12 @@ STRESS_RUN: dict = {
 BATCH_JOBS: dict[str, dict] = {}
 # 批量验证串行执行：验证会开浏览器/打代理，同时跑多批会互相抢资源
 BATCH_VERIFY_SEM = asyncio.Semaphore(1)
-# 批量「你好」探测的并发：**0 = 不限（默认，按用户要求全部放开）**，>0 = 限制路数。
-# 注意：上游对"同一出口 IP 短时间多次提交"敏感（实测并发 3 路就会被 710022002 整批拒），
-# 放开后大概率会看到一批"未完成"——那些不会锁号，只是这次没探到。
-BATCH_PROBE_CONCURRENCY = int(os.getenv("DOLA_HELLO_PROBE_CONCURRENCY", "0"))
-# 每个探测之间的间隔（秒）：0 = 不等（默认，配合不限并发一起放开）。
-BATCH_PROBE_INTERVAL_SECONDS = float(os.getenv("DOLA_HELLO_PROBE_INTERVAL", "0"))
+# 批量「你好」探测的并发：默认 1（串行），0 = 不限。
+# 2.1.5 起默认改回串行：上游对"同一出口 IP 短时间多次提交"敏感（实测并发 3 路就会被
+# 710022002 整批拒；2026-10-13 线上 20 个号 6 秒内全发出去，整批被拒）。
+BATCH_PROBE_CONCURRENCY = int(os.getenv("DOLA_HELLO_PROBE_CONCURRENCY", "1"))
+# 每个探测之间的间隔（秒），默认 3 秒错峰。
+BATCH_PROBE_INTERVAL_SECONDS = float(os.getenv("DOLA_HELLO_PROBE_INTERVAL", "3"))
 # 软失败后的退避重试间隔（秒）。这不是并发限制，是防误锁：两次都失败才判风控。
 BATCH_PROBE_RETRY_SECONDS = float(os.getenv("DOLA_HELLO_PROBE_RETRY_WAIT", "4.0"))
 
@@ -1540,6 +1540,9 @@ async def admin_accounts(x_admin_key: str | None = Header(default=None)):
         "next_reset_at": pool.next_quota_reset_at(),
         "reset_tz": config.LIMIT_RESET_TZ,
         "reset_hour": config.LIMIT_RESET_HOUR,
+        # 出口限流退避中的出口 + 共用出口提醒阈值（面板据此提示"同一出口号太多"）
+        "egress_throttle": pool.egress_throttle_snapshot(),
+        "egress_share_warn": config.EGRESS_SHARE_WARN,
         **_group_summary(accounts),
     }
 
@@ -1808,7 +1811,7 @@ async def _run_batch_probe_job(job_id: str, names: list[str]) -> None:
         "ok": "通过",
         "logged_out": "被登出 → 已进【风控】组",
         "no_reply": "没回复 → 已进【风控】组",
-        "error": "探测未完成（网络/上游拒绝，不判风控）",
+        "error": "探测未完成（网络/上游拒绝，不判风控）",   # 实际展示时会带上具体原因
         "skipped": "非纯 API 账号，跳过",
     }
 
@@ -1821,15 +1824,25 @@ async def _run_batch_probe_job(job_id: str, names: list[str]) -> None:
             else:
                 async with sem:
                     job["current"] = name
-                    await asyncio.sleep(BATCH_PROBE_INTERVAL_SECONDS)   # 错峰，别打爆上游
+                    # 出口被上游限流中：不发请求、不等间隔、不重试，直接记「未完成」
+                    throttled = pool.egress_throttle_remaining(name) > 0
+                    if not throttled:
+                        await asyncio.sleep(BATCH_PROBE_INTERVAL_SECONDS)   # 错峰，别打爆上游
                     # 第一次只记结论、不判风控（单次"没回复"多半是上游抖动，一次就锁会误封好号）
                     result = await pool.probe_hello_async(name, force=True, apply_risk=False)
-                    item["attempts"] = 1
-                    if result.get("status") == "logged_out":
+                    item["attempts"] = 0 if result.get("throttled") else 1
+                    if result.get("throttled"):
+                        pass
+                    elif result.get("status") == "logged_out":
                         # 「被登出」是强信号，一次就判风控（重试也救不回来）
                         pool.apply_probe_risk(name, result)
+                    elif (result.get("status") == "error"
+                          and pool.egress_throttle_remaining(name) > 0):
+                        # 第一次就吃了上游限流：出口已进入退避，重试也只会被跳过，
+                        # 保留第一次的真实原因（710022002）即可
+                        pass
                     elif result.get("status") in ("error", "no_reply"):
-                        # 上游限流/网络抖动 / 没回复 → 退避重试一次，仍失败才判风控（两振出局）
+                        # 网络抖动 / 没回复 → 退避重试一次，仍失败才判风控（两振出局）
                         await asyncio.sleep(BATCH_PROBE_RETRY_SECONDS)
                         result = await pool.probe_hello_async(name, force=True, apply_risk=True)
                         item["attempts"] = 2
@@ -1837,6 +1850,10 @@ async def _run_batch_probe_job(job_id: str, names: list[str]) -> None:
                 item["ok"] = bool(result.get("ok"))
                 item["reply"] = str(result.get("reply") or "")[:40]
                 item["message"] = label.get(item["status"], str(result.get("reason") or "")[:120])
+                if item["status"] == "error" and result.get("reason"):
+                    # 把具体原因带出来（710022002 / 出口限流中还需 N 秒 / 网络错误…），
+                    # 否则面板上一排「未完成」看不出是哪种问题
+                    item["message"] = f"探测未完成：{str(result.get('reason'))[:100]}（不判风控）"
         except Exception as exc:
             item["message"] = str(exc)[:200] or "探测失败"
         row = _account_row(name)
