@@ -649,6 +649,11 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 任务总时限内持续换号；到点不再派发新尝试。兜底超时额外留一次完整出片的等待时间，
         # 避免把已经在 Dola 端生成中的那一次强行中断（会白扣额度）。
         task_deadline = time.time() + config.TASK_DEADLINE
+        # 兜底总超时要容得下「最后一次出片」的完整等待：纯 API 会跟着上游「预计等待」
+        # 放长到 DOLA_PURE_TIMEOUT_MAX，这里若只留 VIDEO_TIMEOUT（300 秒）会把它半路掐断。
+        last_attempt_wait = max(config.VIDEO_TIMEOUT, config.PURE_API_TIMEOUT,
+                                config.PURE_API_TIMEOUT_MAX)
+        overall_timeout = config.TASK_DEADLINE + last_attempt_wait + 60
         try:
             result = await asyncio.wait_for(pool.generate_video(
                 prompt, ratio, duration, model,
@@ -656,11 +661,11 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                 reference_image_paths=reference_paths,
                 on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
                 deadline=task_deadline),
-                timeout=config.TASK_DEADLINE + config.VIDEO_TIMEOUT + 60)
+                timeout=overall_timeout)
         except asyncio.TimeoutError:
             chain = "、".join(tried_accs) or "无"
             raise RuntimeError(
-                f"超过 {config.TASK_DEADLINE} 秒仍未生成成功，任务失败（已尝试账号: {chain}）")
+                f"等待出片超过 {overall_timeout // 60} 分钟仍未完成，任务失败（已尝试账号: {chain}）")
         public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
         # ffprobe 是同步子进程（几十~几百毫秒），必须在事件循环外跑：
         # 高并发下每完成一条就卡一次 loop，会把所有轮询/接口/健康检查一起拖住。

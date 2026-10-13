@@ -65,3 +65,25 @@ def test_four_to_fifteen_text_is_not_a_split_request_for_short_jobs():
     """「支持 4 到 15 秒」只对 30 秒任务意味着「要拆段」；5 秒任务里这句话只是上游的说明。"""
     src = Path(pure_api_gen.__file__).read_text(encoding="utf-8")
     assert "if int(duration) >= 30 and duration_refused and not config.ALLOW_30S_PAIR:" in src
+
+
+QUOTA_GONE = "今日视频生成免费数量用完了，先使用快速模式和我聊聊别的吧。开通 Dola Plus，免等待，继续为你使用视频生成功能。"
+
+
+def test_free_quota_used_up_is_recognised_upstream():
+    """2026-10-13 线上新话术：以前认不出，任务干等 15 分钟才失败。"""
+    assert dola_pure_api.looks_like_daily_quota_text(QUOTA_GONE)
+    status, hits = dola_pure_api.classify_chain_outcome([], [QUOTA_GONE])
+    assert status == "quota_exceeded" and hits
+
+
+def test_plus_upsell_alone_is_not_quota_exhausted():
+    """排队久时上游也会推销 Plus，这句话本身不能当成额度用完。"""
+    assert not dola_pure_api.looks_like_daily_quota_text("预计等待 45 分钟。开通 Dola Plus，免等待。")
+
+
+def test_quota_exceeded_failure_marks_account_daily_limited():
+    """纯 API 报 quota_exceeded → 号池归为 daily（进冷却到额度重置，并立即换号）。"""
+    import browser_pool
+    msg = f"acc3 出片未成功 status=quota_exceeded: {QUOTA_GONE}"
+    assert browser_pool.classify_upstream_failure(msg) == "daily"
