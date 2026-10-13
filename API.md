@@ -10,7 +10,7 @@
 | 项 | 值 |
 |---|---|
 | 服务名 | `stable-dola-pool` |
-| 代码版本 | `2.1.5`（见 `CHANGELOG.md`） |
+| 代码版本 | `2.1.6`（见 `CHANGELOG.md`） |
 | **Base URL** | `https://your-domain`（nginx 反代到本服务端口） |
 | 交互式文档 | `https://your-domain/docs`（FastAPI Swagger，实时以代码为准） |
 | OpenAPI Schema | `https://your-domain/openapi.json` |
