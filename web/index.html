@@ -1695,10 +1695,46 @@ function accChain(t){
 }
 let TASK_MAP={};
 /** 任务耗时：主显示生成耗时（开始生成→结束），有明显排队时下方补一行含排队的总耗时。 */
+// 浏览器时钟与服务器的偏差（秒）：loadTasks 用接口返回的 now 校正，实时计时才准
+let SERVER_SKEW=0;
+function serverNow(){return Date.now()/1000+SERVER_SKEW;}
+/** 实时计时文案：kind=queue 排队 X / run 已 X；eta 元素显示预计与剩余（倒计时）。 */
+function liveText(el){
+  const t0=Number(el.dataset.t0||0);if(!t0)return '';
+  const el2=Math.max(0,serverNow()-t0);
+  if(el.dataset.kind==='queue')return '排队 '+fmtDur(el2);
+  if(el.dataset.kind==='run')return '已 '+fmtDur(el2);
+  if(el.dataset.kind==='eta'){
+    const typ=Number(el.dataset.typ||0);if(!typ)return '';
+    const left=typ-el2;
+    return left>0?'预计 '+fmtDur(typ)+' · 还剩约 '+fmtDur(left)
+                 :'预计 '+fmtDur(typ)+' · 已超出 '+fmtDur(-left);
+  }
+  return '';
+}
+function tickLive(){document.querySelectorAll('.live').forEach(el=>{const v=liveText(el);if(v&&el.textContent!==v)el.textContent=v;});}
+setInterval(tickLive,1000);
+function liveSpan(kind,t0,extra,style){
+  const el={dataset:{kind,t0:String(t0),typ:String(extra||'')}};
+  return '<span class="live" data-kind="'+kind+'" data-t0="'+t0+'"'+(extra?' data-typ="'+extra+'"':'')
+    +(style?' style="'+style+'"':'')+'>'+esc(liveText(el))+'</span>';
+}
 function costCell(t){
-  const now=Date.now()/1000,c=t.created_at||0,s=t.started_at||0,f=t.finished_at||0;
-  if(t.status==='queued')return c?'<span class="tiny">排队 '+fmtDur(now-c)+'</span>':'—';
-  if(t.status==='processing')return s?'<span style="color:#2f6fde">已 '+fmtDur(now-s)+'</span>':'—';
+  const c=t.created_at||0,s=t.started_at||0,f=t.finished_at||0;
+  const pg=t.progress||{};
+  const typ=Number(pg.typical_seconds||0);
+  if(t.status==='queued'){
+    if(!c)return '—';
+    // 排队：实时排队时长 + 预计（含前面还有几个）
+    const hint=pg.eta_text?('预计'+pg.eta_text+(pg.ahead?'（前面 '+pg.ahead+' 个）':'')):'';
+    return liveSpan('queue',c,0,'')+(hint?'<div class="tiny">'+esc(hint)+'</div>':'');
+  }
+  if(t.status==='processing'){
+    if(!s)return '—';
+    // 生成中：实时已用时 + 预计总时长与剩余倒计时（超出预计会提示已超出）
+    return liveSpan('run',s,0,'color:#2f6fde')
+      +(typ?'<div class="tiny">'+liveSpan('eta',s,typ,'')+'</div>':'');
+  }
   if(!f)return '—';
   const total=c?f-c:0,gen=s?f-s:0,queue=(s&&c)?s-c:0;
   const tip='排队 '+fmtDur(queue)+' · 生成 '+fmtDur(gen)+' · 总计 '+fmtDur(total);
@@ -1708,6 +1744,7 @@ function costCell(t){
 }
 async function loadTasks(){
   const r=await api('/api/admin/tasks?limit=50');
+  if(r.now)SERVER_SKEW=r.now-Date.now()/1000;
   TASK_MAP={};
   r.tasks.forEach(t=>{TASK_MAP[t.id]=t;});
   const sb={'queued':'<span class="badge b-gray">排队中</span>','processing':'<span class="badge b-blue">生成中</span>','completed':'<span class="badge b-green">完成</span>','failed':'<span class="badge b-red">失败</span>','风控':'<span class="badge b-orange">风控</span>'};
@@ -1778,8 +1815,9 @@ function fmtSize(b){
 }
 function fmtDur(s){
   if(!s||s<=0)return '-';
-  if(s<60)return Math.round(s)+' 秒';
-  const m=Math.floor(s/60);const sec=Math.round(s%60);
+  s=Math.round(s);   // 先取整再拆分，避免出现「4 分 60 秒」
+  if(s<60)return s+' 秒';
+  const m=Math.floor(s/60);const sec=s%60;
   return m+' 分 '+sec+' 秒';
 }
 async function loadVideos(){

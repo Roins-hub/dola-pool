@@ -2550,7 +2550,15 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
 @app.get("/api/admin/tasks")
 async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"tasks": store.recent_tasks(min(max(limit, 1), 200))}
+    tasks = store.recent_tasks(min(max(limit, 1), 200))
+    for t in tasks:
+        # 排队中 / 生成中的任务带上预计耗时（与客户接口的 progress 同一口径：
+        # 同时长近 3 天已完成任务的平均生成耗时，样本不足用兜底表）
+        if t.get("status") in ("queued", "processing"):
+            t["progress"] = _progress_payload(status=t["status"], created_at=t.get("created_at"),
+                                              duration=t.get("duration"))
+    # 服务器当前时间：面板用它校正浏览器时钟偏差，实时计时才准
+    return {"tasks": tasks, "now": time.time()}
 
 
 @app.get("/api/admin/videos")
