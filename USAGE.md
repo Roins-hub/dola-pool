@@ -413,10 +413,10 @@ dola 生成的每条视频，在 dola 服务器上本来就有**两个版本**�
 - **浏览器路径**（Google 登录添加的账号）：出片后先调用 dola 自己的播放接口（`fallback_api`），把参数改成 `logo_type=unwatermarked`、`codec_type=8`，拿到无水印的 H.264 高码率版本（约 3 Mbps）。这一步失败时，再读取返回数据里 `video_model.video_list.*.main_url` 字段（base64 编码，解码后就是 `lr=unwatermarked` 链接），取码率最高的一个。代码在 `video_worker_ui.py` 的 `fetch_higher_bitrate_url()` 和 `video_worker.py` 的 `extract_unwatermarked_url()`。
 - **纯 API 路径**（Cookie 导入的账号）：在 dola 返回的播放信息里查找带 `unwatermarked` 参数的链接。代码在 `protocol/dola_pure_api.py` 的 `find_direct_nowatermark_urls()`。
 
-**② 第三方去水印解析接口（纯 API 路径，默认开启）**
+**② 第三方去水印解析接口（纯 API 路径，默认关闭）**
 
-- 开关是 `DOLA_PURE_REMOVE_WATERMARK`，**默认 `1`（开启）**。
-- 开启时，纯 API 路径会把视频的播放地址（`fplay_url`）或视频信息（`video_info`）发给第三方接口 `http://47.104.150.143:8765/tools/dola/`，由对方返回无水印地址。这个接口来自第三方 remove_water 插件，地址写在 `protocol/dola_pure_api.py` 的 `NOWATERMARK_API_ENDPOINT`。
+- 开关是 `DOLA_PURE_REMOVE_WATERMARK`，**默认 `0`（关闭）**。2.1.5 之前默认是 `1`（开启）。
+- 只有设成 `1` 时，纯 API 路径才会把视频的播放地址（`fplay_url`）或视频信息（`video_info`）发给第三方接口 `http://47.104.150.143:8765/tools/dola/`，由对方返回无水印地址。这个接口来自第三方 remove_water 插件，地址写在 `protocol/dola_pure_api.py` 的 `NOWATERMARK_API_ENDPOINT`。
 - 第三方接口失败时，自动退回方式 ① 的直链；直链也没有时，只能用带水印的原链接。
 
 **③ 浏览器扩展 `extensions/dola30`**
@@ -426,16 +426,16 @@ dola 生成的每条视频，在 dola 服务器上本来就有**两个版本**�
 
 ### 7.3 ⚠️ 隐私与依赖风险
 
-默认配置下（`DOLA_PURE_REMOVE_WATERMARK=1`），**Cookie 账号生成的每条视频，播放信息都会通过未加密的 HTTP 发送到第三方服务器 `47.104.150.143`**，这意味着：
+**开启第三方接口（`DOLA_PURE_REMOVE_WATERMARK=1`）时**，Cookie 账号生成的每条视频，播放信息都会通过未加密的 HTTP 发送到第三方服务器 `47.104.150.143`，这意味着：
 
 - 对方能拿到你所有视频的地址，也就能看到、下载这些视频；
 - 这台第三方服务器宕机或下线时，会退回直链，但如果直链也没找到，成片就会带水印。
 
-> 2026-10 实测：这个第三方接口已长期连不上，每条视频都要白等约 2 分钟超时，而 dola 自带的无水印直链一直可用。建议直接关闭（见下）。
+> 2026-10 实测：这个第三方接口已长期连不上，每条视频都要白等约 2 分钟超时，而 dola 自带的无水印直链一直可用（两台线上服务器共 10 次全部拿到无水印成片）。所以从 2.1.5 起默认关闭。
 
-### 7.4 如何关闭第三方接口
+### 7.4 确认 / 关闭第三方接口
 
-在 `dola.env` 里设置（没有这一行就加上）：
+2.1.5 起不设置就是关闭的。如果你的 `dola.env` 里显式写了 `DOLA_PURE_REMOVE_WATERMARK=1`（老版本模板会写），改成：
 
 ```bash
 DOLA_PURE_REMOVE_WATERMARK=0
@@ -443,7 +443,7 @@ DOLA_PURE_REMOVE_WATERMARK=0
 
 然后重启服务：`sudo systemctl restart dola-pool`。
 
-关闭后**仍会优先使用方式 ① 的 dola 无水印直链**，只是不再把视频信息发给第三方。是否每条都能拿到无水印版本取决于 dola 返回的数据，建议改完后先出几条视频确认没有水印，再长期使用。
+关闭后**仍会使用方式 ① 的 dola 无水印直链**，只是不再把视频信息发给第三方。
 
 ---
 

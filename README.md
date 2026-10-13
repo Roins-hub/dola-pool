@@ -190,7 +190,7 @@ pytest -q tests
 ## 注意事项
 
 - 账号 cookie 约 60 天过期；登录态失效的账号会被自动标记，需重新导入。
-- **去水印**：不处理画面，而是直接下载 dola 服务器上的无水印版本。默认（`DOLA_PURE_REMOVE_WATERMARK=1`）会把视频播放信息通过 HTTP 发给第三方解析服务（`protocol/dola_pure_api.py` 中的 `NOWATERMARK_API_ENDPOINT`），介意可设为 `0`。原理与风险详见 [`USAGE.md` 的「去水印说明」](USAGE.md#7-去水印说明)。
+- **去水印**：不处理画面，而是直接下载 dola 服务器上的无水印版本（dola 自带的 `lr=unwatermarked` 直链）。第三方解析接口（`protocol/dola_pure_api.py` 中的 `NOWATERMARK_API_ENDPOINT`）**默认关闭**（`DOLA_PURE_REMOVE_WATERMARK=0`）；设为 `1` 才会启用，届时视频播放信息会经 HTTP 发给第三方。原理与风险详见 [`USAGE.md` 的「去水印说明」](USAGE.md#7-去水印说明)。
 - `accounts/`、`*.db`、`dola.env`、`cookies.txt`、`downloads/` 均已忽略，切勿提交真实凭据。
 
 ## 免责声明

@@ -60,7 +60,7 @@ export DOLA_PURE_POLL_INTERVAL=60
 export DOLA_SIGNER_PROCESSES=12
 export DOLA_PURE_REGION=JP
 export DOLA_PURE_PC_VERSION=3.33.11
-export DOLA_PURE_REMOVE_WATERMARK=1
+export DOLA_PURE_REMOVE_WATERMARK=0      # 1 = 调第三方去水印接口（长期不可用，且会外发视频信息）
 export DOLA_EXTENSION_ENABLED=0          # 30 秒扩展依赖浏览器；无 Chromium 的机器保持 0
 
 exec /www/wwwroot/stable-dola-pool/.venv/bin/uvicorn server:app \

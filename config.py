@@ -255,8 +255,10 @@ PURE_API_ENABLED = os.getenv("DOLA_PURE_API", "1") == "1"
 # 纯 API 协议参数（对齐 dola-pool-cookie 的 region /pc_version）。
 PURE_API_REGION = os.getenv("DOLA_PURE_REGION", "JP")
 PURE_API_PC_VERSION = os.getenv("DOLA_PURE_PC_VERSION", "3.33.11")
-# 是否走无水印（第三方 nowatermark 解析）。
-PURE_API_REMOVE_WATERMARK = os.getenv("DOLA_PURE_REMOVE_WATERMARK", "1") == "1"
+# 是否调用第三方 nowatermark 解析接口（会把视频播放信息经 HTTP 发给第三方）。
+# 默认 0（关闭）：2026-10 实测该接口长期连不上，每条视频白等约 2 分钟超时；
+# 而 dola 自己返回的 lr=unwatermarked 直链一直可用，关闭后成片照样无水印。
+PURE_API_REMOVE_WATERMARK = os.getenv("DOLA_PURE_REMOVE_WATERMARK", "0") == "1"
 # 纯 API 出片轮询/下载目录（复用 DOWNLOAD_DIR）。
 PURE_API_TIMEOUT = int(os.getenv("DOLA_PURE_TIMEOUT", "900"))
 # 上游回执里写了「预计等待 N 分钟」时，出片等待跟着上游的预计放长（N×1.2 + 5 分钟），

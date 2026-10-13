@@ -670,7 +670,7 @@ open("out.mp4", "wb").write(requests.get(url, timeout=120).content)
 |---|---|---|
 | `DOLA_PURE_API` | `1` | cookie 号走纯 API（**需要 Node.js**，见附录 C）。⚠️ **纯 API 失败不回退浏览器**：`source=cookie` 的号直接抛真实错误，只有 login 号才走浏览器/扩展路径 |
 | `DOLA_PURE_REGION` / `DOLA_PURE_PC_VERSION` | `JP` / `3.33.11` | 上游区域与客户端版本 |
-| `DOLA_PURE_REMOVE_WATERMARK` | `1` | 无水印解析 |
+| `DOLA_PURE_REMOVE_WATERMARK` | `0` | 第三方无水印解析接口（默认关闭；成片仍用 dola 自带的无水印直链） |
 | `DOLA_HEADLESS` | `1` | 浏览器无头；有头路径由 `xvfb-run` 提供显示 |
 | `DOLA_EXTENSION_DIR` / `DOLA_EXTENSION_ENABLED` | `…/extensions/dola30` / `1` | 30 秒/无水印扩展 |
 | `PLAYWRIGHT_BROWSERS_PATH` | `/www/wwwroot/stable-dola-pool/.browsers` | Chromium（patchright）内核位置 |
