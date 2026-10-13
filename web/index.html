@@ -111,6 +111,13 @@ input::placeholder,textarea::placeholder{color:#6d7c90}
 select option{background:#111827;color:var(--text)}
 input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
 #accountsTable,#proxiesTable,#tasksTable,#videosTable,#keysTable,#usersTable,#perAccount{overflow-x:auto}
+/* ptabs：添加代理弹窗的「标准添加 / 快捷添加」标签 */
+.ptabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:-4px 0 14px}
+.ptab{background:none;border:none;border-bottom:2px solid transparent;padding:8px 14px;margin-bottom:-1px;
+  font-size:14px;color:var(--sub);cursor:pointer}
+.ptab:hover{color:var(--text)}
+.ptab.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.qp-res{max-height:200px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.7}
 /* egress-warn：出口限流 / 共用出口提醒 */
 .ew{padding:8px 12px;border-radius:8px;font-size:13px;line-height:1.6;margin:6px 0}
 .ew-red{background:rgba(229,72,77,.12);border:1px solid rgba(229,72,77,.35);color:#e5484d}
@@ -1425,7 +1432,7 @@ function proxyDialog(p){
   const kind=proxyKindOf(p);
   // 提取链接 / 粘贴节点 两种动态方式不需要网关地址，直接把 IP、端口那一行收起来
   const showGw=(mode!=='extract'||kind==='tunnel');
-  showDlg(`<h2>${isEdit?'编辑代理':'添加代理'}</h2>
+  showDlg(`<h2>${isEdit?'编辑代理':'添加代理'}</h2>${isEdit?'':proxyAddTabs('std')}
     <label>名称</label><input id="f_pname" value="${p?esc(p.name):''}" placeholder="例如：日本主代理">
     <label>协议</label><select id="f_pprotocol" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${proxyProtocolOptions(p?p.protocol:'http')}</select>
     <label>出口类型</label><select id="f_pmode" onchange="onProxyModeChange()" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${proxyModeOptions(mode)}</select>
@@ -1463,6 +1470,100 @@ function proxyDialog(p){
       <button class="btn btn-p" onclick="submitProxy('${p?p.id:''}')">${isEdit?'保存':'添加'}</button></div>`);
 }
 function openAddProxy(){proxyDialog(null);}
+function proxyAddTabs(on){
+  return `<div class="ptabs">
+    <button class="ptab ${on==='std'?'on':''}" onclick="proxyDialog(null)">＋ 标准添加</button>
+    <button class="ptab ${on==='quick'?'on':''}" onclick="quickProxyDialog()">☰ 快捷添加</button>
+  </div>`;
+}
+/** 快捷添加：一行一个代理，批量建成「静态IP」代理（每行 = 一个固定出口）。 */
+function quickProxyDialog(){
+  showDlg(`<h2>添加代理</h2>${proxyAddTabs('quick')}
+    <label>代理列表</label>
+    <textarea id="f_qplist" rows="8" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-top:4px"
+      placeholder="每行输入一个代理，支持以下格式：&#10;socks5://user:pass@192.168.1.1:1080&#10;http://192.168.1.1:8080&#10;https://user:pass@proxy.example.com:443&#10;192.168.1.1:8080:user:pass&#10;user:pass@192.168.1.1:8080"></textarea>
+    <div class="tiny" style="margin-top:6px">没写协议的行按下面的「默认协议」处理；每行建成一条<b>静态IP</b>代理（一个固定出口）。
+      已存在的（同地址 + 端口 + 用户名）自动跳过。动态IP / 节点池请用「标准添加」。</div>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><label>名称前缀</label><input id="f_qpprefix" value="代理" placeholder="生成的名称：前缀-地址:端口"></div>
+      <div style="flex:1"><label>默认协议</label><select id="f_qpproto" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${proxyProtocolOptions('http')}</select></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-weight:400">
+      <input type="checkbox" id="f_qpprobe" checked style="width:auto"> 添加后自动探测出口 IP（确认是不是日本 / 韩国）</label>
+    <div id="f_qpres" class="qp-res" style="margin-top:8px"></div>
+    <div class="row"><button class="btn" id="f_qpcancel" onclick="hide('dlg')">取消</button>
+      <button class="btn btn-p" id="f_qpgo" onclick="submitQuickProxies()">批量添加</button></div>`);
+}
+/** 解析一行代理 → {protocol, host, port, username, password}；不认识返回 null。 */
+function parseProxyLine(line, defProto){
+  line=line.trim();
+  if(!line||line.startsWith('#'))return null;
+  const fix=v=>{try{return decodeURIComponent(v);}catch(e){return v;}};
+  const proto=x=>{x=(x||defProto||'http').toLowerCase();return x==='socks5h'?'socks5':x;};
+  // scheme://[user:pass@]host:port[/]  或  [user:pass@]host:port
+  let m=line.match(/^(?:([a-z0-9]+):\/\/)?(?:([^:@\s]+):([^@\s]*)@)?([^:@\s\/]+):(\d{1,5})\/?$/i);
+  if(m)return {protocol:proto(m[1]),host:m[4],port:Number(m[5]),username:fix(m[2]||''),password:fix(m[3]||'')};
+  // host:port:user:pass（密码里允许再有冒号）
+  m=line.match(/^(?:([a-z0-9]+):\/\/)?([^:@\s\/]+):(\d{1,5}):([^:\s]+):(\S+)$/i);
+  if(m)return {protocol:proto(m[1]),host:m[2],port:Number(m[3]),username:m[4],password:m[5]};
+  return null;
+}
+async function submitQuickProxies(){
+  const text=q('#f_qplist').value;
+  const defProto=q('#f_qpproto').value;
+  const prefix=(q('#f_qpprefix').value.trim()||'代理');
+  const doProbe=q('#f_qpprobe').checked;
+  const out=q('#f_qpres');
+  const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(x=>x&&!x.startsWith('#'));
+  if(!lines.length)return alert('请粘贴代理，一行一个');
+  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
+  const keyOf=x=>`${String(x.host).toLowerCase()}:${x.port}:${x.username||''}`;
+  const existing=new Set(proxyCache.map(keyOf));
+  const names=new Set(proxyCache.map(x=>x.name));
+  const items=[],log=[];
+  lines.forEach((line,i)=>{
+    const p=parseProxyLine(line,defProto);
+    if(!p){log.push(`✗ 第 ${i+1} 行格式不对：${line.slice(0,60)}`);return;}
+    if(!(p.port>0&&p.port<=65535)){log.push(`✗ 第 ${i+1} 行端口不对：${line.slice(0,60)}`);return;}
+    if(!['http','https','socks4','socks5'].includes(p.protocol)){log.push(`✗ 第 ${i+1} 行协议不支持（${p.protocol}）`);return;}
+    const k=keyOf(p);
+    if(existing.has(k)){log.push(`– 第 ${i+1} 行已存在，跳过：${p.host}:${p.port}`);return;}
+    existing.add(k);
+    let name=`${prefix}-${p.host}:${p.port}`,n=2;
+    while(names.has(name))name=`${prefix}-${p.host}:${p.port}-${n++}`;
+    names.add(name);p.name=name;items.push(p);
+  });
+  const go=q('#f_qpgo'),cancel=q('#f_qpcancel');
+  go.disabled=true;cancel.disabled=true;
+  const render=()=>{out.textContent=log.join('\n');out.scrollTop=out.scrollHeight;};
+  render();
+  let ok=0;
+  for(const p of items){
+    const label=`${p.name}（${p.protocol}）`;
+    let created=null;
+    try{
+      const r=await api('/api/admin/proxies',{method:'POST',body:{name:p.name,protocol:p.protocol,host:p.host,port:p.port,
+        username:p.username,password:p.password,remark:'快捷添加',mode:'static'}});
+      created=r.created||{};ok++;
+    }catch(e){log.push(`✗ ${label} 添加失败：${e.message}`);render();continue;}
+    if(doProbe&&created.id){
+      log.push(`… ${label} 已添加，探测出口中`);render();
+      try{
+        const r=await api('/api/admin/proxies/'+encodeURIComponent(created.id)+'/probe',{method:'POST'});
+        if(r.ok){
+          proxyProbeCache[created.id]=r.ip+(r.country?`（${r.country}${r.isp?' / '+r.isp:''}）`:'');
+          const good=['JP','KR'].includes(String(r.country||'').toUpperCase());
+          log[log.length-1]=`${good?'✓':'⚠'} ${label} → ${r.ip}（${r.country||'未知'}${r.isp?' / '+r.isp:''}）${good?'':'  不是日本/韩国出口，dola 会拒绝'}`;
+        }else log[log.length-1]=`⚠ ${label} 已添加，但探测失败：${r.error||'未知错误'}`;
+      }catch(e){log[log.length-1]=`⚠ ${label} 已添加，但探测失败：${e.message}`;}
+    }else log.push(`✓ ${label} 已添加`);
+    render();
+  }
+  log.push(`—— 完成：新增 ${ok} 个，共 ${lines.length} 行`);render();
+  go.disabled=false;cancel.disabled=false;cancel.textContent='关闭';
+  go.textContent='继续添加';go.onclick=()=>{q('#f_qplist').value='';go.textContent='批量添加';go.onclick=submitQuickProxies;};
+  loadProxies();
+}
 function openEditProxy(id){const p=proxyCache.find(x=>x.id===id);if(p)proxyDialog(p);}
 async function submitProxy(id){
   const mode=q('#f_pmode').value;

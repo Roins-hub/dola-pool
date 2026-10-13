@@ -21,6 +21,9 @@
 - **面板**：账号管理页新增出口提示——哪些出口正被限流、还剩多久恢复；
   哪些出口挂的号超过 `DOLA_EGRESS_SHARE_WARN`（默认 3）个。
 - 测试：`tests/test_egress_throttle.py`（8 例）。
+- **面板：添加代理新增「快捷添加」**：一行一个代理批量添加（`socks5://user:pass@host:port`、`http://host:port`、
+  `host:port:user:pass`、`user:pass@host:port`），没写协议的按默认协议；同地址+端口+用户名已存在的自动跳过；
+  可选添加后自动探测出口 IP，非日本/韩国出口会标出来。
 
 ## 2.1.4 — 2026-10-10
 
