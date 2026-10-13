@@ -1719,6 +1719,16 @@ function liveSpan(kind,t0,extra,style){
   return '<span class="live" data-kind="'+kind+'" data-t0="'+t0+'"'+(extra?' data-typ="'+extra+'"':'')
     +(style?' style="'+style+'"':'')+'>'+esc(liveText(el))+'</span>';
 }
+/** 超时任务自动取回的状态提示（报错/备注列最前面）。 */
+function recoverNote(t){
+  if(t.recover_state==='watching')
+    return '<div class="tiny" style="color:#2f6fde">⏳ 后台继续等 dola 出片（最晚到 '+fmtHM(t.recover_until)+'），出片后自动转为完成</div>';
+  if(t.recover_state==='recovered')
+    return '<div class="tiny" style="color:#00a870">✓ 超时后已自动取回（'+fmtHM(t.recovered_at)+'）</div>';
+  if(t.recover_state==='gave_up')
+    return '<div class="tiny">后台取回已结束，未取到视频</div>';
+  return '';
+}
 function costCell(t){
   const c=t.created_at||0,s=t.started_at||0,f=t.finished_at||0;
   const pg=t.progress||{};
@@ -1764,9 +1774,9 @@ async function loadTasks(){
       :'—',
     // 报错原文完整展示（含换行）：不再 slice(0,30)，上游「内容审核不合规 / 肖像保护 / 侵权」
     // 这类话术要能一眼看全。
-    t.error
+    recoverNote(t)+(t.error
       ?'<span class="err" title="'+esc(t.error)+'">'+esc(t.error)+'</span>'
-      :'<span class="tiny">—</span>'
+      :(t.recover_state?'':'<span class="tiny">—</span>'))
   ]);
   q('#tasksTable').innerHTML=table(
     ['ID','提示词','参考图','账号','客户','时长','状态','耗时','创建时间','视频','报错/备注'],rows);

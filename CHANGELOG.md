@@ -41,6 +41,13 @@
   改为 `TASK_DEADLINE + max(VIDEO_TIMEOUT, PURE_TIMEOUT, PURE_TIMEOUT_MAX) + 60`；超时文案改为「等待出片超过 N 分钟」，
   不再误写成「超过 600 秒」。
 - 测试：`tests/test_upstream_wait.py`（7 例）。
+- **超时任务自动取回**：上游已接单（有会话）、只是等到上限没出片的任务（纯 API 号），判失败后在后台继续盯那个会话
+  （只查询，不重新提交、不额外扣额度），每 `DOLA_RECOVER_INTERVAL_SECONDS`（120）秒查一次，最多 `DOLA_RECOVER_TIMEOUT_SECONDS`
+  （10800 = 3 小时，0 = 关闭）。出片了就下载、任务改成「完成」并补上 `video_url`、按正常出片记账；上游明确失败或到期就停。
+  盯守状态落库（`recover_state` / `recover_until` / `recovered_at`），服务重启后自动接上。
+  面板「报错/备注」列显示：⏳ 后台继续等 / ✓ 超时后已自动取回 / 后台取回已结束。
+  注意：盯守期间任务对客户端仍是「失败」（客户端照常退款），取回后变「完成」，可把链接另行发给客户。
+- 测试：`tests/test_auto_recover.py`（8 例）。
 
 ## 2.1.4 — 2026-10-10
 

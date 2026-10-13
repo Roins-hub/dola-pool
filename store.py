@@ -82,6 +82,10 @@ class TaskStore:
                 ("video_bitrate", "INTEGER"),
                 ("attempt", "INTEGER DEFAULT 0"),
                 ("attempted_accounts", "TEXT"),
+                # 超时任务自动取回：watching（后台盯着）/ recovered（已取回）/ gave_up（放弃）
+                ("recover_state", "TEXT DEFAULT ''"),
+                ("recover_until", "REAL"),
+                ("recovered_at", "REAL"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -331,6 +335,16 @@ class TaskStore:
                     (task_id,),
                 ).fetchone()
         return dict(row) if row else None
+
+    def recovering_tasks(self) -> list:
+        """还在「后台自动取回」中的任务（服务重启后要把取回循环接上）。"""
+        with _LOCK:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE recover_state='watching' "
+                "AND conversation_id IS NOT NULL AND account IS NOT NULL "
+                "ORDER BY created_at"
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def recoverable_tasks(self) -> list:
         """服务重启后恢复已拿到 conversation_id 的任务，不重复提交 prompt。"""

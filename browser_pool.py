@@ -1204,6 +1204,22 @@ class BrowserPool:
         meta = self._meta(name)
         return bool(meta and meta["source"] == "cookie")
 
+    def fetch_conversation_video(self, account: str, conversation_id: str) -> dict:
+        """超时任务自动取回：用该号（含它的代理）查一次已有会话，出片了就下载。线程里调用。"""
+        state = self._pure_state(account)
+        if state is None:
+            raise RuntimeError(f"{account} 不是纯 API 账号，无法自动取回")
+        from pure_api_gen import fetch_conversation_video
+        return fetch_conversation_video(state, conversation_id,
+                                        proxy=self._proxy_url_for(account),
+                                        output_dir=config.DOWNLOAD_DIR)
+
+    def claim_recovered(self, account: str, model: str, duration: int | None,
+                        result: dict | None = None) -> int:
+        """取回成功按正常出片记账（上游已经扣了这个号的额度）。事件循环线程里调用。"""
+        cost = self._duration_cost(model or "", int(duration or 0))
+        return self._claim_for(account, cost, result or {})
+
     def is_pure_account(self, name: str) -> bool:
         """这个号能不能走纯 API（cookie 来源 + 有 cookie_state.json）。
 

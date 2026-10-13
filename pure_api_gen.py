@@ -357,6 +357,49 @@ def _progress_heartbeat(on_poll, *, interval: float | None = None):
 
 
 
+# 取回时遇到这些终态就不用再等了：上游明确不会再出这条视频
+RECOVER_FINAL_STATUSES = {"failed", "generation_voided", "quota_exceeded",
+                          "conversation_expired", "submit_retry"}
+
+
+def fetch_conversation_video(cookie_state_path: str | Path, conversation_id: str, *,
+                             proxy: str = "", output_dir: str | Path | None = None,
+                             remove_watermark: bool | None = None,
+                             region: str | None = None, pc_version: str | None = None) -> dict:
+    """查一次已有会话有没有出片（超时任务自动取回用）。**只查询，不提交任何新请求。**
+
+    返回 {"status": ..., "local_path": 有片时的本地路径, "final": 上游已判死, "detail": ...}：
+      - 出片了 → 下载到 output_dir，返回 local_path；
+      - 上游明确失败（额度用完/作废/会话过期…）→ final=True，调用方停止盯守；
+      - 其它（还在排队/生成）→ 都为空，调用方过一会儿再查。
+    """
+    dola = _dola()
+    _load_state(Path(cookie_state_path))
+    if remove_watermark is None:
+        remove_watermark = config.PURE_API_REMOVE_WATERMARK
+    session, ctx, _headers = dola.setup_session(
+        region=region or config.PURE_API_REGION,
+        pc_version=pc_version or config.PURE_API_PC_VERSION,
+        proxy=proxy or "", login_pure=True, login_state_file=str(cookie_state_path))
+    # timeout=1：wait_for_video 只查一轮就返回（没片时状态是 timeout，表示「还没好」）
+    result = dola.get_video_result(session, ctx, conversation_id, timeout=1, interval=1,
+                                   remove_watermark=bool(remove_watermark), proxy=proxy or "")
+    status = str(result.get("status") or "")
+    detail = " | ".join(str(x) for x in ((result.get("failure_reasons") or [])
+                                         + (result.get("texts") or [])))[:300]
+    url = result.get("download_url") or result.get("source_url") or ""
+    if status == "succeeded" and url:
+        out_dir = Path(output_dir or config.DOWNLOAD_DIR)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"recovered_{uuid.uuid4().hex[:12]}.mp4"
+        saved = dola.download_video(url, str(out_path),
+                                    referer=f"{dola.BASE}/chat/{conversation_id}", proxy="")
+        return {"status": status, "local_path": str(saved), "final": False, "detail": detail,
+                "conversation_id": conversation_id}
+    return {"status": status, "local_path": "", "final": status in RECOVER_FINAL_STATUSES,
+            "detail": detail, "conversation_id": conversation_id}
+
+
 def _wait_seconds_from_texts(dola, texts) -> int:
     """从上游回执里解析「预计等待 N 分钟 / N 小时 / 30-40 分钟」，返回秒数（取区间上限）。"""
     for text in texts or []:

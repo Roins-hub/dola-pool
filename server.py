@@ -687,6 +687,10 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
     except Exception as e:
         store.update(task_id, status="failed", error=failure_text.summarize(str(e)),
                      finished_at=time.time())
+        try:
+            _maybe_start_recovery(task_id, e)
+        except Exception as exc:  # noqa: BLE001 - 取回只是补救，不能影响失败落库
+            print(f"[recover] {task_id} 启动自动取回失败: {exc}", flush=True)
     finally:
         if reference_root:
             shutil.rmtree(reference_root, ignore_errors=True)
@@ -698,6 +702,80 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             store.update(task_id, reference_images="[]")
         if acquired:
             await key_limiter.release(api_key_hash)
+
+
+# ===== 超时任务自动取回 =====
+RECOVERING: set[str] = set()
+
+
+def _is_wait_timeout(exc: BaseException) -> bool:
+    """「上游接单了、只是我们等到上限没出片」这一类失败（才值得后台继续盯）。"""
+    if isinstance(exc, TimeoutError):
+        return True
+    text = str(exc)
+    return "等待出片超时" in text or "等待出片超过" in text
+
+
+def _maybe_start_recovery(task_id: str, exc: BaseException) -> bool:
+    """任务刚判失败：是超时、且有会话、且是纯 API 号 → 进入后台自动取回。"""
+    if config.RECOVER_TIMEOUT_SECONDS <= 0 or not _is_wait_timeout(exc):
+        return False
+    row = store.get(task_id) or {}
+    account, conv = row.get("account"), row.get("conversation_id")
+    if not account or not conv or not pool.is_pure_account(account):
+        return False
+    until = time.time() + config.RECOVER_TIMEOUT_SECONDS
+    store.update(task_id, recover_state="watching", recover_until=until)
+    print(f"[recover] {task_id}（{account}）等待超时，后台继续盯会话 {conv}，"
+          f"最多 {config.RECOVER_TIMEOUT_SECONDS // 60} 分钟", flush=True)
+    asyncio.create_task(_recover_loop(task_id))
+    return True
+
+
+async def _recover_loop(task_id: str) -> None:
+    """后台盯守一个超时任务的 dola 会话：出片就下载并把任务改成「完成」。只查询不提交。"""
+    if task_id in RECOVERING:
+        return
+    RECOVERING.add(task_id)
+    try:
+        while True:
+            row = store.get(task_id)
+            if not row or row.get("recover_state") != "watching":
+                return
+            if time.time() > float(row.get("recover_until") or 0):
+                store.update(task_id, recover_state="gave_up")
+                print(f"[recover] {task_id} 盯守到期仍未出片，放弃", flush=True)
+                return
+            account, conv = row["account"], row["conversation_id"]
+            res = None
+            if pool.egress_throttle_remaining(account) <= 0:   # 出口被限流时这一轮先不查
+                try:
+                    res = await asyncio.to_thread(pool.fetch_conversation_video, account, conv)
+                except Exception as exc:  # noqa: BLE001 - 单次查询失败下一轮再试
+                    print(f"[recover] {task_id} 查询失败（稍后再试）: {str(exc)[:160]}", flush=True)
+            if res and res.get("local_path"):
+                public_url = f"{config.PUBLIC_BASE}/videos/{Path(res['local_path']).name}"
+                meta = await asyncio.to_thread(_video_metadata, res["local_path"],
+                                               row.get("duration"), row.get("ratio"))
+                try:
+                    pool.claim_recovered(account, row.get("model") or "", row.get("duration"), res)
+                except Exception as exc:  # noqa: BLE001 - 记账失败不影响交付
+                    print(f"[recover] {task_id} 记账失败: {exc}", flush=True)
+                store.update(task_id, status="completed", video_url=public_url, error="",
+                             failure_code=None, recover_state="recovered",
+                             recovered_at=time.time(), finished_at=time.time(), **meta)
+                print(f"[recover] {task_id} 已自动取回 → {public_url}", flush=True)
+                await asyncio.to_thread(_prune_downloads)
+                return
+            if res and res.get("final"):
+                note = f"；后台取回结束：dola 最终状态 {res.get('status')}（{(res.get('detail') or '')[:80]}）"
+                store.update(task_id, recover_state="gave_up",
+                             error=failure_text.summarize((row.get("error") or "") + note))
+                print(f"[recover] {task_id} 上游已判定 {res.get('status')}，停止盯守", flush=True)
+                return
+            await asyncio.sleep(max(1, config.RECOVER_INTERVAL_SECONDS))
+    finally:
+        RECOVERING.discard(task_id)
 
 
 async def _resume_task(row: dict):
@@ -829,6 +907,11 @@ async def resume_incomplete_tasks():
             row["id"], row["model"], row["prompt"], ratio, row["duration"],
             _task_reference_images(row.get("reference_images")), _task_client(row),
         ))
+    watching = store.recovering_tasks()
+    if watching:
+        print(f"[startup] 接上 {len(watching)} 个超时任务的后台自动取回", flush=True)
+    for row in watching:
+        asyncio.create_task(_recover_loop(row["id"]))
     asyncio.create_task(_cred_refresher_loop())
     asyncio.create_task(_daily_quota_reset_loop())
     asyncio.create_task(_task_watchdog_loop())
