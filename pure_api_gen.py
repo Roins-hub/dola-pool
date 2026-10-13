@@ -357,9 +357,36 @@ def _progress_heartbeat(on_poll, *, interval: float | None = None):
 
 
 
+def _wait_seconds_from_texts(dola, texts) -> int:
+    """从上游回执里解析「预计等待 N 分钟 / N 小时 / 30-40 分钟」，返回秒数（取区间上限）。"""
+    for text in texts or []:
+        raw = dola.extract_wait_minutes_from_text(str(text))
+        if not raw:
+            continue
+        seconds = 0
+        hours = re.search(r"(\d+)(?:-(\d+))?小时", raw)
+        if hours:
+            seconds += int(hours.group(2) or hours.group(1)) * 3600
+        minutes = re.search(r"(\d+)(?:-(\d+))?分钟", raw)
+        if minutes:
+            seconds += int(minutes.group(2) or minutes.group(1)) * 60
+        if seconds:
+            return seconds
+    return 0
+
+
+def _timeout_for_upstream_wait(base_timeout: int, wait_seconds: int) -> int:
+    """上游报了预计等待时：等 1.2 倍 + 5 分钟余量，不短于原超时、不超过上限。"""
+    if wait_seconds <= 0:
+        return int(base_timeout)
+    want = int(wait_seconds * 1.2) + 300
+    cap = max(int(base_timeout), int(config.PURE_API_TIMEOUT_MAX))
+    return min(max(int(base_timeout), want), cap)
+
+
 def _await_first_ack(*, dola, session, ctx, account: str, conversation_id: str,
                      ack_deadline: float, poll_interval: float,
-                     credits: "_CreditTracker | None" = None, on_poll=None) -> None:
+                     credits: "_CreditTracker | None" = None, on_poll=None) -> list[str]:
     """等「第一次回执」——拍板的 5 分钟规则，**所有时长都要过这一关**。
 
     提交成功后，上游必须在 NO_ACK_SECONDS 内有**任何**回应（额度播报/状态说明/报错），
@@ -386,7 +413,7 @@ def _await_first_ack(*, dola, session, ctx, account: str, conversation_id: str,
         evidence = [t for t in (texts + reasons) if t.strip() and not dola.is_prompt_echo_text(t)]
         status = str(getattr(poll, "status", "") or "")
         if evidence or status not in ("", "pending"):
-            return
+            return evidence
         time.sleep(poll_interval)
     raise AbnormalNoAckError(
         f"{ABNORMAL_RETRY_HINT}（派发后 {NO_ACK_SECONDS} 秒内上游没有任何回应）")
@@ -901,7 +928,8 @@ def generate_pure_video(
         raise PureApiError(f"{account} 提交未返回 conversation_id")
 
     conversation_id = submit.conversation_id
-    deadline = time.time() + timeout
+    submitted_at = time.time()
+    deadline = submitted_at + timeout
     if on_conversation_id:
         try:
             on_conversation_id(account, conversation_id, deadline)
@@ -945,18 +973,32 @@ def generate_pure_video(
     else:
         # 拍板的 5 分钟规则：短时长任务同样先等「第一次回执」，没等到就判【异常】，
         # 而不是干等到 15 分钟总超时。
-        _await_first_ack(
+        ack_texts = _await_first_ack(
             dola=dola, session=session, ctx=ctx, account=account,
             conversation_id=conversation_id,
             ack_deadline=time.time() + NO_ACK_SECONDS,
             poll_interval=poll_interval, credits=credits, on_poll=on_poll,
-        )
+        ) or []
+        # 上游说「预计等待 N 分钟」：出片等待跟着放长（封顶 DOLA_PURE_TIMEOUT_MAX），
+        # 否则上游排队久一点就会被我们自己判超时（上游其实还在生成，额度照扣）。
+        upstream_wait = _wait_seconds_from_texts(dola, ack_texts)
+        effective_timeout = _timeout_for_upstream_wait(timeout, upstream_wait)
+        if effective_timeout > timeout:
+            deadline = submitted_at + effective_timeout
+            log.info("pure: %s 上游预计等待 %d 分钟，出片等待放长到 %d 分钟",
+                     account, upstream_wait // 60, effective_timeout // 60)
+            if on_conversation_id:
+                try:
+                    on_conversation_id(account, conversation_id, deadline)
+                except Exception:
+                    pass
+        poll_timeout = max(60, int(deadline - time.time()))
         # 心跳：get_video_result 内部轮询不会回调进度，这里替它刷 last_poll_at，
         # 免得看门狗把正常等待判成「卡住」而重新派发（重投 = 白扣一次额度）。
         with _progress_heartbeat(on_poll):
             result = dola.get_video_result(
                 session, ctx, conversation_id,
-                timeout=timeout, interval=poll_interval,
+                timeout=poll_timeout, interval=poll_interval,
                 remove_watermark=remove_watermark, proxy=proxy or "",
             )
     credits.note(result.get("texts"))
@@ -972,6 +1014,16 @@ def generate_pure_video(
                 f"{ABNORMAL_RETRY_HINT}（{NO_ACK_SECONDS} 秒内上游没有任何回执，status={status}）")
         if any(str(x).lower() in ("login", "未登录", "ログイン") for x in reasons + texts):
             raise PureLoginExpired(f"{account} 纯 API 轮询发现登录失效: {detail}")
+        if status == "timeout":
+            # 已经拿到会话、上游接单了，只是我们等到上限还没出片：上游大概率仍在排队/生成。
+            # 抛 TimeoutError（号池对它**不换号重提**，否则会重复出片、重复扣额度）。
+            waited = int((time.time() - submitted_at) // 60)
+            hint = result.get("wait_minutes") or ""
+            raise TimeoutError(
+                f"{account} 等待出片超时：已等 {waited} 分钟仍未出片"
+                + (f"（dola 预计排队 {hint}）" if hint else "")
+                + "，超过本服务等待上限；dola 端可能仍在生成，为避免重复扣额度不自动重提。"
+                + f" 上游回执：{detail}")
         # 上游对 30 秒请求有两条拒绝路径：额度不足（报价 6 点）和「单条最多 15 秒，
         # 要不要拆两段」的追问。两者在 ALLOW_30S_PAIR 打开时都用本地两段兜底，
         # 而不是直接失败（否则画布那边的 30 秒任务只能靠换号碰运气）。
@@ -1014,7 +1066,7 @@ def generate_pure_video(
                     f"{account} 出片未成功 status={status}: {detail} —— {SPLIT_CREDIT_HINT}"
                     f"；低成本两段兜底也未成功：{fallback_exc}"
                 ) from fallback_exc
-        if duration_refused and not config.ALLOW_30S_PAIR:
+        if int(duration) >= 30 and duration_refused and not config.ALLOW_30S_PAIR:
             raise PureApiError(
                 f"{account} 上游要求 30 秒拆两段（status={status}）：{detail} —— "
                 "当前按「30 秒不拼接」策略换号重试；要直接用 2×15 秒本地拼接，"

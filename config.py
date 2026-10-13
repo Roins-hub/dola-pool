@@ -259,4 +259,8 @@ PURE_API_PC_VERSION = os.getenv("DOLA_PURE_PC_VERSION", "3.33.11")
 PURE_API_REMOVE_WATERMARK = os.getenv("DOLA_PURE_REMOVE_WATERMARK", "1") == "1"
 # 纯 API 出片轮询/下载目录（复用 DOWNLOAD_DIR）。
 PURE_API_TIMEOUT = int(os.getenv("DOLA_PURE_TIMEOUT", "900"))
+# 上游回执里写了「预计等待 N 分钟」时，出片等待跟着上游的预计放长（N×1.2 + 5 分钟），
+# 但不超过这个上限（秒）。2026-10-13 线上：5 秒任务上游报「预计等待 45 分钟」，
+# 按 15 分钟固定上限等就会白白判失败（上游其实还在排队生成）。
+PURE_API_TIMEOUT_MAX = int(os.getenv("DOLA_PURE_TIMEOUT_MAX", "3600"))
 PURE_API_POLL_INTERVAL = int(os.getenv("DOLA_PURE_POLL_INTERVAL", "30"))
