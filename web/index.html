@@ -597,11 +597,40 @@ async function loadAccounts(){
       `<button class="btn btn-danger" onclick="delAccount('${x.name}')">删除</button>`
     ];
   });
+  // 加号任务还没跑完时号还没进池（Cookie 要开浏览器写 profile + 在线验证，Google 登录要走 OAuth，
+  // 且同一时间只跑一个，自动重登也排在同一队列里）：先在第 1 页顶部放占位行，免得以为没加上
+  if(accPage===1)rows.unshift(...pendingAddRows(jobs,new Set(allAccountNames)));
+  scheduleAddJobPoll(jobs,new Set(allAccountNames));
   q('#accountsTable').innerHTML=table(
     ['<input type="checkbox" id="selAll" onchange="toggleAll(this.checked)" title="全选=当前筛选结果的全部账号（跨页保持）">',
      '内部账号','名称','组','运行','来源','调度','剩余额度','最近使用','创建时间','备注','操作'],rows)
     +accPager(accTotalPages);
   updateSelButtons();
+}
+
+/** 还没进池的加号任务：进行中的一直显示，失败的保留 30 分钟（鼠标悬停看原因）。 */
+function pendingAddRows(jobs,inPool){
+  const now=Date.now()/1000;
+  return Object.entries(jobs).filter(([n,j])=>j.kind==='add'&&!inPool.has(n)&&
+      (j.status==='running'||(j.status==='failed'&&now-(j.finished_at||j.started_at||0)<1800)))
+    .sort((a,b)=>(b[1].started_at||0)-(a[1].started_at||0))
+    .map(([n,j])=>{
+      const secs=Math.max(0,Math.round(now-(j.started_at||now)));
+      const state=j.status==='running'
+        ?`<span class="badge b-blue">加号中 ${secs}s</span><div class="tiny">${esc(j.stage||'')}</div>`
+        :`<span class="badge b-red" title="${esc(j.error)}">加号失败</span><div class="tiny">${esc((j.error||'').slice(0,80))}</div>`;
+      const src=j.source==='cookie'?'<span class="badge b-orange">Cookie 载入</span>'
+        :j.source==='login'?'<span class="badge b-green">账号登录</span>':'<span class="tiny">—</span>';
+      return ['',`<span class="account-id">${esc(n)}</span>`,accLabel(j),state,'',src,'','','',fmt(j.started_at),'',
+        '<span class="tiny">完成后自动出现在列表</span>'];
+    });
+}
+let addJobPollTimer=null;
+/** 有加号任务在跑时每 2 秒刷一次账号页（平时 10 秒），跑完立刻显示新号。 */
+function scheduleAddJobPoll(jobs,inPool){
+  const running=Object.entries(jobs).some(([n,j])=>j.kind==='add'&&j.status==='running');
+  if(!running||addJobPollTimer)return;
+  addJobPollTimer=setTimeout(()=>{addJobPollTimer=null;if(curTab==='accounts')loadAccounts().catch(()=>{});},2000);
 }
 
 /** 备注单元格：显示账号备注（审核拒稿原文会自动追加到这里），点一下可直接编辑。 */

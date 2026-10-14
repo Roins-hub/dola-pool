@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -114,6 +114,8 @@ TEST_JOBS: dict[str, dict] = {}
 LAST_CRED_REFRESH: dict[str, float] = {}
 # 加号并发上限：1.9GB 内存机器上同时开多个浏览器登录会 OOM，批量添加时逐个排队登录
 ADD_ACCOUNT_SEM = asyncio.Semaphore(1)
+# 当前占着 ADD_ACCOUNT_SEM 的是谁（面板「加号中」提示排在谁后面；Google 自动重登一次可能要几分钟）
+ADD_SEM_HOLDER = {"what": ""}
 # 浏览器并发压力测试状态（内存态）
 STRESS_RUN: dict = {
     "status": "idle",
@@ -1876,9 +1878,13 @@ async def _verify_account_once(name: str) -> dict:
         if creds and creds.get("password"):
             try:
                 async with ADD_ACCOUNT_SEM:
-                    await add_account_flow(
-                        name, creds["email"], creds["password"], creds.get("totp") or "",
-                        force_login=True)
+                    ADD_SEM_HOLDER["what"] = f"{name} 验证重登"
+                    try:
+                        await add_account_flow(
+                            name, creds["email"], creds["password"], creds.get("totp") or "",
+                            force_login=True)
+                    finally:
+                        ADD_SEM_HOLDER["what"] = ""
                 pool.set_email(name, creds["email"])
                 pool.set_login_status(name, True)
                 ok, reason = await pool.verify_account_detail(name)
@@ -2380,6 +2386,7 @@ async def admin_import_accounts(body: ImportTextBody,
                     errors.append(f"{name}: 邮箱已存在于 {','.join(dups)}")
                     continue
                 try:
+                    ADD_SEM_HOLDER["what"] = f"批量登录（{name}）"
                     await add_account_flow(name, cred.email, cred.password, cred.totp)
                     pool.ensure_account(name)
                     pool.set_email(name, cred.email)
@@ -2391,7 +2398,9 @@ async def admin_import_accounts(body: ImportTextBody,
                 except Exception as exc:
                     failed.append(name)
                     errors.append(f"{name}: {str(exc)[:150]}")
+            ADD_SEM_HOLDER["what"] = ""
     except Exception as exc:
+        ADD_SEM_HOLDER["what"] = ""
         raise HTTPException(400, str(exc)[:300]) from exc
     return {"ok": True, "created": created, "failed": failed, "errors": errors}
 
@@ -2591,13 +2600,23 @@ async def admin_user_delete(username: str,
     return {"ok": True}
 
 
+def _add_job_stage(name: str, stage: str) -> None:
+    if name in JOBS:
+        JOBS[name] = {**JOBS[name], "stage": stage}
+
+
 async def _run_add_job(name: str, email: str, password: str, totp: str,
                        cookies: str = "", cookie_skip_verify: bool = False) -> None:
     JOBS[name] = {"kind": "add", "status": "running", "email": email,
-                  "error": "", "started_at": time.time()}
+                  "source": "cookie" if cookies else "login",
+                  "error": "", "started_at": time.time(), "stage": "排队中"}
     try:
+        if ADD_ACCOUNT_SEM.locked():
+            _add_job_stage(name, "排队中：前面还有 " + (ADD_SEM_HOLDER["what"] or "其他加号任务"))
         async with ADD_ACCOUNT_SEM:
+            ADD_SEM_HOLDER["what"] = f"{name} 加号"
             if cookies:
+                _add_job_stage(name, "导入 Cookie" + ("" if cookie_skip_verify else " 并在线验证登录态"))
                 result = await import_cookie_account(
                     name, json.loads(cookies),
                     require_login=not cookie_skip_verify,
@@ -2607,14 +2626,19 @@ async def _run_add_job(name: str, email: str, password: str, totp: str,
                 pool.set_source(name, "cookie")
                 pool.set_login_status(name, bool(result.get("verified")))
             else:
+                _add_job_stage(name, "Google 登录中（打开浏览器走 OAuth，通常 1~3 分钟）")
                 await add_account_flow(name, email, password, totp)
                 pool.ensure_account(name)
                 pool.set_email(name, email)
                 pool.set_source(name, "login")
                 pool.set_login_status(name, True)
-        JOBS[name] = {**JOBS[name], "status": "success"}
+        JOBS[name] = {**JOBS[name], "status": "success", "stage": "", "finished_at": time.time()}
     except Exception as e:
-        JOBS[name] = {**JOBS[name], "status": "failed", "error": str(e)[:300]}
+        JOBS[name] = {**JOBS[name], "status": "failed", "stage": "", "error": str(e)[:300],
+                      "finished_at": time.time()}
+    finally:
+        if ADD_SEM_HOLDER["what"] == f"{name} 加号":
+            ADD_SEM_HOLDER["what"] = ""
 
 
 async def _cred_try_refresh_once() -> None:
@@ -2641,6 +2665,7 @@ async def _cred_try_refresh_once() -> None:
         print(f"[cred-refresh] 尝试自动刷新账号 {name}", flush=True)
         try:
             async with ADD_ACCOUNT_SEM:
+                ADD_SEM_HOLDER["what"] = f"{name} 自动重登"
                 await add_account_flow(
                     name, creds["email"], creds["password"], creds.get("totp") or "",
                     force_login=True)
@@ -2649,6 +2674,9 @@ async def _cred_try_refresh_once() -> None:
             print(f"[cred-refresh] {name} 刷新成功", flush=True)
         except Exception as e:
             print(f"[cred-refresh] {name} 刷新失败: {str(e)[:200]}", flush=True)
+        finally:
+            if ADD_SEM_HOLDER["what"] == f"{name} 自动重登":
+                ADD_SEM_HOLDER["what"] = ""
 
 
 async def _cred_refresher_loop() -> None:
@@ -2689,7 +2717,8 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
         except Exception:
             raise HTTPException(422, "cookie JSON 格式错误")
     JOBS[body.name] = {"kind": "add", "status": "running", "email": email,
-                       "error": "", "started_at": time.time()}
+                       "source": "cookie" if cookies else "login",
+                       "error": "", "started_at": time.time(), "stage": "排队中"}
     asyncio.create_task(_run_add_job(
         body.name, email, body.password, body.totp,
         cookies=cookies, cookie_skip_verify=body.cookie_skip_verify,
