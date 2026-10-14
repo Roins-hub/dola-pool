@@ -58,6 +58,7 @@ def _setup(tmp_path, monkeypatch, probe_map):
     monkeypatch.setattr(config, "PURE_API_ENABLED", True)
     # 这里验证的是「两振出局」的探测口径；2.1.5 的出口限流退避单独在 test_egress_throttle 测
     monkeypatch.setattr(config, "EGRESS_THROTTLE_SECONDS", 0)
+    monkeypatch.setattr(config, "THROTTLE_ACCOUNT_COOLDOWN_SECONDS", 0)
 
     accounts_dir = tmp_path / "accounts"
     names = ["acc1", "acc2", "acc3"]

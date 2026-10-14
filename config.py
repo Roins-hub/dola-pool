@@ -271,4 +271,12 @@ PURE_API_TIMEOUT_MAX = int(os.getenv("DOLA_PURE_TIMEOUT_MAX", "3600"))
 RECOVER_TIMEOUT_SECONDS = int(os.getenv("DOLA_RECOVER_TIMEOUT_SECONDS", "10800"))
 # 每隔多久查一次（秒）。
 RECOVER_INTERVAL_SECONDS = int(os.getenv("DOLA_RECOVER_INTERVAL_SECONDS", "120"))
+# 账号吃到上游 710022002「访问频繁」后，该号进【异常】组暂停派发多久（秒；0 = 不暂停该号，
+# 只做出口级退避）。2026-10-13 线上：直连和日本代理两个出口都被拒，按出口退避后换同出口的
+# 下一个号继续撞，任务在「退避 → 换号 → 再被拒」里一直循环到超时。
+THROTTLE_ACCOUNT_COOLDOWN_SECONDS = int(os.getenv("DOLA_THROTTLE_ACCOUNT_COOLDOWN_SECONDS", "1800"))
+# 30 秒任务（不拼接时）上游回「只支持 4~15 秒」后，最多再等多久出片（秒）。上游有时说完还会出 15 秒
+# 或自己出两段（可拼接），所以不立刻失败；但等这么久仍没片就判「时长不支持」，不再白等到 30 分钟。
+# 上游明确说「按默认 5 秒为你生成」时不等，直接失败。0 = 不设上限（等到总超时）。
+CAP_30S_GRACE_SECONDS = int(os.getenv("DOLA_30S_CAP_GRACE_SECONDS", "600"))
 PURE_API_POLL_INTERVAL = int(os.getenv("DOLA_PURE_POLL_INTERVAL", "30"))

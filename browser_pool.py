@@ -18,8 +18,8 @@ from video_worker_ui import (
     generate_video, resume_video,
 )
 from pure_api_gen import (
-    AbnormalNoAckError, ShortClipError, ensure_web_playable, generate_pure_video,
-    hello_probe, probe_login,
+    AbnormalNoAckError, ShortClipError, UnsupportedDurationError, ensure_web_playable,
+    generate_pure_video, hello_probe, probe_login,
 )
 import config
 import cred_store
@@ -745,12 +745,14 @@ class BrowserPool:
         if (result.get("status") == "error"
                 and classify_upstream_failure(remark) == "transient"):
             self.note_egress_throttle(name, remark)
+            self.note_account_throttle(name, remark)
         else:
             # 限流类失败不进缓存：出口恢复后要能立刻重探，而不是被 5 分钟缓存挡住
             self._probe_cache[name] = (time.time(), result)
         self._ensure_meta(name)
         if result.get("ok"):
             self.clear_egress_throttle(name)
+            self._clear_throttle_abnormal(name)
             was_risk = bool(self._meta(name) and self._meta(name)["risk_control"])
             print(f"[pool] {name} 你好探测通过（{result.get('elapsed')}s，"
                   f"回复 {len(str(result.get('reply') or ''))} 字）"
@@ -1083,6 +1085,37 @@ class BrowserPool:
                 pass
         return seconds
 
+    THROTTLE_REASON_PREFIX = "上游限流 710022002"
+
+    def note_account_throttle(self, name: str, reason: str = "") -> int:
+        """该号吃到 710022002：放进【异常】组暂停派发（到期自动恢复），返回暂停秒数。
+
+        出口级退避只管「同一 IP 别连着撞」；但线上见过直连和代理两个出口一起被拒，
+        退避一结束又换同出口的下一个号去撞，任务一直循环。按号暂停后，被拒过的号
+        不再参与轮询；全部被暂停时任务会直接报清楚原因，而不是转圈到超时。
+        """
+        seconds = config.THROTTLE_ACCOUNT_COOLDOWN_SECONDS
+        if seconds <= 0:
+            return 0
+        self._ensure_meta(name)
+        self._mark_abnormal(
+            name, f"{self.THROTTLE_REASON_PREFIX}：{(reason or '')[:100]}"
+                  f"（{seconds // 60} 分钟后自动恢复，探测通过可提前恢复）",
+            seconds=seconds)
+        print(f"[pool] {name} 吃到上游限流 → 进【异常】组暂停 {seconds // 60} 分钟，不参与派发", flush=True)
+        return seconds
+
+    def _clear_throttle_abnormal(self, name: str) -> None:
+        """限流导致的【异常】在探测通过后提前解除（其它原因的异常不动）。"""
+        m = self._meta(name)
+        if m and m["abnormal_until"] and str(m["abnormal_reason"] or "").startswith(
+                self.THROTTLE_REASON_PREFIX):
+            self._conn.execute(
+                "UPDATE accounts_meta SET abnormal_until=0, abnormal_reason='' WHERE name=?",
+                (name,))
+            self._conn.commit()
+            print(f"[pool] {name} 探测通过，解除限流暂停", flush=True)
+
     def clear_egress_throttle(self, name: str) -> None:
         """该号走通了（探测通过/出片成功）：出口恢复，递增计数清零。"""
         self._egress_throttle.pop(self._safe_egress(name), None)
@@ -1269,7 +1302,8 @@ class BrowserPool:
         return result
 
     async def test_generate(self, account: str, prompt: str, ratio: str | None = None,
-                            duration: int = 10, model: str = "seedance-2.0") -> dict:
+                            duration: int = 10, model: str = "seedance-2.0",
+                            on_poll=None) -> dict:
         """账号级测试出片：强制用指定账号生成一条，返回成功/失败与成品 URL。
 
         不经过号池选号调度（跳过 _schedulable / 每日上限等），只验证该号本身能否出片。
@@ -1287,7 +1321,7 @@ class BrowserPool:
             try:
                 result = await self._generate_effective(
                     account, prompt, ratio, duration, model,
-                    on_conversation_id=None, on_poll=None, on_balance=on_balance,
+                    on_conversation_id=None, on_poll=on_poll, on_balance=on_balance,
                     reference_image_paths=[],
                 )
                 local = result.get("local_path")
@@ -1645,6 +1679,10 @@ class BrowserPool:
                             print(f"[pool] {account} 生成前积分不足，跳过: {e}", flush=True)
                             self._mark_quota_blocked(account, str(e))
                             last_err = e
+                        except UnsupportedDurationError as e:
+                            # 上游明确说这个时长不支持：换号也是同样回答，直接失败、别再挨个号白撞
+                            print(f"[pool] {account} 时长不支持，任务直接失败: {e}", flush=True)
+                            raise RuntimeError(str(e)) from e
                         except ShortClipError as e:
                             # 30 秒只要原生成片：上游这次只给了短视频就换号重试，不做两段拼接，
                             # 也不把号标成失败（短视频是上游行为，不是这个号的错）。
@@ -1697,6 +1735,7 @@ class BrowserPool:
                             message = str(e)
                             if self._note_upstream_failure(account, message, attempt) == "transient":
                                 self.note_egress_throttle(account, message)
+                                self.note_account_throttle(account, message)
                             last_err = e
                         self._mark_attempt_failed(account)
                         tried.add(account)
@@ -1782,4 +1821,13 @@ class BrowserPool:
                     # 截成 300 字会把原因切掉。长度上限由 server 落库时统一处理。
                     f"{prefix}连续 {attempt} 次生成均失败（依次尝试账号: {chain}）: {str(last_err)[:1500]}"
                 )
+            now = time.time()
+            throttled = [a for a in self.list_accounts()
+                         if str(a.get("abnormal_reason") or "").startswith(self.THROTTLE_REASON_PREFIX)
+                         and float(a.get("abnormal_until") or 0) > now]
+            if throttled:
+                soonest = int(min(float(a["abnormal_until"]) for a in throttled) - now) // 60 + 1
+                raise RuntimeError(
+                    f"号池无可用账号：{len(throttled)} 个号因上游限流（710022002 访问频繁）暂停中，"
+                    f"最早约 {soonest} 分钟后恢复；其余号在冷却/风控/待激活或调度关闭")
             raise RuntimeError(f"号池无可用账号（调度关闭/冷却/额度用完）: {last_err or '无号'}")

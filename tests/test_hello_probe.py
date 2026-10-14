@@ -137,7 +137,9 @@ def test_soft_error_does_not_lock_account(tmp_path, monkeypatch):
     assert row["risk_control"] == 0          # 不锁号
     assert row["risk_reason"] == ""
     assert "710022002" in row["probe_result"]
-    assert next(a for a in bp.list_accounts() if a["name"] == "acc1")["group"] == browser_pool.GROUP_FULL
+    # 2.1.6：限流的号进【异常】组临时暂停（到期自动恢复，探测通过提前恢复），不参与派发；
+    # 但仍然**不是**风控（风控是永久的，要人工恢复）。
+    assert next(a for a in bp.list_accounts() if a["name"] == "acc1")["group"] == browser_pool.GROUP_ABNORMAL
 
 
 def test_probe_result_is_cached_until_forced(tmp_path, monkeypatch):

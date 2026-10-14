@@ -93,6 +93,10 @@ class PureLoginExpired(PureApiError):
     """会话失效：请求后上游返回未登录。对应浏览器路径的 LoginExpiredError。"""
 
 
+class UnsupportedDurationError(PureApiError):
+    """上游明确表示这个时长不支持（如 30 秒只给 4~15 秒）：换号也一样，整个任务直接失败。"""
+
+
 class ShortClipError(PureApiError):
     """上游只给了短视频（30 秒请求只回 ~15 秒）：默认不拼接，交给调用方换号重试。"""
 
@@ -271,6 +275,8 @@ def _wait_video_same_conversation(
     ack_deadline = min(deadline, time.time() + NO_ACK_SECONDS)
     acked = False
     split_noted = False
+    cap_since = 0.0
+    cap_said = ""
     errors = 0
     while True:
         try:
@@ -294,6 +300,7 @@ def _wait_video_same_conversation(
                 on_poll(time.time())
             except Exception:
                 pass
+        _emit_upstream_note(on_poll, dola, texts)
         if duration < 30:
             return poll, []
         clip = _clip_seconds(dola, poll)
@@ -311,6 +318,18 @@ def _wait_video_same_conversation(
             # 只记录，不再回「拆两段」（那会把第二段抬到 6 点报价）。
             split_noted = True
             log.info("pure poll: %s 上游称只支持 4~15 秒，不协商拆段，等上游出片后本地补段", account)
+            cap_since = time.time()
+            cap_said = _upstream_note(dola, texts)
+            if not config.ALLOW_30S_PAIR and "按默认5秒" in re.sub(r"\s+", "", cap_said):
+                # 上游明确只给默认 5 秒：等下去也拿不到 30 秒（2026-10-13 线上：回完这句 30 分钟
+                # 都没出片，任务白等到超时）。直接失败、不换号重试（换号上游也是同样回答）。
+                raise UnsupportedDurationError(_cap_message(account, duration, cap_said))
+        if (split_noted and not config.ALLOW_30S_PAIR and config.CAP_30S_GRACE_SECONDS > 0
+                and time.time() - cap_since >= config.CAP_30S_GRACE_SECONDS):
+            # 上游说只支持 4~15 秒后又等了一段时间仍没出片：不再等到总超时
+            raise UnsupportedDurationError(
+                _cap_message(account, duration, cap_said)
+                + f"（上游表态后 {config.CAP_30S_GRACE_SECONDS // 60} 分钟仍未出片）")
         if not acked and time.time() >= ack_deadline:
             # 提交成功但上游一直不回话（无额度提示、无状态）：按拍板判【异常】，
             # 由调用方把该号放进异常组并换号重试。
@@ -400,6 +419,41 @@ def fetch_conversation_video(cookie_state_path: str | Path, conversation_id: str
             "detail": detail, "conversation_id": conversation_id}
 
 
+def _cap_message(account: str, duration: int, said: str) -> str:
+    return (f"{account} dola 目前只支持 4~15 秒，{duration} 秒无法一次生成"
+            f"（dola 原话：{(said or '')[:120]}）。需要 30 秒可把 DOLA_ALLOW_30S_PAIR 设为 1，"
+            "用 2×15 秒本地拼接")
+
+
+def _upstream_note(dola, texts) -> str:
+    """上游回执里给人看的话（去掉提示词回显、去重），面板「dola：…」用。"""
+    seen: list[str] = []
+    is_echo = getattr(dola, "is_prompt_echo_text", None) or (lambda _t: False)
+    for text in texts or []:
+        text = str(text).strip()
+        if not text or text in seen or is_echo(text):
+            continue
+        seen.append(text)
+    return " ".join(seen)[:300]
+
+
+def _emit_upstream_note(on_poll, dola, texts) -> None:
+    """把上游原话和它报的「预计等待」回传给调用方（落库，面板显示）。"""
+    if not on_poll:
+        return
+    note = _upstream_note(dola, texts)
+    if not note:
+        return
+    try:
+        wait = (_wait_seconds_from_texts(dola, texts)
+                if hasattr(dola, "extract_wait_minutes_from_text") else 0)
+        on_poll(time.time(), note=note, wait_seconds=wait)
+    except TypeError:
+        pass        # 老调用方的 on_poll(now) 不收这两个参数：不回传即可
+    except Exception:
+        pass
+
+
 def _wait_seconds_from_texts(dola, texts) -> int:
     """从上游回执里解析「预计等待 N 分钟 / N 小时 / 30-40 分钟」，返回秒数（取区间上限）。"""
     for text in texts or []:
@@ -456,6 +510,7 @@ def _await_first_ack(*, dola, session, ctx, account: str, conversation_id: str,
         evidence = [t for t in (texts + reasons) if t.strip() and not dola.is_prompt_echo_text(t)]
         status = str(getattr(poll, "status", "") or "")
         if evidence or status not in ("", "pending"):
+            _emit_upstream_note(on_poll, dola, evidence)
             return evidence
         time.sleep(poll_interval)
     raise AbnormalNoAckError(

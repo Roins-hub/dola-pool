@@ -73,6 +73,8 @@ def _pool(tmp_path, monkeypatch, egress: dict[str, str], probe=None, calls=None)
     monkeypatch.setattr(config, "EGRESS_THROTTLE_SECONDS", 60)
     monkeypatch.setattr(config, "EGRESS_THROTTLE_MAX_SECONDS", 900)
     monkeypatch.setattr(config, "EGRESS_THROTTLE_ROTATE", False)
+    # 这里只测出口级退避；号级暂停（2.1.6）在 test_account_throttle 单独测
+    monkeypatch.setattr(config, "THROTTLE_ACCOUNT_COOLDOWN_SECONDS", 0)
     monkeypatch.setattr(config, "HELLO_PROBE_SUBMIT_GAP_SECONDS", 0)
     monkeypatch.setattr(config, "V20_WAIT_SECONDS", 0)
     accounts_dir = tmp_path / "accounts"

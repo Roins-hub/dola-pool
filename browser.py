@@ -49,6 +49,11 @@ def _kwargs_from_url(raw: str) -> dict | None:
     parts = urlsplit(raw)
     if not parts.hostname:
         return None
+    # Chromium 不支持带用户名密码的 socks5（报 "Browser does not support socks5 proxy
+    # authentication"）：转成本地无鉴权 HTTP 中转，由中转带着用户名密码连 socks5。
+    import socks_relay
+    if socks_relay.needs_relay(raw):
+        return {"server": socks_relay.local_http_proxy_for(raw)}
     port = parts.port or (443 if parts.scheme == "https" else 80)
     kwargs = {"server": f"{parts.scheme}://{parts.hostname}:{port}"}
     if parts.username:

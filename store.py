@@ -86,6 +86,9 @@ class TaskStore:
                 ("recover_state", "TEXT DEFAULT ''"),
                 ("recover_until", "REAL"),
                 ("recovered_at", "REAL"),
+                # dola 回执原话（面板「dola：…」）与它报的预计等待秒数
+                ("upstream_note", "TEXT"),
+                ("upstream_wait", "INTEGER"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")

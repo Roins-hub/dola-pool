@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.1.6"
+APP_VERSION = "2.1.7"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -622,8 +622,13 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                          conversation_id=conversation_id, deadline_at=deadline_at,
                          last_poll_at=time.time())
 
-        def on_poll(now):
-            store.update(task_id, last_poll_at=now)
+        def on_poll(now, note=None, wait_seconds=None):
+            fields = {"last_poll_at": now}
+            if note:
+                fields["upstream_note"] = note        # dola 回执原话（含「预计等待 N 分钟」）
+            if wait_seconds:
+                fields["upstream_wait"] = int(wait_seconds)
+            store.update(task_id, **fields)
 
         tried_accs: list[str] = []
 
@@ -806,8 +811,13 @@ async def _resume_task(row: dict):
         store.update(task_id, status="processing", last_poll_at=time.time(),
                      started_at=row.get("started_at") or time.time())
 
-        def on_poll(now):
-            store.update(task_id, last_poll_at=now)
+        def on_poll(now, note=None, wait_seconds=None):
+            fields = {"last_poll_at": now}
+            if note:
+                fields["upstream_note"] = note        # dola 回执原话（含「预计等待 N 分钟」）
+            if wait_seconds:
+                fields["upstream_wait"] = int(wait_seconds)
+            store.update(task_id, **fields)
 
         result = await pool.resume_video(
             row["account"], row["conversation_id"], remaining, on_poll=on_poll,
@@ -2167,7 +2177,15 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
         # 测试生成同样消耗账号额度，因此写入正式任务库，便于在任务列表追踪结果。
         store.create(task_id, model, prompt, ratio, duration, account=name)
         store.update(task_id, status="processing", started_at=time.time())
-        result = await pool.test_generate(name, prompt, ratio, duration, model)
+        def on_poll(now, note=None, wait_seconds=None):
+            fields = {"last_poll_at": now}
+            if note:
+                fields["upstream_note"] = note
+            if wait_seconds:
+                fields["upstream_wait"] = int(wait_seconds)
+            store.update(task_id, **fields)
+
+        result = await pool.test_generate(name, prompt, ratio, duration, model, on_poll=on_poll)
         TEST_JOBS[task_id]["result"] = result
         TEST_JOBS[task_id]["status"] = "done"
         err = result.get("error", "") if not result.get("ok") else ""
