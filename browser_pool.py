@@ -129,6 +129,15 @@ SHORT_CLIP_MARKERS = (
 )
 
 
+def _human_secs(seconds: float) -> str:
+    """1800 → 30 分钟；7200 → 2 小时；5400 → 1.5 小时。"""
+    seconds = int(seconds)
+    if seconds < 3600:
+        return f"{max(1, seconds // 60)} 分钟"
+    hours = seconds / 3600
+    return f"{int(hours)} 小时" if seconds % 3600 == 0 else f"{hours:.1f} 小时"
+
+
 def classify_upstream_failure(message: str) -> str:
     """把上游失败文案归类：transient / daily / content / quota / other。"""
     blob = (message or "").lower()
@@ -283,6 +292,9 @@ class BrowserPool:
             ("activated_at", "REAL DEFAULT 0"),        # 首次激活探测通过的时间
             ("probe_ok_at", "REAL DEFAULT 0"),         # 最近一次「你好」探测通过时间
             ("probe_result", "TEXT DEFAULT ''"),       # 最近一次探测结论（面板/排障用）
+            # ---- 2.1.7：号级限流暂停按连续次数递增 ----
+            ("throttle_streak", "INTEGER DEFAULT 0"),  # 连续被上游限流的次数（成功即清零）
+            ("throttle_last", "REAL DEFAULT 0"),       # 最近一次被限流的时间
         ):
             try:
                 self._conn.execute(f"ALTER TABLE accounts_meta ADD COLUMN {column} {definition}")
@@ -753,6 +765,7 @@ class BrowserPool:
         if result.get("ok"):
             self.clear_egress_throttle(name)
             self._clear_throttle_abnormal(name)
+            self._reset_throttle_streak(name)
             was_risk = bool(self._meta(name) and self._meta(name)["risk_control"])
             print(f"[pool] {name} 你好探测通过（{result.get('elapsed')}s，"
                   f"回复 {len(str(result.get('reply') or ''))} 字）"
@@ -1094,16 +1107,42 @@ class BrowserPool:
         退避一结束又换同出口的下一个号去撞，任务一直循环。按号暂停后，被拒过的号
         不再参与轮询；全部被暂停时任务会直接报清楚原因，而不是转圈到超时。
         """
-        seconds = config.THROTTLE_ACCOUNT_COOLDOWN_SECONDS
-        if seconds <= 0:
+        base = config.THROTTLE_ACCOUNT_COOLDOWN_SECONDS
+        if base <= 0:
             return 0
         self._ensure_meta(name)
+        now = time.time()
+        m = self._meta(name)
+        # 还在限流暂停中又被拒（并发任务 / 手动强制探测）：不重复加码
+        if (m and float(m["abnormal_until"] or 0) > now
+                and str(m["abnormal_reason"] or "").startswith(self.THROTTLE_REASON_PREFIX)):
+            return int(float(m["abnormal_until"]) - now)
+        streak = int(m["throttle_streak"] or 0) if m else 0
+        last = float(m["throttle_last"] or 0) if m else 0.0
+        if last and now - last > config.THROTTLE_ACCOUNT_STREAK_RESET_SECONDS:
+            streak = 0
+        streak += 1
+        cap = max(base, config.THROTTLE_ACCOUNT_COOLDOWN_MAX_SECONDS)
+        seconds = int(min(base * (2 ** (streak - 1)), cap))
+        self._conn.execute(
+            "UPDATE accounts_meta SET throttle_streak=?, throttle_last=? WHERE name=?",
+            (streak, now, name))
+        self._conn.commit()
+        until = time.strftime("%H:%M", time.localtime(now + seconds))
         self._mark_abnormal(
-            name, f"{self.THROTTLE_REASON_PREFIX}：{(reason or '')[:100]}"
-                  f"（{seconds // 60} 分钟后自动恢复，探测通过可提前恢复）",
+            name, f"{self.THROTTLE_REASON_PREFIX} 当前服务访问频繁（连续第 {streak} 次）："
+                  f"暂停 {_human_secs(seconds)}，{until} 自动恢复，探测通过可提前恢复",
             seconds=seconds)
-        print(f"[pool] {name} 吃到上游限流 → 进【异常】组暂停 {seconds // 60} 分钟，不参与派发", flush=True)
+        print(f"[pool] {name} 吃到上游限流（连续第 {streak} 次）→ 进【异常】组暂停 "
+              f"{_human_secs(seconds)}，不参与派发", flush=True)
         return seconds
+
+    def _reset_throttle_streak(self, name: str) -> None:
+        """该号走通了（探测通过 / 出片成功）：连续限流计数清零。"""
+        self._conn.execute(
+            "UPDATE accounts_meta SET throttle_streak=0 WHERE name=? AND throttle_streak>0",
+            (name,))
+        self._conn.commit()
 
     def _clear_throttle_abnormal(self, name: str) -> None:
         """限流导致的【异常】在探测通过后提前解除（其它原因的异常不动）。"""
@@ -1333,6 +1372,7 @@ class BrowserPool:
                     (time.time(), account))
                 self._conn.commit()
                 self._clear_risk(account)
+                self._reset_throttle_streak(account)
                 return {
                     "ok": True,
                     "account": account,
@@ -1673,6 +1713,7 @@ class BrowserPool:
                                 (time.time(), account))
                             self._conn.commit()
                             self._fail_streak.pop(account, None)   # 出片成功 → 连续失败清零
+                            self._reset_throttle_streak(account)   # 连续限流计数也清零
                             self.clear_egress_throttle(account)    # 出口走通 → 退避清零
                             return result
                         except CreditInsufficientError as e:

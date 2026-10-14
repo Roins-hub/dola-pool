@@ -3,8 +3,13 @@
 ## 2.1.7 — 2026-10-14
 
 - **吃到 710022002 的号暂停派发**：线上见过直连和代理两个出口一起被拒，出口退避一结束就换同出口的下一个号继续撞，
-  任务在「退避 → 换号 → 再被拒」里一直循环到超时。现在号（探测或出片）一吃到限流，就进【异常】组暂停
-  `DOLA_THROTTLE_ACCOUNT_COOLDOWN_SECONDS`（1800 秒，0 = 关闭），不参与派发，到期自动恢复；探测通过可提前恢复。
+  任务在「退避 → 换号 → 再被拒」里一直循环到超时。现在号（探测或出片）一吃到限流，就进【异常】组暂停，不参与派发，
+  到期自动恢复；探测通过可提前恢复。暂停时长按**连续被限流次数**翻倍：30 分钟 → 1 小时 → 2 小时 → 4 小时 → 8 小时封顶
+  （`DOLA_THROTTLE_ACCOUNT_COOLDOWN_SECONDS` 起步 1800 秒，0 = 关闭；`DOLA_THROTTLE_ACCOUNT_COOLDOWN_MAX_SECONDS` 封顶 28800 秒）。
+  探测通过或出片成功即清零；距上次被限流超过 `DOLA_THROTTLE_ACCOUNT_STREAK_RESET_SECONDS`（86400）也清零。
+  连续次数落库（`accounts_meta.throttle_streak` / `throttle_last`），重启不丢。备注写成「上游限流 710022002 当前服务访问频繁
+  （连续第 N 次）：暂停 X，HH:MM 自动恢复」。线上依据：acc16~18 导入后一次没成功、5 天里每个号被限流 48 次，
+  固定 30 分钟等于每半小时白撞一次。
   仍**不判风控**（风控是永久的，要人工恢复）。所有号都被暂停时，任务立刻报「N 个号因上游限流暂停中，最早约 M 分钟后恢复」，
   不再转圈到超时。出口级退避（2.1.5）照旧保留。
 - **带用户名密码的 socks5 代理支持浏览器号**：Chromium 不支持 socks5 鉴权（`Browser does not support socks5 proxy
@@ -16,7 +21,7 @@
 - **30 秒任务不再白等 30 分钟**（不拼接时）：上游明确回「按默认 5 秒为你生成」→ 立即失败；只回「支持 4~15 秒」
   （上游有时仍会出 15 秒或两段）→ 最多再等 `DOLA_30S_CAP_GRACE_SECONDS`（600 秒），仍没片就失败。
   报错写明 dola 原话，并提示可开 `DOLA_ALLOW_30S_PAIR=1` 用 2×15 秒拼接；这类失败**不换号重试**（换号上游也是同样回答）。
-- 测试：`tests/test_account_throttle.py`（11 例）、`tests/test_socks_relay.py`（3 例）；
+- 测试：`tests/test_account_throttle.py`（19 例）、`tests/test_socks_relay.py`（3 例）；
   `test_hello_probe` 的软失败用例按新规则改为「进【异常】但不判风控」。
 
 ## 2.1.6 — 2026-10-13

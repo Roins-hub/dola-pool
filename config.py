@@ -275,6 +275,12 @@ RECOVER_INTERVAL_SECONDS = int(os.getenv("DOLA_RECOVER_INTERVAL_SECONDS", "120")
 # 只做出口级退避）。2026-10-13 线上：直连和日本代理两个出口都被拒，按出口退避后换同出口的
 # 下一个号继续撞，任务在「退避 → 换号 → 再被拒」里一直循环到超时。
 THROTTLE_ACCOUNT_COOLDOWN_SECONDS = int(os.getenv("DOLA_THROTTLE_ACCOUNT_COOLDOWN_SECONDS", "1800"))
+# 同一个号**连续**被限流时暂停时长翻倍（30 分 → 1 时 → 2 时 → 4 时 → 8 时），封顶这个值（秒）。
+# 线上 acc16~18 导入后一次没成功、5 天里每个号被限流 48 次：固定 30 分钟等于每半小时白撞一次。
+# 探测通过或出片成功即清零，下次重新从 THROTTLE_ACCOUNT_COOLDOWN_SECONDS 算起。
+THROTTLE_ACCOUNT_COOLDOWN_MAX_SECONDS = int(os.getenv("DOLA_THROTTLE_ACCOUNT_COOLDOWN_MAX_SECONDS", "28800"))
+# 距上次被限流超过这么久（秒），连续计数也清零（号很久没被用、也没被拒过，别背着旧账）。
+THROTTLE_ACCOUNT_STREAK_RESET_SECONDS = int(os.getenv("DOLA_THROTTLE_ACCOUNT_STREAK_RESET_SECONDS", "86400"))
 # 30 秒任务（不拼接时）上游回「只支持 4~15 秒」后，最多再等多久出片（秒）。上游有时说完还会出 15 秒
 # 或自己出两段（可拼接），所以不立刻失败；但等这么久仍没片就判「时长不支持」，不再白等到 30 分钟。
 # 上游明确说「按默认 5 秒为你生成」时不等，直接失败。0 = 不设上限（等到总超时）。

@@ -263,3 +263,86 @@ def test_30s_cap_to_15s_waits_but_not_forever(monkeypatch):
             dola=dola, session=None, ctx={}, headers={}, conversation_id="c", account="acc1",
             duration=30, deadline=time.time() + 1800, poll_interval=0, on_poll=None)
     assert 1 <= time.time() - started < 5
+
+
+# ---------------------------------------------------------------- 2.1.7：连续限流暂停递增
+
+def _expire(bp, name):
+    bp._conn.execute("UPDATE accounts_meta SET abnormal_until=? WHERE name=?", (time.time() - 1, name))
+
+
+def test_pause_doubles_on_consecutive_throttles_and_caps(tmp_path, monkeypatch):
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
+    monkeypatch.setattr(config, "THROTTLE_ACCOUNT_COOLDOWN_MAX_SECONDS", 28800)
+    got = []
+    for _ in range(6):
+        got.append(bp.note_account_throttle("acc1", "710022002"))
+        _expire(bp, "acc1")
+    assert got == [1800, 3600, 7200, 14400, 28800, 28800]      # 30 分 → 1 → 2 → 4 → 8 小时封顶
+    assert bp._meta("acc1")["throttle_streak"] == 6
+
+
+def test_reason_is_readable_and_not_duplicated(tmp_path, monkeypatch):
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
+    bp.note_account_throttle("acc1", "710022002: 当前服务访问频繁，请稍后重试")
+    _expire(bp, "acc1")
+    bp.note_account_throttle("acc1", "710022002: 当前服务访问频繁，请稍后重试")
+    reason = bp._meta("acc1")["abnormal_reason"]
+    assert reason.count("710022002") == 1
+    assert "连续第 2 次" in reason and "暂停 1 小时" in reason
+
+
+def test_no_escalation_while_still_paused(tmp_path, monkeypatch):
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
+    assert bp.note_account_throttle("acc1", "710022002") == 1800
+    assert bp.note_account_throttle("acc1", "710022002") <= 1800    # 暂停期间再被拒不加码
+    assert bp._meta("acc1")["throttle_streak"] == 1
+
+
+def test_probe_ok_resets_streak(tmp_path, monkeypatch):
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
+    bp.note_account_throttle("acc1", "710022002")
+    _expire(bp, "acc1")
+    bp.note_account_throttle("acc1", "710022002")
+    bp.probe_hello("acc1", force=True)                               # 默认假探测 = 通过
+    assert bp._meta("acc1")["throttle_streak"] == 0
+    assert _row(bp, "acc1")["group"] == browser_pool.GROUP_FULL
+    assert bp.note_account_throttle("acc1", "710022002") == 1800    # 重新从 30 分钟算
+
+
+def test_generation_success_resets_streak(tmp_path, monkeypatch):
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
+    bp.note_account_throttle("acc1", "710022002")
+    _expire(bp, "acc1")
+
+    async def fake_gen(account, *a, **k):
+        return {"account": account, "local_path": "x.mp4"}
+
+    bp._generate_effective = fake_gen
+    _run(bp.generate_video("p", None, 10, "seedance-2.5", deadline=time.time() + 20))
+    assert bp._meta("acc1")["throttle_streak"] == 0
+
+
+def test_streak_survives_restart(tmp_path, monkeypatch):
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
+    bp.note_account_throttle("acc1", "710022002")
+    _expire(bp, "acc1")
+    bp2 = browser_pool.BrowserPool(accounts_dir=str(tmp_path / "accounts"),
+                                   db_path=str(tmp_path / "pool.db"))
+    assert bp2.note_account_throttle("acc1", "710022002") == 3600   # 重启后接着第 2 次
+
+
+def test_old_streak_expires(tmp_path, monkeypatch):
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
+    bp.note_account_throttle("acc1", "710022002")
+    _expire(bp, "acc1")
+    bp._conn.execute("UPDATE accounts_meta SET throttle_last=? WHERE name='acc1'",
+                     (time.time() - 2 * 86400,))
+    assert bp.note_account_throttle("acc1", "710022002") == 1800    # 太久以前的旧账不算
+
+
+def test_human_secs():
+    import browser_pool
+    assert browser_pool._human_secs(1800) == "30 分钟"
+    assert browser_pool._human_secs(7200) == "2 小时"
+    assert browser_pool._human_secs(5400) == "1.5 小时"
