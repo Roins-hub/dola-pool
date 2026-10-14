@@ -340,6 +340,9 @@ PURE_API_TIMEOUT = int(os.getenv("DOLA_PURE_TIMEOUT", "900"))
 # 但不超过这个上限（秒）。2026-10-13 线上：5 秒任务上游报「预计等待 45 分钟」，
 # 按 15 分钟固定上限等就会白白判失败（上游其实还在排队生成）。
 PURE_API_TIMEOUT_MAX = int(os.getenv("DOLA_PURE_TIMEOUT_MAX", "3600"))
+# 30 秒（pair）每次出片最多等多久（秒）。2026-10-14 线上：dola 报「预计等待 60 分钟」，
+# 按 60 分钟上限等到点就判超时，实际片子在那之后才出来（AWS acc40 / HK acc10 都是 30.08 秒）。
+LONG_VIDEO_TIMEOUT_MAX = int(os.getenv("DOLA_30S_TIMEOUT_MAX", "7200"))
 # 超时任务自动取回：已拿到 dola 会话、只是等到上限没出片的任务，判失败后在后台继续盯着
 # 那个会话（只查询，不重新提交、不额外扣额度），出片了就下载并把任务改成「完成」。
 # 最多盯多久（秒）：0 = 关闭自动取回。

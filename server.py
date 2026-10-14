@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.2.4"
+APP_VERSION = "2.2.5"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -155,6 +155,7 @@ SIZE_TO_RATIO = {
     "1280x720": "16:9", "1920x1080": "16:9",
     "720x1280": "9:16", "1080x1920": "9:16",
     "1024x1024": "1:1", "1440x1080": "4:3", "1080x1440": "3:4",
+    "1680x720": "21:9", "2520x1080": "21:9",
 }
 VIDEO_MAX_ATTEMPTS = config.VIDEO_MAX_ATTEMPTS  # 0 = 不限次数，在 TASK_DEADLINE 内持续换号
 SUPPORTED_DURATIONS = tuple(config.ALL_DURATIONS)  # (5, 10, 15, 30)
@@ -164,6 +165,7 @@ NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 RATIO_TO_DIMENSIONS = {
     "16:9": (1280, 720), "9:16": (720, 1280),
     "1:1": (1024, 1024), "4:3": (1440, 1080), "3:4": (1080, 1440),
+    "21:9": (1680, 720),
 }
 
 
@@ -603,7 +605,7 @@ def _map_ark_ratio(ratio) -> str | None:
     value = str(ratio).strip().lower()
     if value in ("adaptive", "auto", "default"):
         return None
-    return value if value in {"16:9", "9:16", "1:1", "4:3", "3:4"} else None
+    return value if value in {"16:9", "9:16", "1:1", "4:3", "3:4", "21:9"} else None
 
 
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client):
@@ -676,7 +678,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         last_attempt_wait = max(config.VIDEO_TIMEOUT, config.PURE_API_TIMEOUT,
                                 config.PURE_API_TIMEOUT_MAX)
         if int(duration or 0) > 15 and config.LONG_VIDEO_MODE == "pair":
-            last_attempt_wait *= 2      # 30 秒只出了半截时还要补后半段：最多等两次出片
+            # 30 秒每次出片最多等 LONG_VIDEO_TIMEOUT_MAX；只出了半截还要补后半段：最多等两次
+            last_attempt_wait = 2 * max(last_attempt_wait, config.LONG_VIDEO_TIMEOUT_MAX)
         overall_timeout = config.TASK_DEADLINE + last_attempt_wait + 60
         try:
             result = await asyncio.wait_for(pool.generate_video(
