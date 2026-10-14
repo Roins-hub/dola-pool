@@ -129,6 +129,14 @@ SHORT_CLIP_MARKERS = (
 )
 
 
+def _is_pair_duration(duration) -> bool:
+    """这个时长在 DOLA_30S_MODE=pair 下要走「两段 15 秒拼接」（额度按两条算）。"""
+    try:
+        return int(duration or 0) > 15 and config.LONG_VIDEO_MODE == "pair"
+    except (TypeError, ValueError):
+        return False
+
+
 def _human_secs(seconds: float) -> str:
     """1800 → 30 分钟；7200 → 2 小时；5400 → 1.5 小时。"""
     seconds = int(seconds)
@@ -415,7 +423,14 @@ class BrowserPool:
         else:
             # 认不出的模型一律按 2.0 计（= 最贵的 3 点）：宁可少派，也不要拿号去白撞额度。
             m = "seedance-2.0"
-        return config.MODEL_COSTS.get(m, config.DEFAULT_CREDIT_COST)
+        cost = config.MODEL_COSTS.get(m, config.DEFAULT_CREDIT_COST)
+        if _is_pair_duration(duration):
+            cost *= 2          # 两段 15 秒 = 两条视频的额度
+        return cost
+
+    @staticmethod
+    def _is_pair_job(duration) -> bool:
+        return _is_pair_duration(duration)
 
     # ---- 模型 → 候选额度组（2026-09-23 P2）----
     # 不派发的组：冷却（额度 ≤1）、风控（永久）、待激活（未探测）、异常（出片异常）
@@ -436,9 +451,9 @@ class BrowserPool:
             return GROUP_HALF
         return GROUP_FULL
 
-    def _allowed_quota_groups(self, model: str) -> tuple[str, ...]:
-        """seedance-2.0（3 点）只吃满额；seedance-2.5（2 点）先半额、后满额。"""
-        if self._duration_cost(model) >= 3:
+    def _allowed_quota_groups(self, model: str, duration: int = 0) -> tuple[str, ...]:
+        """seedance-2.0（3 点）只吃满额；seedance-2.5（2 点）先半额、后满额；两段拼接（≥3 点）只吃满额。"""
+        if self._duration_cost(model, duration) >= 3:
             return (GROUP_FULL,)
         return (GROUP_HALF, GROUP_FULL)
 
@@ -1672,7 +1687,8 @@ class BrowserPool:
         async with self.semaphore:
             self._sync_engine()
             cost = self._duration_cost(model, duration)
-            allowed_groups = self._allowed_quota_groups(model)
+            allowed_groups = self._allowed_quota_groups(model, duration)
+            pair_job = self._is_pair_job(duration)
             last_err = None
             attempt = 0
             tried: set[str] = set()
@@ -1709,6 +1725,9 @@ class BrowserPool:
                         group_wait = True
                         continue
                     if not self._schedulable(a) or a["remaining"] < cost:
+                        continue
+                    # 两段拼接只在纯 API 路径实现（浏览器号会按 30 秒原样提交，拿不到片）
+                    if pair_job and not self.is_pure_account(a["name"]):
                         continue
                     # 出口被上游限流（710022002）中：同出口的号都先别动，等出口恢复
                     throttled = self.egress_throttle_remaining(a["name"])

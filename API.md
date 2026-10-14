@@ -10,7 +10,7 @@
 | 项 | 值 |
 |---|---|
 | 服务名 | `stable-dola-pool` |
-| 代码版本 | `2.1.7`（见 `CHANGELOG.md`） |
+| 代码版本 | `2.1.8`（见 `CHANGELOG.md`） |
 | **Base URL** | `https://your-domain`（nginx 反代到本服务端口） |
 | 交互式文档 | `https://your-domain/docs`（FastAPI Swagger，实时以代码为准） |
 | OpenAPI Schema | `https://your-domain/openapi.json` |
@@ -144,7 +144,7 @@ Content-Type: application/json
 
 | 模型 | 支持时长 | 每次出片扣点 | 一个号一天（默认 4 点）能出 |
 |---|---|---|---|
-| `seedance-2.5` | 5 / 10 / 30 秒 | 2 点 | 2 条 |
+| `seedance-2.5` | 5 / 10 / 15 秒（30 秒见下） | 2 点（30 秒拼接 = 4 点） | 2 条 |
 | `seedance-2.0` | 5 / 10 / 15 秒 | 3 点 | 1 条（剩 1 点不够第二条） |
 
 - 时长字段优先级：`duration` → `seconds` → `duration_seconds` → 默认 `10`。
@@ -402,6 +402,7 @@ GET /videos/<文件名>.mp4      # 无需鉴权
 | `422` | `seedance-2.0 仅支持 5/10/15 秒视频（收到 30 秒）` | 模型与时长不匹配 |
 | `422` | `不支持的模型/时长组合：模型='x'，时长=7秒（seedance-2.5 仅支持 5/10/30 秒，seedance-2.0 仅支持 5/10/15 秒）` | 同上，模型名无法识别时 |
 | `422` | `当前 API Key 不允许生成 30 秒视频` | Key 的 `allowed_durations` 限制 |
+| `422` | `dola 自 2026-10-12 起单条视频最长 15 秒，30 秒无法直接生成…` | `DOLA_30S_MODE=reject`（默认）时请求 30 秒 |
 | `422` | `参考图片最多 30 张` / `参考文件不是有效图片` / `参考图片只支持 http/https 公网 URL` / `参考图片 URL 指向内网或保留地址` / `参考图片超过单文件大小限制` | 参考图校验失败 |
 | `422` | pydantic 校验错误（如缺 `prompt`） | 请求体字段不合法 |
 | `429` | `账号限流：所有已开启调度的账号均已达到 Dola 每日视频上限，请明天再试` | 号池当天额度用尽，明天（东京时间 0 点）恢复 |
@@ -534,7 +535,9 @@ open("out.mp4", "wb").write(requests.get(url, timeout=120).content)
 客户接口不能。账号选择由号池内部按健康度/额度/代理隔离自动调度（管理端有 `route` 预览接口）。
 
 **Q：30 秒有什么额外注意？**
-`seedance-2.5` 才支持 30 秒；默认「不拼接」，也就是必须一次拿到原生 30 秒成片，失败会换号重试，所以耗时会明显更长（超时放宽到 1800 秒）。
+dola 自 2026-10-12 起单条视频最长 15 秒，原生 30 秒已不可用。服务端按 `DOLA_30S_MODE` 处理：默认 `reject`，提交时直接返回
+`422 dola 自 2026-10-12 起单条视频最长 15 秒，30 秒无法直接生成…`；运维开启 `pair` 后，30 秒由前后两条 15 秒在服务端拼接，
+消耗双倍额度、耗时约为两条之和，两段之间可能有接缝。
 
 **Q：任务失败会退额度吗？**
 账号侧的每日点数是按"实际出片成功"记账的，**只看模型、不看时长**（`seedance-2.5` = 2 点 / `seedance-2.0` = 3 点，未知模型按最贵的 3 点算；见 `config.MODEL_COSTS`），失败重试会换号；但 **API Key 的 `daily_limit` 是按下发任务数计**的（`store.create` 时即计数，与结果无关），所以别用同一个 Key 反复试错。
@@ -651,7 +654,8 @@ open("out.mp4", "wb").write(requests.get(url, timeout=120).content)
 | 变量 | 当前值 |
 |---|---|
 | `DOLA_DAILY_LIMIT` | `4`（每号每日点数） |
-| `DOLA_ALLOW_30S_PAIR` | `0`（不拼接 30 秒） |
+| `DOLA_30S_MODE` | `reject`（30 秒直接拒绝；`pair` = 两段 15 秒拼接；`native` = 原样提交） |
+| `DOLA_ALLOW_30S_PAIR` | `0`（旧变量；未设 `DOLA_30S_MODE` 时 `1` 等同 `pair`） |
 | `DOLA_NATIVE_DURATION_MAX` | `0`（关闭任意时长；>0 时才允许非原生时长，建议 15 → 20 → 30 分级放开） |
 | `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `Asia/Tokyo` / `0` |
 

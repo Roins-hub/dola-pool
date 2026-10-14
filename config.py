@@ -93,6 +93,19 @@ VIDEO_REQUIRED_POINTS = int(os.getenv("DOLA_VIDEO_REQUIRED_POINTS", "2"))
 # 需要恢复旧的「两段拼接」兜底时，把 DOLA_ALLOW_30S_PAIR 设为 1。
 ALLOW_30S_PAIR = os.getenv("DOLA_ALLOW_30S_PAIR", "0") == "1"
 
+# 30 秒（及以上）请求怎么处理（2.1.8）。dola 自 2026-10-12 起单条视频最长 15 秒：30 秒请求会被
+# 回「支持 4 到 15 秒 / 按默认 5 秒为你生成 / 要不要拆两段」，官网上选「拆两段」也直接报错。
+#   reject：受理时直接拒绝（422，说明原因），不派号、不占额度（默认）
+#   pair  ：明确请求两条 15 秒（前半段 / 后半段，各一条独立会话），本地 ffmpeg 拼成 30 秒；
+#           消耗两条的额度（2.5 = 4 点），只派给满额的纯 API 号
+#   native：旧行为，直接按 30 秒提交（留着等 dola 哪天恢复）
+# 兼容旧变量：没设 DOLA_30S_MODE 但设了 DOLA_ALLOW_30S_PAIR=1 时按 pair。
+LONG_VIDEO_MODE = os.getenv("DOLA_30S_MODE", "").strip().lower()
+if LONG_VIDEO_MODE not in ("reject", "pair", "native"):
+    LONG_VIDEO_MODE = "pair" if ALLOW_30S_PAIR else "reject"
+# pair 模式每段的时长（dola 单条上限）
+PAIR_SEGMENT_SECONDS = int(os.getenv("DOLA_PAIR_SEGMENT_SECONDS", "15"))
+
 # 每账号每日视频生成额度（点数；官方每日免费额度随账号/区域浮动，超出后 Dola 会返回每日上限错误自动停号）
 DAILY_LIMIT = int(os.getenv("DOLA_DAILY_LIMIT", "4"))
 

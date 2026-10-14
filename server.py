@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.1.7"
+APP_VERSION = "2.1.8"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -1205,8 +1205,24 @@ async def create_video_vinted_alias(request: Request,
     return await create_video(request, authorization)
 
 
+LONG_VIDEO_REJECT_MESSAGE = (
+    "dola 自 2026-10-12 起单条视频最长 15 秒，{d} 秒无法直接生成。请改用 5/10/15 秒；"
+    "如需 30 秒，请让管理员开启 DOLA_30S_MODE=pair（两段 15 秒拼接，消耗双倍额度）")
+
+
+def _reject_unsupported_long(duration) -> None:
+    """DOLA_30S_MODE=reject（默认）：30 秒及以上受理时就拒，不派号、不占额度。"""
+    try:
+        seconds = int(duration or 0)
+    except (TypeError, ValueError):
+        return
+    if seconds > 15 and config.LONG_VIDEO_MODE == "reject":
+        raise HTTPException(422, LONG_VIDEO_REJECT_MESSAGE.format(d=seconds))
+
+
 async def _submit_task(client, model, prompt, ratio, duration, reference_images):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
+    _reject_unsupported_long(duration)
     resolved = _resolve_model_for_duration(model, duration)
     if resolved is None:
         version = _model_version(model)

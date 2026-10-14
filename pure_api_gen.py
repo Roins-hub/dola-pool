@@ -463,6 +463,16 @@ def _upstream_note(dola, texts) -> str:
     return " ".join(seen)[:300]
 
 
+def _emit_note_text(on_poll, note: str) -> None:
+    """直接回传一句说明（不是上游原话，如两段拼接的进度）。"""
+    if not on_poll or not note:
+        return
+    try:
+        on_poll(time.time(), note=note, wait_seconds=0)
+    except Exception:
+        pass
+
+
 def _emit_upstream_note(on_poll, dola, texts) -> None:
     """把上游原话和它报的「预计等待」回传给调用方（落库，面板显示）。"""
     if not on_poll:
@@ -615,9 +625,12 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                           on_conversation_id: Callable | None = None,
                           existing_parts: list[Path] | None = None,
                           images: list | None = None,
-                          credits: "_CreditTracker | None" = None) -> Path:
-    """两段独立出片（各由上游压到 15 秒）后本地拼成 30 秒。
+                          credits: "_CreditTracker | None" = None,
+                          segment_duration: int = 30) -> Path:
+    """两段独立出片后本地拼成 30 秒。
 
+    segment_duration：每段向上游请求的时长。旧兜底用 30（指望上游自己压到 15 秒）；
+    2.1.8 的 pair 模式明确请求 15 秒 —— dola 现在对 30 秒请求只会回「按默认 5 秒 / 要不要拆」。
     existing_parts：已经拿到的分段（例如上游静默压时长后落地的第一段），
     只补生成缺的那几段再拼接。
     """
@@ -629,7 +642,7 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
             submit = dola.submit_chat_completion(
                 session, ctx, headers, images=images or [], audios=[],
                 prompt=f"{prompt}\n\n{hint}",
-                duration=30, model=model, ratio=ratio,
+                duration=segment_duration, model=model, ratio=ratio,
                 timeout_sec=180, video_ability=True,
             )
             if submit.error:
@@ -641,12 +654,16 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                     on_conversation_id(account, submit.conversation_id, time.time() + timeout)
                 except Exception:
                     pass
-            result = dola.get_video_result(
-                session, ctx, submit.conversation_id,
-                timeout=timeout, interval=poll_interval,
-                remove_watermark=remove_watermark, proxy=proxy or "",
-            )
+            _emit_note_text(on_poll, f"两段拼接：第 {index}/{len(PART_HINTS)} 段（{segment_duration} 秒）生成中")
+            # 心跳：分段轮询期间刷 last_poll_at，免得看门狗把正常等待判成卡住
+            with _progress_heartbeat(on_poll):
+                result = dola.get_video_result(
+                    session, ctx, submit.conversation_id,
+                    timeout=timeout, interval=poll_interval,
+                    remove_watermark=remove_watermark, proxy=proxy or "",
+                )
             part_credits.note(result.get("texts"))
+            _emit_upstream_note(on_poll, dola, result.get("texts") or [])
             part_credits.note(result.get("failure_reasons"))
             if credits is not None:
                 credits.absorb(part_credits)
@@ -1038,6 +1055,27 @@ def generate_pure_video(
             state_file=state_file, region=region, pc_version=pc_version)
     submit_prompt = (dola.enrich_multi_image_prompt(prompt, len(uploaded_images))
                      if uploaded_images else prompt)
+    if int(duration or 0) > 15 and config.LONG_VIDEO_MODE == "pair":
+        # dola 单条最长 15 秒：直接请求「前半段 / 后半段」两条 15 秒，本地拼成目标时长。
+        # 不先试单条 30 秒（现在只会被回「按默认 5 秒」并照样扣额度）。
+        out_dir = Path(output_dir or config.DOWNLOAD_DIR)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        merged_path = out_dir / f"{account}_{uuid.uuid4().hex[:12]}.{CONCAT_CONTAINER}"
+        merged = _generate_capped_pair(
+            dola=dola, session=session, ctx=ctx, headers=headers, account=account,
+            prompt=submit_prompt, ratio=ratio, model=pure_model, output_path=merged_path,
+            remove_watermark=remove_watermark, proxy=proxy or "",
+            timeout=max(config.PURE_API_TIMEOUT, config.PURE_API_TIMEOUT_MAX),
+            poll_interval=poll_interval, on_poll=on_poll, on_conversation_id=on_conversation_id,
+            images=uploaded_images, credits=credits,
+            segment_duration=config.PAIR_SEGMENT_SECONDS,
+        )
+        return {
+            "local_path": str(merged), "account": account, "conversation_id": "",
+            "download_url": "", "duration": int(duration), "model": pure_model,
+            "pure_api": True, "merged_segments": len(PART_HINTS), "merge_mode": "pair_15s",
+            **credits.fields(),
+        }
     submit = dola.submit_chat_completion(
         session, ctx, headers,
         images=uploaded_images, audios=[], prompt=submit_prompt, duration=duration,
