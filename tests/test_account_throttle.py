@@ -405,3 +405,60 @@ def test_test_generate_endpoint_requires_confirmation(tmp_path, monkeypatch):
     r = _run(go())
     assert r["account"] == "acc1"
     assert started == ["acc1"]                                                  # 确认后才真的发
+
+
+
+# ---------------------------------------------------------------- 上游宣布的秒数 / 按号记录回执
+
+def test_announced_seconds_parsing():
+    import pure_api_gen
+    from protocol import dola_pure_api as real
+    f = lambda t: pure_api_gen._announced_seconds(real, [t])  # noqa: E731
+    assert f("我将为您生成一个5秒的视频。") == 5
+    assert f("视频生成目前支持 4 到 15 秒的时长。我将按默认 5 秒为你生成。") == 5
+    assert f("视频生成目前支持 4 到 15 秒。我将按最接近的支持时长 15 秒生成。") == 15
+    assert f("视频生成目前支持 4 到 15 秒。我按你指定的 9:16 比例生成 5 秒版本。") == 5
+    assert f("视频生成目前支持 4 到 15 秒。") == 0                 # 只是范围说明
+    assert f("本次使用 Seedance 2.5 生成，大约需要 1-3 分钟。") == 0
+
+
+def test_30s_announced_5s_fails_even_without_cap_wording(monkeypatch):
+    """线上 2026-10-14：「我将为您生成一个5秒的视频…预计等待 45 分钟」——没有「4~15 秒」字样也要立即失败。"""
+    import pure_api_gen
+    monkeypatch.setattr(config, "ALLOW_30S_PAIR", False)
+    dola = _fake_dola(["我将为您生成一个5秒的视频。",
+                       "本次使用 **Dreamina Seedance 2.5** 生成，将消耗 2 个视频生成额度，预计等待 45 分钟。"])
+    with pytest.raises(pure_api_gen.UnsupportedDurationError, match="只答应生成 5 秒"):
+        pure_api_gen._wait_video_same_conversation(
+            dola=dola, session=None, ctx={}, headers={}, conversation_id="c", account="acc5",
+            duration=30, deadline=time.time() + 1800, poll_interval=0, on_poll=None)
+
+
+def test_run_task_keeps_each_accounts_note(tmp_path, monkeypatch):
+    """换号时每个号的 dola 原话都留着（面板折叠显示），预计等待按当前号重置。"""
+    import server as server_mod
+    import store as store_mod
+    monkeypatch.setattr(config, "DOWNLOAD_DIR", str(tmp_path))
+    out = tmp_path / "x.mp4"
+    out.write_bytes(b"fake")
+
+    class FakePool:
+        async def generate_video(self, prompt, ratio, duration, model, *, on_conversation_id=None,
+                                 on_poll=None, on_account_try=None, **k):
+            on_account_try("acc3", 1)
+            on_poll(time.time(), note="今日视频生成免费数量用完了", wait_seconds=0)
+            on_account_try("acc5", 2)
+            on_poll(time.time(), note="本次使用 Seedance 2.5 生成，预计等待 45 分钟。", wait_seconds=2700)
+            return {"local_path": str(out), "account": "acc5"}
+
+    server_mod.pool = FakePool()
+    server_mod.store = store_mod.TaskStore(str(tmp_path / "tasks.db"))
+    server_mod.store.create("video_n1", "seedance-2.5", "p", "9:16", 5)
+    _run(server_mod._run_task("video_n1", "seedance-2.5", "p", "9:16", 5, [],
+                              {"api_key_hash": None, "concurrency_limit": 0}))
+    row = server_mod.store.get("video_n1")
+    notes = __import__("json").loads(row["upstream_notes"])
+    assert [n["account"] for n in notes] == ["acc3", "acc5"]
+    assert "免费数量用完" in notes[0]["note"] and "45 分钟" in notes[1]["note"]
+    assert row["upstream_wait"] == 2700
+    assert row["attempt_started_at"] and row["attempt_started_at"] >= row["started_at"]

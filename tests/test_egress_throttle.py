@@ -75,6 +75,8 @@ def _pool(tmp_path, monkeypatch, egress: dict[str, str], probe=None, calls=None)
     monkeypatch.setattr(config, "EGRESS_THROTTLE_ROTATE", False)
     # 这里只测出口级退避；号级暂停（2.1.6）在 test_account_throttle 单独测
     monkeypatch.setattr(config, "THROTTLE_ACCOUNT_COOLDOWN_SECONDS", 0)
+    # 原有用例按「1 个号被拒就整出口退避」写的；2.1.7 起默认要 2 个不同号，单独测
+    monkeypatch.setattr(config, "EGRESS_THROTTLE_MIN_ACCOUNTS", 1)
     monkeypatch.setattr(config, "HELLO_PROBE_SUBMIT_GAP_SECONDS", 0)
     monkeypatch.setattr(config, "V20_WAIT_SECONDS", 0)
     accounts_dir = tmp_path / "accounts"
@@ -272,3 +274,26 @@ def test_batch_probe_stops_hitting_throttled_egress(tmp_path, monkeypatch):
         assert "限流中" in by_name[name]["message"]
         assert by_name[name]["attempts"] == 0
     assert job["failed_count"] == 0
+
+
+
+def test_single_account_throttle_does_not_block_egress(tmp_path, monkeypatch):
+    """2.1.7：同出口只有 1 个号被拒 → 只暂停那个号，同出口其它号照常派发（线上 acc4/acc5 那次）。"""
+    browser_pool, bp, calls = _pool(
+        tmp_path, monkeypatch, {"acc4": "socks:1", "acc5": "socks:1"}, probe={"acc4": THROTTLED})
+    monkeypatch.setattr(config, "EGRESS_THROTTLE_MIN_ACCOUNTS", 2)
+    bp.probe_hello("acc4", force=True)
+    assert bp.egress_throttle_remaining("acc5") == 0
+    bp.probe_hello("acc5", force=True)
+    assert calls == ["acc4", "acc5"]                    # acc5 照常发了请求
+
+
+def test_two_accounts_throttled_on_same_egress_blocks_it(tmp_path, monkeypatch):
+    browser_pool, bp, calls = _pool(
+        tmp_path, monkeypatch, {"acc1": "jp:1", "acc2": "jp:1", "acc3": "jp:1"},
+        probe={"acc1": THROTTLED, "acc2": THROTTLED})
+    monkeypatch.setattr(config, "EGRESS_THROTTLE_MIN_ACCOUNTS", 2)
+    bp.probe_hello("acc1", force=True)
+    assert bp.egress_throttle_remaining("acc3") == 0
+    bp.probe_hello("acc2", force=True)                  # 第 2 个不同号也被拒 → 判 IP 被限
+    assert bp.egress_throttle_remaining("acc3") > 50

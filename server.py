@@ -624,10 +624,20 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                          conversation_id=conversation_id, deadline_at=deadline_at,
                          last_poll_at=time.time())
 
+        # 每个号的 dola 回执原话（按尝试顺序），面板把当前号显示在前、其它号折叠
+        note_state: dict = {"account": None, "notes": []}
+
         def on_poll(now, note=None, wait_seconds=None):
             fields = {"last_poll_at": now}
             if note:
                 fields["upstream_note"] = note        # dola 回执原话（含「预计等待 N 分钟」）
+                acc = note_state["account"] or ""
+                notes = note_state["notes"]
+                if notes and notes[-1]["account"] == acc:
+                    notes[-1]["note"] = note
+                else:
+                    notes.append({"account": acc, "note": note, "at": now})
+                fields["upstream_notes"] = json.dumps(notes, ensure_ascii=False)
             if wait_seconds:
                 fields["upstream_wait"] = int(wait_seconds)
             store.update(task_id, **fields)
@@ -637,9 +647,12 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         def on_account_try(account, attempt):
             # 拿到账号即拿到并发槽 —— 此刻才算真正开始生成（等待期间保持 queued）。
             tried_accs.append(account)
+            note_state["account"] = account
             fields = dict(status="processing", account=account, attempt=attempt,
                           attempted_accounts=json.dumps(tried_accs, ensure_ascii=False),
-                          last_poll_at=time.time())
+                          last_poll_at=time.time(),
+                          # 换号：预计等待清空、本号计时从现在起（倒计时不沿用上一个号的）
+                          attempt_started_at=time.time(), upstream_wait=None)
             if len(tried_accs) == 1:
                 # started_at 只记首次尝试，否则换号会把出片耗时均值（ETA）拉长
                 fields["started_at"] = time.time()

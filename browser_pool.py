@@ -225,6 +225,8 @@ class BrowserPool:
         # 出口限流退避（内存）：egress -> {"until", "streak", "last", "reason"}。
         # 引擎每次 _sync_engine 都会重建，所以不能放进引擎的 _egress_unhealthy 里。
         self._egress_throttle: dict[str, dict] = {}
+        # 出口上最近被限流的号：egress -> {account: 时间}（判断是号被限还是 IP 被限）
+        self._egress_hits: dict[str, dict[str, float]] = {}
         # isolation_level=None（自动提交）：号池的 sqlite 连接是**多线程共用**的
         # （出片回调 on_balance、探测都在线程池里跑），sqlite3 模块的隐式事务会让
         # 两个线程的 BEGIN/COMMIT 互相踩，冒出 `cannot commit - no transaction is active`
@@ -1078,6 +1080,16 @@ class BrowserPool:
             return 0
         egress = self._safe_egress(name)
         now = time.time()
+        # 号级还是 IP 级：窗口内同出口被拒的不同号数达到门槛才整个出口退避
+        hits = {a: t for a, t in self._egress_hits.get(egress, {}).items()
+                if now - t <= config.EGRESS_THROTTLE_WINDOW_SECONDS}
+        hits[name] = now
+        self._egress_hits[egress] = hits
+        need = max(1, config.EGRESS_THROTTLE_MIN_ACCOUNTS)
+        if len(hits) < need:
+            print(f"[pool] 出口 {egress} 上只有 {name} 被限流（{len(hits)}/{need}），先只暂停这个号，"
+                  "同出口其它号照常派发", flush=True)
+            return 0
         rec = self._egress_throttle.get(egress)
         if rec and now < rec["until"]:
             return int(rec["until"] - now)   # 已经在退避中：并发任务同时被拒，不重复加码
@@ -1157,7 +1169,9 @@ class BrowserPool:
 
     def clear_egress_throttle(self, name: str) -> None:
         """该号走通了（探测通过/出片成功）：出口恢复，递增计数清零。"""
-        self._egress_throttle.pop(self._safe_egress(name), None)
+        egress = self._safe_egress(name)
+        self._egress_throttle.pop(egress, None)
+        self._egress_hits.pop(egress, None)
 
     def egress_throttle_snapshot(self) -> list[dict]:
         """面板用：当前正在退避的出口（出口 key 已去掉代理凭据）。"""

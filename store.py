@@ -89,6 +89,9 @@ class TaskStore:
                 # dola 回执原话（面板「dola：…」）与它报的预计等待秒数
                 ("upstream_note", "TEXT"),
                 ("upstream_wait", "INTEGER"),
+                # 每个号的回执原话（JSON 列表，按尝试顺序）与当前号开始时间（换号后倒计时从这里算）
+                ("upstream_notes", "TEXT"),
+                ("attempt_started_at", "REAL"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")

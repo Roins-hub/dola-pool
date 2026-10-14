@@ -201,6 +201,11 @@ TRANSIENT_COOLDOWN_SEC = int(os.getenv("DOLA_TRANSIENT_COOLDOWN_SEC", "600"))
 # 任务原地排队等出口恢复。连续被拒按 2 倍递增（120 → 240 → 480 → 900 封顶），
 # 成功一次即清零。0 = 关闭退避（恢复旧行为：立刻换号重试）。
 EGRESS_THROTTLE_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_SECONDS", "120"))
+# 同一出口在 EGRESS_THROTTLE_WINDOW_SECONDS 内有至少这么多个**不同的号**被限流，才判定是 IP 被限、
+# 整个出口一起退避。只有 1 个号被拒时只暂停那个号（号级暂停，见 THROTTLE_ACCOUNT_*）——
+# 2026-10-14 线上：acc4 被拒后整个 socks5 出口停了 2 分钟，同出口的 acc5 一放行就探测通过。
+EGRESS_THROTTLE_MIN_ACCOUNTS = int(os.getenv("DOLA_EGRESS_THROTTLE_MIN_ACCOUNTS", "2"))
+EGRESS_THROTTLE_WINDOW_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_WINDOW_SECONDS", "600"))
 EGRESS_THROTTLE_MAX_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_MAX_SECONDS", "900"))
 # 距上次被拒超过该秒数，递增计数清零，重新从 EGRESS_THROTTLE_SECONDS 起算。
 EGRESS_THROTTLE_RESET_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_RESET_SECONDS", "1800"))

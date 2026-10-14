@@ -314,6 +314,13 @@ def _wait_video_same_conversation(
             return poll, keys[-2:]
         if status == "succeeded" or status in FINAL_POLL_STATUSES:
             return poll, []
+        announced = _announced_seconds(dola, texts)
+        if (not config.ALLOW_30S_PAIR and announced and announced * 2 < duration):
+            # 上游只答应生成 N 秒，连两段都凑不够目标时长（2026-10-14 线上：30 秒任务上游回
+            # 「我将为您生成一个5秒的视频…预计等待 45 分钟」）：等下去只会拿到短片，直接失败。
+            raise UnsupportedDurationError(
+                _cap_message(account, duration, _upstream_note(dola, texts))
+                + f"（上游只答应生成 {announced} 秒）")
         if not split_noted and dola.poll_has_duration_split(poll, job_seconds=duration):
             # 只记录，不再回「拆两段」（那会把第二段抬到 6 点报价）。
             split_noted = True
@@ -417,6 +424,25 @@ def fetch_conversation_video(cookie_state_path: str | Path, conversation_id: str
                 "conversation_id": conversation_id}
     return {"status": status, "local_path": "", "final": status in RECOVER_FINAL_STATUSES,
             "detail": detail, "conversation_id": conversation_id}
+
+
+_ANNOUNCED_SECONDS = re.compile(
+    r"(?:生成一个|生成|按默认|按最接近的支持时长|按最接近的时长|按)\s*(\d{1,2})\s*秒")
+
+
+def _announced_seconds(dola, texts) -> int:
+    """上游回执里宣布「要生成几秒」（如「我将为您生成一个5秒的视频」「按默认 5 秒」「按 15 秒生成」）。
+
+    提示词回显不算；「支持 4 到 15 秒」这种范围说明不算（前面是「到」，不是「生成/按」）。
+    """
+    is_echo = getattr(dola, "is_prompt_echo_text", None) or (lambda _t: False)
+    found = 0
+    for text in texts or []:
+        if is_echo(str(text)):
+            continue
+        for m in _ANNOUNCED_SECONDS.finditer(str(text)):
+            found = int(m.group(1))
+    return found
 
 
 def _cap_message(account: str, duration: int, said: str) -> str:

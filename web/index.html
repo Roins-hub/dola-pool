@@ -118,6 +118,14 @@ input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
 .ptab:hover{color:var(--text)}
 .ptab.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 .qp-res{max-height:200px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.7}
+/* 任务列表里 dola 回执的折叠块 */
+.note-line{color:var(--sub);margin:2px 0;line-height:1.5}
+details.note-line summary{cursor:pointer;list-style:none}
+details.note-line summary::-webkit-details-marker{display:none}
+details.note-line summary::after{content:' ▸ 展开';color:var(--accent)}
+details.note-line[open] summary::after{content:' ▾ 收起'}
+details.note-line[open] .ell{display:none}
+details.note-line > div{padding-left:10px;border-left:2px solid var(--line);margin:3px 0}
 /* egress-warn：出口限流 / 共用出口提醒 */
 .ew{padding:8px 12px;border-radius:8px;font-size:13px;line-height:1.6;margin:6px 0}
 .ew-red{background:rgba(229,72,77,.12);border:1px solid rgba(229,72,77,.35);color:#e5484d}
@@ -1733,11 +1741,33 @@ function liveSpan(kind,t0,extra,style,lab){
     +(style?' style="'+style+'"':'')+'>'+esc(liveText(el))+'</span>';
 }
 /** 超时任务自动取回的状态提示（报错/备注列最前面）。 */
-/** dola 回执原话（排队/生成中/完成都显示；失败时报错里已经带了原话就不重复）。 */
+// 折叠块的展开状态（面板每 10 秒重画，记住哪些是用户手动展开的）
+const OPEN_NOTES=new Set();
+function noteToggle(el){if(el.open)OPEN_NOTES.add(el.dataset.k);else OPEN_NOTES.delete(el.dataset.k);}
+function foldText(k,label,text,limit){
+  text=String(text||'').replace(/\*\*/g,'');   // dola 回执带 Markdown 粗体标记
+  if(text.length<=limit)return '<div class="tiny note-line">'+label+esc(text)+'</div>';
+  return '<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
+    +'<summary>'+label+esc(text.slice(0,limit))+'<span class="ell">…</span></summary>'+esc(text.slice(limit))+'</details>';
+}
+/** dola 回执原话：当前号的在前（长了折叠），前面换过的号收进「前面 N 个号的回复」。
+    失败时报错里已经带了同一句原话就不重复。 */
 function upstreamNote(t){
-  if(!t.upstream_note)return '';
-  if(t.status==='failed'&&t.error&&t.error.indexOf(t.upstream_note.slice(0,12))>=0)return '';
-  return '<div class="tiny" style="color:var(--sub)" title="'+esc(t.upstream_note)+'">dola：'+esc(t.upstream_note)+'</div>';
+  let notes=[];
+  try{notes=JSON.parse(t.upstream_notes||'[]')||[];}catch(e){notes=[];}
+  if(!notes.length&&t.upstream_note)notes=[{account:t.account||'',note:t.upstream_note}];
+  if(!notes.length)return '';
+  const cur=notes[notes.length-1],prev=notes.slice(0,-1);
+  let html='';
+  const dup=t.status==='failed'&&t.error&&t.error.indexOf(String(cur.note).slice(0,12))>=0;
+  if(!dup)html+=foldText(t.id+':cur',(cur.account?esc(cur.account)+' · ':'')+'dola：',cur.note,60);
+  if(prev.length){
+    const k=t.id+':prev';
+    html+='<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
+      +'<summary>前面 '+prev.length+' 个号的回复</summary>'
+      +prev.map(n=>'<div>'+esc(n.account||'?')+'：'+esc(String(n.note||'').replace(/\*\*/g,''))+'</div>').join('')+'</details>';
+  }
+  return html;
 }
 function recoverNote(t){
   if(t.recover_state==='watching')
@@ -1763,9 +1793,11 @@ function costCell(t){
   }
   if(t.status==='processing'){
     if(!s)return '—';
+    const s2=t.attempt_started_at||s;   // 换号后从当前号开始计
     // 生成中：实时已用时 + 预计总时长与剩余倒计时（超出预计会提示已超出）
     return liveSpan('run',s,0,'color:#2f6fde')
-      +(typ?'<div class="tiny">'+liveSpan('eta',s,typ,'',lab)+'</div>':'');
+      +(typ?'<div class="tiny">'+liveSpan('eta',s2,typ,'',lab)+'</div>':'')
+      +(s2>s+1&&t.account?'<div class="tiny">当前 '+esc(t.account)+' '+liveSpan('run',s2,0,'')+'</div>':'');
   }
   if(!f)return '—';
   const total=c?f-c:0,gen=s?f-s:0,queue=(s&&c)?s-c:0;
