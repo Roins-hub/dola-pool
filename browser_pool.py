@@ -1340,6 +1340,43 @@ class BrowserPool:
             result["local_path"] = str(await asyncio.to_thread(ensure_web_playable, local))
         return result
 
+    def test_generate_warnings(self, account: str, model: str = "", duration: int = 0) -> list[str]:
+        """「测试生成」会强制用这个号真出片（不看分组/暂停/额度）。这些情况下大概率白撞，先提醒：
+
+        风控 / 异常（含限流暂停）/ 出口正被限流 / 没绑代理走直连 / 今日额度不够。
+        """
+        row = next((a for a in self.list_accounts() if a["name"] == account), None)
+        if not row:
+            return []
+        now = time.time()
+        out: list[str] = []
+        if row.get("risk_control"):
+            out.append(f"该号在【风控】组（{(row.get('risk_reason') or '被登出或没回复')[:60]}），测试多半失败")
+        until = float(row.get("abnormal_until") or 0)
+        reason = str(row.get("abnormal_reason") or "")
+        if until > now:
+            left = _human_secs(until - now)
+            if reason.startswith(self.THROTTLE_REASON_PREFIX):
+                out.append(f"该号因上游限流（710022002）暂停中，还剩约 {left}；现在测试大概率再被拒，"
+                           "还会让 dola 继续把它当成异常流量")
+            else:
+                out.append(f"该号在【异常】组（{reason[:60] or '生成异常'}），还剩约 {left} 自动恢复")
+        egress_left = self.egress_throttle_remaining(account)
+        if egress_left > 0:
+            out.append(f"该号的出口 IP 正被上游限流，还剩约 {_human_secs(egress_left)}")
+        try:
+            proxied = bool(self._proxy_url_for(account))
+        except Exception:  # noqa: BLE001
+            proxied = True
+        if not proxied:
+            out.append("该号没绑代理，会用服务器本机 IP 直连；服务器不在日本/韩国时 dola 会拒绝"
+                       "（710022002 或地区限制）")
+        cost = self._duration_cost(model or "", int(duration or 0)) if model else 0
+        remaining = int(row.get("remaining") or 0)
+        if cost and remaining < cost:
+            out.append(f"该号今日额度不够（剩 {remaining} 点，这条要 {cost} 点）")
+        return out
+
     async def test_generate(self, account: str, prompt: str, ratio: str | None = None,
                             duration: int = 10, model: str = "seedance-2.0",
                             on_poll=None) -> dict:

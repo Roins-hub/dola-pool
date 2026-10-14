@@ -357,6 +357,8 @@ class TestGenRequest(BaseModel):
     model: str = "seedance-2.0"
     duration: int = Field(10, ge=5, le=30)
     ratio: str | None = None
+    # 号处于风控/限流暂停/没绑代理等状态时，先返回提醒；确认后带 force=true 再发
+    force: bool = False
 
 
 class TaskResponse(BaseModel):
@@ -2154,6 +2156,11 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         raise HTTPException(404, "account not found")
     if JOBS.get(name, {}).get("status") == "running":
         raise HTTPException(409, "该账号正在执行任务，稍后再试")
+    if not body.force:
+        warnings = pool.test_generate_warnings(name, body.model, body.duration)
+        if warnings:
+            # 前端认 TEST_GEN_WARN: 前缀，弹确认框列出原因，确认后带 force=true 重发
+            raise HTTPException(409, "TEST_GEN_WARN:" + "\n".join(warnings))
     task_id = "test_" + uuid.uuid4().hex
     TEST_JOBS[task_id] = {
         "account": name,

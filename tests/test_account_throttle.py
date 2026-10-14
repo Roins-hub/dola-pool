@@ -346,3 +346,62 @@ def test_human_secs():
     assert browser_pool._human_secs(1800) == "30 分钟"
     assert browser_pool._human_secs(7200) == "2 小时"
     assert browser_pool._human_secs(5400) == "1.5 小时"
+
+
+# ---------------------------------------------------------------- 测试生成的保护提醒
+
+def test_test_generate_warnings(tmp_path, monkeypatch):
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a", "acc2": "b"})
+    monkeypatch.setattr(bp, "_proxy_url_for", lambda name: "http://u:p@1.2.3.4:8080")
+    assert bp.test_generate_warnings("acc2", "seedance-2.5", 5) == []          # 健康号不打扰
+
+    bp.note_account_throttle("acc1", "710022002")
+    w = bp.test_generate_warnings("acc1", "seedance-2.5", 5)
+    assert any("限流" in x and "暂停中" in x for x in w)
+
+    monkeypatch.setattr(bp, "_proxy_url_for", lambda name: "")
+    assert any("没绑代理" in x for x in bp.test_generate_warnings("acc2", "seedance-2.5", 5))
+
+    bp._set_risk("acc2", "被登出")
+    assert any("风控" in x for x in bp.test_generate_warnings("acc2", "seedance-2.5", 5))
+
+
+def test_test_generate_warns_when_quota_short(tmp_path, monkeypatch):
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
+    monkeypatch.setattr(bp, "_proxy_url_for", lambda name: "http://1.2.3.4:8080")
+    bp._claim("acc1", 3)                                                        # 剩 1 点
+    w = bp.test_generate_warnings("acc1", "seedance-2.5", 5)
+    assert any("额度不够" in x for x in w)
+
+
+def test_test_generate_endpoint_requires_confirmation(tmp_path, monkeypatch):
+    import server as server_mod
+    import store as store_mod
+    from fastapi import HTTPException
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
+    monkeypatch.setattr(bp, "_proxy_url_for", lambda name: "")                  # 没绑代理 → 会提醒
+    started = []
+
+    async def fake_test_generate(*a, **k):
+        started.append(a[0])
+        return {"ok": True, "video_url": "x"}
+
+    monkeypatch.setattr(bp, "test_generate", fake_test_generate)
+    server_mod.pool = bp
+    server_mod.store = store_mod.TaskStore(str(tmp_path / "tasks.db"))
+    monkeypatch.setattr(server_mod, "_admin_auth", lambda key: None)
+
+    async def go():
+        body = server_mod.TestGenRequest(prompt="p", model="seedance-2.5", duration=5)
+        with pytest.raises(HTTPException) as exc:
+            await server_mod.admin_test_generate("acc1", body, None)
+        assert exc.value.status_code == 409
+        assert str(exc.value.detail).startswith("TEST_GEN_WARN:") and "没绑代理" in exc.value.detail
+        body.force = True
+        r = await server_mod.admin_test_generate("acc1", body, None)
+        await asyncio.sleep(0.2)
+        return r
+
+    r = _run(go())
+    assert r["account"] == "acc1"
+    assert started == ["acc1"]                                                  # 确认后才真的发

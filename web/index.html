@@ -709,17 +709,29 @@ function openTestGen(name){
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
       <button class="btn btn-p" id="tg_btn" onclick="submitTestGen('${name}')">开始生成</button></div>`);
 }
-async function submitTestGen(name){
+async function submitTestGen(name,force){
   const prompt=q('#tg_prompt').value.trim();
   if(!prompt){q('#tg_status').textContent='提示词必填';q('#tg_status').style.color='var(--red)';return;}
-  const body={prompt,model:q('#tg_model').value,duration:Number(q('#tg_duration').value),ratio:q('#tg_ratio').value};
+  const body={prompt,model:q('#tg_model').value,duration:Number(q('#tg_duration').value),ratio:q('#tg_ratio').value,force:!!force};
   q('#tg_btn').disabled=true;
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/test-generate',{method:'POST',body});
     q('#tg_status').textContent='已提交 '+r.task_id.slice(0,12)+'…，开始生成（可能需等待）';
     q('#tg_status').style.color='var(--accent)';
     pollTestGen(r.task_id,name);
-  }catch(e){q('#tg_status').textContent=e.message;q('#tg_status').style.color='var(--red)';q('#tg_btn').disabled=false;}
+  }catch(e){
+    q('#tg_btn').disabled=false;
+    // 服务端判定这个号现在测试大概率白撞（风控/限流暂停/出口被限流/没绑代理/额度不够）：确认后再强制发
+    if(String(e.message).startsWith('TEST_GEN_WARN:')){
+      const reasons=String(e.message).slice('TEST_GEN_WARN:'.length).split('\n').filter(Boolean);
+      const msg=`测试生成会用 ${name} 真实出片、消耗真实额度。这个号现在：\n\n`
+        +reasons.map(r=>'• '+r).join('\n')+'\n\n仍然要测试吗？';
+      if(confirm(msg))return submitTestGen(name,true);
+      q('#tg_status').textContent='已取消：'+reasons.join('；');q('#tg_status').style.color='var(--sub)';
+      return;
+    }
+    q('#tg_status').textContent=e.message;q('#tg_status').style.color='var(--red)';
+  }
 }
 async function pollTestGen(taskId,name){
   stopTestGenPoll();
