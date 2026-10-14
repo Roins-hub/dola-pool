@@ -2808,6 +2808,9 @@ def looks_like_duration_confirm(text: str) -> bool:
         return True
     if "需要你确认" in compact or "需要确认" in compact:
         return True
+    # stable-dola-pool 10-02 实测：「视频生成支持 4–15 秒…请回复：确认生成」
+    if "回复" in compact and "确认生成" in compact:
+        return True
     return False
 
 
@@ -2823,6 +2826,15 @@ def looks_like_duration_capped(text: str) -> bool:
     if "按默认5秒" in compact:
         return True
     if "按15秒" in compact and ("生成" in compact or "一镜到底" in compact):
+        return True
+    # 2026-09-27 起出现的中英混排话术（stable-dola-pool 线上原文）：
+    #   "视频 generation currently supports durations from 4 to 15 seconds.
+    #    I can generate it at the nearest supported duration of 15 seconds.
+    #    Do you want me to proceed with a 15-second version?"
+    low = compact.lower()
+    if "supportsdurationsfrom4to15seconds" in low or "nearestsupportedduration" in low:
+        return True
+    if "secondversion" in low and ("proceedwitha" in low or "generateitatthe" in low):
         return True
     return False
 

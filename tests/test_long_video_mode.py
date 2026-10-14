@@ -217,7 +217,7 @@ def test_pair_requests_30s_twice_and_concats_15s_parts(tmp_path, monkeypatch):
     assert dola.durations == [30, 30]
     assert "前半段" in dola.prompts[0] and "后半段" in dola.prompts[1]
     assert len(merged) == 1 and len(merged[0]) == 2
-    assert any(n and "一起提交" in n for n in notes)
+    assert any(n and "都已受理" in n for n in notes)
     assert out == tmp_path / "o.mp4"
 
 

@@ -626,6 +626,91 @@ def _credit_short(detail: str) -> bool:
     return any(marker in (detail or "") for marker in CREDIT_SHORT_MARKERS)
 
 
+# 上游对「请求 30 秒」有时不直接受理，而是反问「只支持 4~15 秒，是否按 15 秒生成？请回复：确认生成」，
+# 不回话它就一直等（stable-dola-pool 2.1.22 实测，长分镜提示词常见）。在同一会话回这句它才出片。
+DURATION_CAP_CONFIRM_REPLY = "确认生成"
+# 第一段成片达到请求时长的这个比例 → 上游这次原样出了 30 秒（10-02 实测 30.04 秒、只扣 2 点），直接交付
+NATIVE_FULL_RATIO = 0.9
+_QUESTION_MARKERS = ("是否", "请回复", "请确认", "需要你确认", "需要确认", "确认后", "要不要",
+                     "可以吗", "？", "?", "doyouwant", "wouldyoulike", "shalli")
+
+
+def _awaiting_confirmation(dola, texts) -> bool:
+    """上游在等我们答话（反问时长 / 要不要拆段），而不是已经受理出片。
+
+    已经播报「将消耗 N 个视频生成额度」的算受理，**不回话**：此时再回「确认生成」可能被当成新请求再扣一次。
+    """
+    is_echo = getattr(dola, "is_prompt_echo_text", None) or (lambda _t: False)
+    accepted = getattr(dola, "looks_like_generation_accepted", None) or (lambda _t: False)
+    confirm = getattr(dola, "looks_like_duration_confirm", None) or (lambda _t: False)
+    capped = getattr(dola, "looks_like_duration_capped", None) or (lambda _t: False)
+    own = [str(t) for t in texts or [] if str(t).strip() and not is_echo(str(t))]
+    if not own or any(accepted(t) for t in own):
+        return False
+    for text in own:
+        compact = re.sub(r"\s+", "", text).lower()
+        if confirm(text) or (capped(text) and any(m in compact for m in _QUESTION_MARKERS)):
+            return True
+    return False
+
+
+def _chat_reply(*, dola, session, ctx, headers, conversation_id: str, text: str,
+                account: str = "") -> bool:
+    """在**同一个会话**里回一句纯文本（video_ability=False），返回是否发出去（移植自 stable-dola-pool）。"""
+    if not text or not conversation_id:
+        return False
+    section_id = ""
+    last_index = None
+    try:
+        chain = dola.fetch_single_chain(session, ctx, conversation_id)
+        section_id = dola.find_latest_section_id(chain) or ""
+        last_index = dola.find_latest_message_index(chain)
+    except Exception as exc:  # noqa: BLE001
+        log.info("chat reply: %s 拉会话链失败（用空 section 继续）: %s", account, str(exc)[:120])
+    try:
+        result = dola.submit_chat_completion(
+            session, ctx, headers, images=[], audios=[], prompt=text,
+            duration=5, model="", ratio=None, timeout_sec=180,
+            video_ability=False, conversation_id=conversation_id,
+            section_id=section_id, last_message_index=last_index,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.info("chat reply: %s 同会话回话失败: %s", account, str(exc)[:180])
+        return False
+    return not getattr(result, "error", None)
+
+
+def _await_acceptance(*, dola, session, ctx, account: str, conversation_id: str,
+                      poll_interval: float, credits: "_CreditTracker | None" = None,
+                      on_poll=None) -> list[str]:
+    """回了「确认生成」之后，等上游真正受理（播报额度 / 出媒体 / 进终态）。"""
+    accepted = getattr(dola, "looks_like_generation_accepted", None) or (lambda _t: False)
+    deadline = time.time() + NO_ACK_SECONDS
+    while time.time() < deadline:
+        try:
+            poll = dola.inspect_video_once(session, ctx, conversation_id)
+        except Exception as exc:
+            log.info("confirm: %s 轮询异常（继续等）: %s", account, str(exc)[:160])
+            time.sleep(poll_interval)
+            continue
+        texts = [str(t) for t in (getattr(poll, "texts", None) or [])]
+        if credits is not None:
+            credits.note(texts)
+        status = str(getattr(poll, "status", "") or "")
+        if (any(accepted(t) for t in texts) or _media_keys(poll)
+                or status in ("succeeded",) + FINAL_POLL_STATUSES):
+            _emit_upstream_note(on_poll, dola, texts)
+            return texts
+        time.sleep(poll_interval)
+    raise PureApiError(f"{account} 回了「{DURATION_CAP_CONFIRM_REPLY}」后 {NO_ACK_SECONDS} 秒上游仍未受理")
+
+
+def _segment_cost(model: str, segment_duration: int) -> int:
+    m = (model or "").replace("_", ".")
+    version = "seedance-2.0" if "2.0" in m else "seedance-2.5"
+    return config.credit_cost(version, segment_duration)
+
+
 def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: str,
                           ratio: str | None, model: str, output_path: str | Path,
                           remove_watermark: bool, proxy: str, timeout: int,
@@ -634,54 +719,99 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                           existing_parts: list[Path] | None = None,
                           images: list | None = None,
                           credits: "_CreditTracker | None" = None,
-                          segment_duration: int = 30) -> Path:
-    """两段独立出片后本地拼成 30 秒。
+                          segment_duration: int = 30,
+                          stats: dict | None = None) -> Path:
+    """两段独立出片后本地拼成 30 秒；第一段若原样出了 30 秒就直接交付。
 
     segment_duration：每段向上游**请求**的时长。默认 30：dola 回「按最接近的支持时长 15 秒为你生成，
     将消耗 2 个」（直接请求 15 秒反而要 12 点）。
-    流程：所有段先一起提交（上游排队常要几十分钟，并行能省一半时间）→ 逐段看第一次回执，
-    上游只答应短片（如「按默认 5 秒」）就立刻失败 → 等出片、下载后再用 ffprobe 校验每段时长。
+    流程（2.2.2）：
+    1. 提交第 1 段，看第一次回执；上游反问「是否按 15 秒生成」→ 同会话回「确认生成」。
+    2. 回执说会压成 15 秒 → 立刻提交第 2 段（两段并行出片）；说「按默认 5 秒」→ 直接失败。
+    3. 回执没说压时长 → 先等第 1 段：真出了 ~30 秒就直接交付（只扣一次额度），
+       只出了 ~15 秒再补第 2 段。
+    4. 每段下载后用 ffprobe 校验时长，再本地拼接。
     existing_parts：已经拿到的分段（例如上游静默压时长后落地的第一段），只补生成缺的那几段。
+    stats：调用方传 dict 进来，回填 segments（实际提交了几段 = 扣了几次）与 native（是否原样 30 秒）。
     """
     tmp_dir = Path(tempfile.mkdtemp(prefix="dola-pair-"))
     min_seconds = float(config.PAIR_MIN_SEGMENT_SECONDS)
+    full_seconds = float(segment_duration) * NATIVE_FULL_RATIO
     total = len(PART_HINTS)
+    capped_fn = getattr(dola, "looks_like_duration_capped", None) or (lambda _t: False)
+    if stats is not None:
+        stats.update(segments=0, native=False)
     try:
         parts: list[Path] = list(existing_parts or [])
-        # ---- 1. 缺的段一起提交
-        submitted: list[tuple[int, str]] = []
-        for index, hint in enumerate(PART_HINTS[len(parts):], start=len(parts) + 1):
-            submit = dola.submit_chat_completion(
+        pending: list[tuple[int, str]] = []
+
+        def submit(index: int) -> str:
+            hint = PART_HINTS[index - 1]
+            result = dola.submit_chat_completion(
                 session, ctx, headers, images=images or [], audios=[],
                 prompt=f"{prompt}\n\n{hint}",
                 duration=segment_duration, model=model, ratio=ratio,
                 timeout_sec=180, video_ability=True,
             )
-            if submit.error:
-                raise PureApiError(f"{account} 第 {index} 段提交失败: {str(submit.error)[:200]}")
-            if not submit.conversation_id:
+            if result.error:
+                raise PureApiError(f"{account} 第 {index} 段提交失败: {str(result.error)[:200]}")
+            if not result.conversation_id:
                 raise PureApiError(f"{account} 第 {index} 段未返回 conversation_id")
             if index == 1 and on_conversation_id:
                 try:
-                    on_conversation_id(account, submit.conversation_id, time.time() + timeout)
+                    on_conversation_id(account, result.conversation_id, time.time() + timeout)
                 except Exception:
                     pass
-            submitted.append((index, submit.conversation_id))
-        _emit_note_text(on_poll, f"两段拼接：{total} 段已一起提交，等上游回执")
-        # ---- 2. 逐段看第一次回执：上游只答应短片就别等了
-        for index, conv in submitted:
+            if stats is not None:
+                stats["segments"] += 1
+            pending.append((index, result.conversation_id))
+            return result.conversation_id
+
+        def acknowledge(index: int, conv: str) -> bool:
+            """看这一段的第一次回执；返回上游是否说了要压时长。"""
             ack = _await_first_ack(
                 dola=dola, session=session, ctx=ctx, account=account, conversation_id=conv,
                 ack_deadline=time.time() + NO_ACK_SECONDS, poll_interval=poll_interval,
                 credits=credits, on_poll=on_poll) or []
+            if _awaiting_confirmation(dola, ack):
+                replied = _chat_reply(dola=dola, session=session, ctx=ctx, headers=headers,
+                                      conversation_id=conv, text=DURATION_CAP_CONFIRM_REPLY,
+                                      account=account)
+                log.info("pure pair: %s 第 %s 段 dola 在问时长 → 回「%s」(ok=%s)",
+                         account, index, DURATION_CAP_CONFIRM_REPLY, replied)
+                if not replied:
+                    raise PureApiError(
+                        f"{account} 第 {index} 段 dola 在等确认（{_upstream_note(dola, ack)[:120]}），但回话失败")
+                _emit_note_text(on_poll, f"两段拼接：第 {index} 段 dola 问要不要按 15 秒生成 → 已回「确认生成」")
+                ack = _await_acceptance(dola=dola, session=session, ctx=ctx, account=account,
+                                        conversation_id=conv, poll_interval=poll_interval,
+                                        credits=credits, on_poll=on_poll)
             announced = _announced_seconds(dola, ack)
             if announced and announced < min_seconds:
                 raise PairSegmentShortError(
                     f"{account} 两段拼接第 {index} 段上游只答应生成 {announced} 秒"
                     f"（dola 原话：{_upstream_note(dola, ack)[:120]}），拼不出 {segment_duration} 秒；"
-                    "本单直接失败，不换号重试（每段都已扣额度）")
-        # ---- 3. 等出片、下载、校验时长
-        for index, conv in submitted:
+                    "本单直接失败，不换号重试（已扣额度）")
+            return bool(announced and announced < full_seconds) or any(capped_fn(str(t)) for t in ack)
+
+        def submit_rest(start: int) -> None:
+            for index in range(start, total + 1):
+                acknowledge(index, submit(index))
+            _emit_note_text(on_poll, f"两段拼接：{total} 段都已受理，等出片")
+
+        first = len(parts) + 1
+        native_try = False
+        if first <= total:
+            capped = acknowledge(first, submit(first))
+            native_try = first == 1 and not capped
+            if native_try:
+                _emit_note_text(on_poll, "两段拼接：dola 没说要压时长，先等第 1 段——原样出了 30 秒就直接交付")
+            else:
+                submit_rest(first + 1)
+        i = 0
+        while i < len(pending):
+            index, conv = pending[i]
+            i += 1
             part_credits = _CreditTracker(credits.on_balance if credits else None)
             _emit_note_text(on_poll, f"两段拼接：等第 {index}/{total} 段出片")
             # 心跳：分段轮询期间刷 last_poll_at，免得看门狗把正常等待判成卡住
@@ -712,6 +842,14 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                 referer=f"{dola.BASE}/chat/{conv}", proxy=proxy or "",
             )
             seconds = _media_duration(part)
+            if native_try and index == 1 and seconds is not None and seconds >= full_seconds:
+                log.info("pure pair: %s 第 1 段原样出了 %.1f 秒 → 直接交付，不再出第 2 段", account, seconds)
+                out_path = Path(output_path)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(part, out_path)
+                if stats is not None:
+                    stats["native"] = True
+                return out_path
             if seconds is not None and seconds < min_seconds:
                 raise PairSegmentShortError(
                     f"{account} 两段拼接第 {index} 段只有 {seconds:.1f} 秒（至少要 {min_seconds:g} 秒），"
@@ -719,6 +857,16 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
             parts.append(part)
             log.info("pure pair: %s 第 %s 段完成（%s 秒）", account, index,
                      f"{seconds:.1f}" if seconds is not None else "?")
+            if native_try and index == 1:
+                # 回执没提压时长，落地却只有 ~15 秒：现在补后面的段
+                native_try = False
+                need = _segment_cost(model, segment_duration)
+                left = credits.left if credits is not None else None
+                if left is not None and left < need:
+                    raise PureApiError(
+                        f"{account} 第 1 段只出了 {seconds or 0:.1f} 秒，账号今日只剩 {left} 点，"
+                        f"补第 2 段要 {need} 点，拼不出 30 秒")
+                submit_rest(2)
         return _concat_videos(parts, Path(output_path))
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1091,11 +1239,12 @@ def generate_pure_video(
     submit_prompt = (dola.enrich_multi_image_prompt(prompt, len(uploaded_images))
                      if uploaded_images else prompt)
     if int(duration or 0) > 15 and config.LONG_VIDEO_MODE == "pair":
-        # dola 单条最长 15 秒：直接请求「前半段 / 后半段」两条 15 秒，本地拼成目标时长。
-        # 不先试单条 30 秒（现在只会被回「按默认 5 秒」并照样扣额度）。
+        # dola 单条最长 15 秒：「前半段 / 后半段」各请求一次 30 秒（上游压成 15 秒、各扣 2 点），本地拼接；
+        # 第一段若原样出了 30 秒就直接交付（见 _generate_capped_pair）。
         out_dir = Path(output_dir or config.DOWNLOAD_DIR)
         out_dir.mkdir(parents=True, exist_ok=True)
         merged_path = out_dir / f"{account}_{uuid.uuid4().hex[:12]}.{CONCAT_CONTAINER}"
+        pair_stats: dict = {}
         merged = _generate_capped_pair(
             dola=dola, session=session, ctx=ctx, headers=headers, account=account,
             prompt=submit_prompt, ratio=ratio, model=pure_model, output_path=merged_path,
@@ -1103,12 +1252,15 @@ def generate_pure_video(
             timeout=max(config.PURE_API_TIMEOUT, config.PURE_API_TIMEOUT_MAX),
             poll_interval=poll_interval, on_poll=on_poll, on_conversation_id=on_conversation_id,
             images=uploaded_images, credits=credits,
-            segment_duration=config.PAIR_SEGMENT_SECONDS,
+            segment_duration=config.PAIR_SEGMENT_SECONDS, stats=pair_stats,
         )
         return {
             "local_path": str(merged), "account": account, "conversation_id": "",
             "download_url": "", "duration": int(duration), "model": pure_model,
-            "pure_api": True, "merged_segments": len(PART_HINTS), "merge_mode": "pair_15s",
+            "pure_api": True, "merged_segments": 1 if pair_stats.get("native") else len(PART_HINTS),
+            "merge_mode": "native_30s" if pair_stats.get("native") else "pair_15s",
+            # 实际向上游提交了几段（= 扣了几次）：原样 30 秒只扣一次，号池据此少记一半
+            "pair_segments_charged": pair_stats.get("segments") or len(PART_HINTS),
             **credits.fields(),
         }
     submit = dola.submit_chat_completion(

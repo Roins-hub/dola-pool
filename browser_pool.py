@@ -435,6 +435,8 @@ class BrowserPool:
         才退回上游报价。上游真实余额由回执里的「今日剩余 N 个」回写校正。
         """
         quoted = int((result or {}).get("credits_used") or 0)
+        if (result or {}).get("pair_segments_charged") == 1 and table_cost:
+            table_cost = max(1, table_cost // 2)      # 两段拼接第一段就原样出了 30 秒：只扣了一次
         charge = table_cost or quoted or 1
         if quoted and quoted != charge:
             print(f"[pool] {account} 记账 {charge} 点（额度表）· 上游报价 {quoted} 点", flush=True)
@@ -453,6 +455,13 @@ class BrowserPool:
     @staticmethod
     def _is_pair_job(duration) -> bool:
         return _is_pair_duration(duration)
+
+    def _has_pure_candidate(self, cost: int) -> bool:
+        """还有没有能接 pair 单的号：纯 API、不在冷却/风控/待激活/异常、开着调度、余额够。"""
+        return any(
+            a.get("group") not in self.BLOCKED_GROUPS and self._schedulable(a)
+            and a["remaining"] >= cost and self.is_pure_account(a["name"])
+            for a in self.list_accounts())
 
     # ---- 模型 → 候选额度组（2026-09-23 P2）----
     # 不派发的组：冷却（额度 ≤1）、风控（永久）、待激活（未探测）、异常（出片异常）
@@ -1747,6 +1756,7 @@ class BrowserPool:
             throttle_announced = False
             busy_announced = False
             busy_timeout = False
+            non_pure_announced = False
             # max_attempts <= 0：不限次数，只要没到 deadline 就一轮轮换号重试。
             unlimited = max_attempts <= 0
 
@@ -1764,6 +1774,7 @@ class BrowserPool:
                 throttle_min = float("inf")
                 short_only = True          # 本轮没派出去的号是否「只是今日余额不够这一单」
                 short_seen = 0
+                non_pure: list[str] = []   # pair 单跳过的浏览器登录号（拼接只走纯 API）
                 for a in self._ordered_candidates(allowed_groups):
                     if a["name"] in tried or self._recently_failed(a["name"]):
                         continue
@@ -1784,6 +1795,7 @@ class BrowserPool:
                         continue
                     # 两段拼接只在纯 API 路径实现（浏览器号会按 30 秒原样提交，拿不到片）
                     if pair_job and not self.is_pure_account(a["name"]):
+                        non_pure.append(a["name"])
                         continue
                     # 出口被上游限流（710022002）中：同出口的号都先别动，等出口恢复
                     throttled = self.egress_throttle_remaining(a["name"])
@@ -1919,6 +1931,18 @@ class BrowserPool:
                         f"（需要剩余 ≥ {cost} 点的号），"
                         f"可用账号今日最多只剩 {best} 点（每日 {DAILY_LIMIT} 点，"
                         f"{config.LIMIT_RESET_TZ} 0 点重置）；可改用更短时长或 seedance-2.0")
+                if non_pure and not non_pure_announced:
+                    non_pure_announced = True
+                    print(f"[pool] 30 秒两段拼接只走纯 API（Cookie 导入的号），跳过浏览器登录号："
+                          f"{'、'.join(non_pure)}", flush=True)
+                if (not picked and pair_job and not waiting_possible and not throttle_wait
+                        and not group_wait and not self._has_pure_candidate(cost)):
+                    # 以前这里会静默空转到任务时限（2026-10-14 HK：只剩 Google 登录号，30 秒单卡在排队）
+                    raise RuntimeError(
+                        f"30 秒两段拼接只能用 Cookie 导入的号（纯 API），且要剩余 ≥ {cost} 点："
+                        f"现在没有这样的号可派"
+                        + (f"（{'、'.join(non_pure)} 是浏览器登录号，不能接）" if non_pure else "")
+                        + "；可改用 15 秒以内，或等每日额度重置")
                 if not picked and throttle_wait:
                     # 还有号，只是它们的出口都在被上游限流：原地排队等出口恢复，
                     # 而不是换号硬撞（越撞限得越久），也不是立刻判失败。

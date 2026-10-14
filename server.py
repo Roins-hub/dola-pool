@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.2.1"
+APP_VERSION = "2.2.2"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -1480,6 +1480,8 @@ async def health():
     queue = {
         "queued": store.pending_task_count() - queue_info["running"],
         "running": queue_info["running"],
+        # 进行中的加号 / 自动重登任务：重启会把它们杀在半路（号进了池却没登录完）
+        "add_jobs_running": len(_running_add_jobs()) + (1 if ADD_ACCOUNT_SEM.locked() else 0),
         "workers": workers,
         "typical_seconds": queue_info["typical_seconds"],
         "eta_text": _eta_text(queue_info["typical_seconds"]),
