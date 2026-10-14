@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.1.8"
+APP_VERSION = "2.1.9"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -1220,10 +1220,24 @@ def _reject_unsupported_long(duration) -> None:
         raise HTTPException(422, LONG_VIDEO_REJECT_MESSAGE.format(d=seconds))
 
 
+def _reject_unaffordable(model: str, duration) -> None:
+    """上游报价超过一个号一整天的额度：号池里没有任何号付得起，受理时直接拒（2.1.9）。"""
+    from browser_pool import duration_cost
+    cost = duration_cost(model, duration)
+    if cost > config.DAILY_LIMIT:
+        raise HTTPException(
+            422,
+            f"{model} 生成 {duration} 秒视频，dola 要扣 {cost} 个额度，超过每个号每日上限 "
+            f"{config.DAILY_LIMIT} 个，号池无法生成；请改用更短时长"
+            + ("或 seedance-2.0" if "2.5" in model else ""))
+
+
 async def _submit_task(client, model, prompt, ratio, duration, reference_images):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
     _reject_unsupported_long(duration)
     resolved = _resolve_model_for_duration(model, duration)
+    if resolved is not None:
+        _reject_unaffordable(resolved, duration)
     if resolved is None:
         version = _model_version(model)
         if version is not None:

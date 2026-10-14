@@ -215,13 +215,12 @@ def test_short_clip_does_not_mark_account(tmp_path):
 
 
 def test_model_point_table(tmp_path):
-    """记账口径：2.5 一条 2 点（不分时长），2.0 一条 3 点。"""
+    """记账口径（2.1.9 起按「模型 + 时长」，依据 2026-10-14 线上上游报价）。"""
     browser_pool, pool = _pool(tmp_path)
 
-    assert pool._duration_cost("seedance-2.5", 10) == 2
-    assert pool._duration_cost("seedance-2.5", 30) == 2
-    assert pool._duration_cost("seedance-2.0", 5) == 3
-    assert pool._duration_cost("seedance-2.0", 10) == 3
+    assert pool._duration_cost("seedance-2.5", 5) == 2
+    assert pool._duration_cost("seedance-2.5", 10) == 4
+    assert pool._duration_cost("seedance-2.0", 10) == 2
     assert pool._duration_cost("seedance-2.0", 15) == 3
 
 

@@ -175,6 +175,7 @@ def test_cooldown_zero_disables_account_pause(tmp_path, monkeypatch):
 def test_unsupported_duration_stops_whole_task(tmp_path, monkeypatch):
     """上游说 30 秒不支持：直接失败，不再挨个号重试。"""
     browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a", "acc2": "b"})
+    monkeypatch.setitem(config.DURATION_COSTS, "seedance-2.5", {30: 2})   # 只测「时长不支持」这条路径
     gen = []
 
     async def fake_gen(account, *a, **k):

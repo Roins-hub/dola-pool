@@ -125,6 +125,59 @@ MODEL_COSTS = {
 }
 DEFAULT_CREDIT_COST = 3
 
+# ---- 按「模型 + 时长」的扣点（2.1.9）----
+# 2026-10-14 两台线上日志里上游回执的报价（「将消耗 N 个视频生成额度」）按任务时长对齐：
+#   seedance-2.5：5 秒 = 2（多次）、10 秒 = 4（5 次，配合上面注释「实测扣满一天 4 点」）、
+#                 15 秒 = 12（实测：普通 15 秒请求被回「需要消耗 12 个…今日剩余 4 个，无法生成」）
+#   seedance-2.0：10 秒 = 2
+# 注意 2.5 不是按秒线性涨价（15 秒一档跳到 12）：免费号每日 4 点，2.5 最长只能出 10 秒。
+# 上游余额不够报价时直接拒绝（「需要消耗 N 个，今日剩余 M 个，无法生成」），所以派号必须按报价算。
+# 表里没有的时长：取表里比它长的最短一档；比表里都长就按最长一档的每秒单价外推（向上取整）；
+# 整个模型都没有表 → 退回 MODEL_COSTS。可用 DOLA_DURATION_COSTS 覆盖，格式：
+#   seedance-2.5:5=2,10=4,15=12;seedance-2.0:10=2
+DURATION_COSTS: dict[str, dict[int, int]] = {
+    "seedance-2.5": {5: 2, 10: 4, 15: 12},
+    "seedance-2.0": {10: 2},
+}
+
+
+def _parse_duration_costs(raw: str) -> dict[str, dict[int, int]]:
+    table: dict[str, dict[int, int]] = {}
+    for part in (raw or "").split(";"):
+        if ":" not in part:
+            continue
+        model, _, pairs = part.partition(":")
+        for pair in pairs.split(","):
+            seconds, _, cost = pair.partition("=")
+            try:
+                table.setdefault(model.strip(), {})[int(seconds)] = int(cost)
+            except ValueError:
+                continue
+    return table
+
+
+for _model, _costs in _parse_duration_costs(os.getenv("DOLA_DURATION_COSTS", "")).items():
+    DURATION_COSTS.setdefault(_model, {}).update(_costs)
+
+
+def credit_cost(version: str, duration: int | None) -> int:
+    """某个 seedance 版本出一条 duration 秒视频，上游要扣（报价）多少点。"""
+    base = MODEL_COSTS.get(version, DEFAULT_CREDIT_COST)
+    table = DURATION_COSTS.get(version) or {}
+    try:
+        seconds = int(duration or 0)
+    except (TypeError, ValueError):
+        seconds = 0
+    if not table or seconds <= 0:
+        return base
+    if seconds in table:
+        return table[seconds]
+    longer = [d for d in sorted(table) if d >= seconds]
+    if longer:
+        return table[longer[0]]
+    top = max(table)
+    return -(-table[top] * seconds // top)        # 按最长一档的每秒单价外推，向上取整
+
 # seedance-2.0 只认这三个原生档位；其余（含 30）都必须走 2.5。
 V20_DURATIONS = (5, 10, 15)
 

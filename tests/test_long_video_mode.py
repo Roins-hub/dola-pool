@@ -124,16 +124,18 @@ def _pool(tmp_path, monkeypatch, names=("acc1", "acc2")):
 def test_pair_job_costs_two_videos_and_needs_full_account(tmp_path, monkeypatch):
     browser_pool, bp = _pool(tmp_path, monkeypatch)
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "pair")
+    monkeypatch.setitem(config.DURATION_COSTS, "seedance-2.5", {5: 2, 10: 2, 15: 2})
     assert bp._duration_cost("seedance-2.5", 30) == 4
     assert bp._duration_cost("seedance-2.5", 15) == 2
     assert bp._allowed_quota_groups("seedance-2.5", 30) == (browser_pool.GROUP_FULL,)
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "reject")
-    assert bp._duration_cost("seedance-2.5", 30) == 2
+    assert bp._duration_cost("seedance-2.5", 30) == config.credit_cost("seedance-2.5", 30)
 
 
 def test_pair_job_skips_half_account(tmp_path, monkeypatch):
     browser_pool, bp = _pool(tmp_path, monkeypatch)
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "pair")
+    monkeypatch.setitem(config.DURATION_COSTS, "seedance-2.5", {5: 2, 10: 2, 15: 2})
     bp._claim("acc1", 2)                                  # acc1 只剩 2 点，不够两段
     gen = []
 
@@ -193,7 +195,7 @@ def test_pair_requests_two_explicit_15s_segments(tmp_path, monkeypatch):
         on_poll=lambda now, note=None, wait_seconds=None: notes.append(note),
         segment_duration=15)
     assert dola.durations == [15, 15]
-    assert "前 15 秒" in dola.prompts[0] and "后 15 秒" in dola.prompts[1]
+    assert "前半段" in dola.prompts[0] and "后半段" in dola.prompts[1]
     assert len(merged) == 1 and len(merged[0]) == 2
     assert any(n and "第 1/2 段" in n for n in notes)
     assert out == tmp_path / "o.mp4"

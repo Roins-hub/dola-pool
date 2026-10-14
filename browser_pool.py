@@ -7,6 +7,7 @@ import asyncio
 import logging
 import shutil
 import sqlite3
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -127,6 +128,33 @@ CONTENT_REFUSAL_MARKERS = (
 SHORT_CLIP_MARKERS = (
     "只给了", "不拼接",
 )
+
+
+def duration_cost(model: str, duration: int = 0) -> int:
+    """出一条视频上游要扣（报价）的点数：按「模型 + 时长」（2.1.9 起，见 config.credit_cost）。
+
+    两段拼接（DOLA_30S_MODE=pair）= 两条 PAIR_SEGMENT_SECONDS 秒的价。
+    认不出的模型一律按 2.0 计（宁可少派，也不要拿号去白撞额度）。
+    """
+    m = (model or "").lower().replace("_", "-")
+    if "2.5" in m or "2-5" in m:
+        version = "seedance-2.5"
+    elif "2.0" in m or "2-0" in m:
+        version = "seedance-2.0"
+    else:
+        return config.DEFAULT_CREDIT_COST
+    if _is_pair_duration(duration):
+        return 2 * config.credit_cost(version, config.PAIR_SEGMENT_SECONDS)
+    return config.credit_cost(version, duration)
+
+
+_QUOTE_RE = re.compile(r"需要消耗\s*(\d+)\s*个.*?剩余\s*(\d+)\s*个")
+
+
+def parse_quota_quote(message: str) -> tuple[int, int] | None:
+    """「本次视频生成需要消耗 N 个视频生成额度，今日剩余 M 个…无法生成」→ (N, M)。"""
+    m = _QUOTE_RE.search(message or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
 
 
 def _is_pair_duration(duration) -> bool:
@@ -417,16 +445,7 @@ class BrowserPool:
         一旦放开任意时长，每个未登记时长都会被按 1 点记账，一个号一天能跑 4 条。
         duration 参数保留，仅为兼容既有调用方签名。
         """
-        m = (model or "").lower().replace("_", "-")
-        if "2.5" in m or "2-5" in m:
-            m = "seedance-2.5"
-        else:
-            # 认不出的模型一律按 2.0 计（= 最贵的 3 点）：宁可少派，也不要拿号去白撞额度。
-            m = "seedance-2.0"
-        cost = config.MODEL_COSTS.get(m, config.DEFAULT_CREDIT_COST)
-        if _is_pair_duration(duration):
-            cost *= 2          # 两段 15 秒 = 两条视频的额度
-        return cost
+        return duration_cost(model, duration)
 
     @staticmethod
     def _is_pair_job(duration) -> bool:
@@ -513,6 +532,14 @@ class BrowserPool:
         # 也就是「面板一打开就锁库」。
         self._conn.commit()
 
+    def _sync_remaining(self, account: str, left: int, source: str = "") -> None:
+        """按上游回执的「今日剩余 N 个」校正本地记账（只会往少里调，不会把用掉的加回来）。"""
+        used = self.used_today(account)
+        target = max(used, DAILY_LIMIT - max(0, int(left)))
+        if target > used:
+            self._claim(account, target - used)
+        self._set_credit_balance(account, int(left), source)
+
     def _mark_quota_blocked(self, account: str, reason: str = ""):
         self._conn.execute(
             "UPDATE accounts_meta SET quota_blocked_until=?, quota_reason=?, last_used_at=? WHERE name=?",
@@ -575,8 +602,19 @@ class BrowserPool:
             print(f"[pool] {account} 当日次数已用完，标记到额度刷新: {message[:160]}", flush=True)
             self._mark_daily_limit(account, message)
         elif kind == "quota":
-            print(f"[pool] {account} 本单额度不够，标记到额度刷新: {message[:160]}", flush=True)
-            self._mark_quota_blocked(account, message)
+            quote = parse_quota_quote(message)
+            cheapest = min([c for t in config.DURATION_COSTS.values() for c in t.values()]
+                           + list(config.MODEL_COSTS.values()))
+            if quote and quote[1] >= cheapest:
+                # 上游是「这单太贵、拒绝」，没有扣点：按回执把真实余额写回，这个号还能接更便宜的单，
+                # 不能锁到明天（2026-10-14：一段 15 秒报价 12 点被拒，号还剩 4 点却被锁了一天）。
+                need, left = quote
+                self._sync_remaining(account, left, f"上游报价 {need} 点 > 余额 {left} 点（未扣点）")
+                print(f"[pool] {account} 这单要 {need} 点、余额 {left} 点，上游拒绝（未扣点）→ "
+                      f"余额回写为 {left}，不锁号", flush=True)
+            else:
+                print(f"[pool] {account} 本单额度不够，标记到额度刷新: {message[:160]}", flush=True)
+                self._mark_quota_blocked(account, message)
         elif kind == "content":
             # 版权/内容拒稿：同一条提示词换号也过不了，不能把号标记成失败或额度不足。
             print(f"[pool] {account} 内容/版权拒稿（与账号无关，不标记账号）: {message[:160]}", flush=True)
@@ -1714,6 +1752,8 @@ class BrowserPool:
                 group_wait = False
                 throttle_wait = False
                 throttle_min = float("inf")
+                short_only = True          # 本轮没派出去的号是否「只是今日余额不够这一单」
+                short_seen = 0
                 for a in self._ordered_candidates(allowed_groups):
                     if a["name"] in tried or self._recently_failed(a["name"]):
                         continue
@@ -1722,9 +1762,15 @@ class BrowserPool:
                         continue
                     # 额度组门槛：2.0 只吃满额；2.5 半额优先、满额兜底
                     if self._quota_group(a) not in allowed_groups:
-                        group_wait = True
+                        if a["remaining"] < cost:
+                            short_seen += 1     # 余额本来就不够这一单：等也等不来（要到明天重置）
+                        else:
+                            group_wait = True
                         continue
-                    if not self._schedulable(a) or a["remaining"] < cost:
+                    if not self._schedulable(a):
+                        continue
+                    if a["remaining"] < cost:
+                        short_seen += 1
                         continue
                     # 两段拼接只在纯 API 路径实现（浏览器号会按 30 秒原样提交，拿不到片）
                     if pair_job and not self.is_pure_account(a["name"]):
@@ -1853,6 +1899,16 @@ class BrowserPool:
                         tried_order.append(account)
                         if not attempts_left() or not time_left():
                             break
+                if (not picked and short_seen and not throttle_wait and not waiting_possible
+                        and not tried_order):
+                    # 号都在、只是今日余额都不够这一单：等下去要等到明天额度重置，直接说清楚
+                    best = max((a["remaining"] for a in self.list_accounts()
+                                if self._schedulable(a)), default=0)
+                    raise RuntimeError(
+                        f"号池里没有号付得起这一单：{model} {duration} 秒上游要扣 {cost} 点"
+                        f"（需要剩余 ≥ {cost} 点的号），"
+                        f"可用账号今日最多只剩 {best} 点（每日 {DAILY_LIMIT} 点，"
+                        f"{config.LIMIT_RESET_TZ} 0 点重置）；可改用更短时长或 seedance-2.0")
                 if not picked and throttle_wait:
                     # 还有号，只是它们的出口都在被上游限流：原地排队等出口恢复，
                     # 而不是换号硬撞（越撞限得越久），也不是立刻判失败。

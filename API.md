@@ -10,7 +10,7 @@
 | 项 | 值 |
 |---|---|
 | 服务名 | `stable-dola-pool` |
-| 代码版本 | `2.1.8`（见 `CHANGELOG.md`） |
+| 代码版本 | `2.1.9`（见 `CHANGELOG.md`） |
 | **Base URL** | `https://your-domain`（nginx 反代到本服务端口） |
 | 交互式文档 | `https://your-domain/docs`（FastAPI Swagger，实时以代码为准） |
 | OpenAPI Schema | `https://your-domain/openapi.json` |
@@ -144,8 +144,11 @@ Content-Type: application/json
 
 | 模型 | 支持时长 | 每次出片扣点 | 一个号一天（默认 4 点）能出 |
 |---|---|---|---|
-| `seedance-2.5` | 5 / 10 / 15 秒（30 秒见下） | 2 点（30 秒拼接 = 4 点） | 2 条 |
-| `seedance-2.0` | 5 / 10 / 15 秒 | 3 点 | 1 条（剩 1 点不够第二条） |
+| `seedance-2.5` | 5 / 10 秒（15 秒报价 12 点、30 秒见下） | 5 秒 2 点、10 秒 4 点、15 秒 12 点 | 5 秒 2 条 / 10 秒 1 条 |
+| `seedance-2.0` | 5 / 10 / 15 秒 | 10 秒 2 点、15 秒 3 点 | 10 秒 2 条 / 15 秒 1 条 |
+
+> 2.1.9 起扣点按「模型 + 时长」（dola 实际报价）。报价超过一个号每日额度的组合在提交时返回
+> `422 seedance-2.5 生成 15 秒视频，dola 要扣 12 个额度，超过每个号每日上限 4 个，号池无法生成…`。
 
 - 时长字段优先级：`duration` → `seconds` → `duration_seconds` → 默认 `10`。
   （new-api 的 sora/vinted 插件会把时长改写成 `seconds`，本服务已兼容。）

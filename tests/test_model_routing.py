@@ -89,13 +89,13 @@ def test_quota_group_is_about_points_only(tmp_path, monkeypatch):
 
 
 def test_v25_prefers_half_group(tmp_path, monkeypatch):
-    """2.5 优先吃只有 2 点的半额号，把满额号留给 2.0。"""
+    """2.5 优先吃只有 2 点的半额号，把满额号留给 2.0。（2.1.9 起按时长记账：2.5 的 5 秒 = 2 点）"""
     browser_pool, bp = _pool(tmp_path, monkeypatch)
     bp._claim("acc2", 2)          # acc2 变半额（剩 2 点）
     calls = []
     _record(bp, calls)
 
-    result = _run(bp.generate_video("p", None, 10, "seedance-2.5"))
+    result = _run(bp.generate_video("p", None, 5, "seedance-2.5"))
 
     assert result["account"] == "acc2", calls
     assert bp.used_today("acc2") == 4          # 2 + 2 = 4，正好用完
@@ -107,14 +107,14 @@ def test_v25_falls_back_to_full_when_no_half(tmp_path, monkeypatch):
     calls = []
     _record(bp, calls)
 
-    result = _run(bp.generate_video("p", None, 10, "seedance-2.5"))
+    result = _run(bp.generate_video("p", None, 5, "seedance-2.5"))
 
     assert result["account"] in ("acc1", "acc2")
     assert bp.used_today(result["account"]) == 2      # 4 → 2，留了半额
 
 
 def test_v20_only_takes_full_group(tmp_path, monkeypatch):
-    """只有半额号时，2.0 不能拿它凑数（2 点 < 3 点）。"""
+    """只有半额号时，2.0 的 15 秒（3 点）不能拿它凑数（2 点 < 3 点）。"""
     browser_pool, bp = _pool(tmp_path, monkeypatch)
     bp._claim("acc1", 2)          # acc1 半额
     bp._claim("acc2", 2)          # acc2 半额
@@ -122,10 +122,11 @@ def test_v20_only_takes_full_group(tmp_path, monkeypatch):
     _record(bp, calls)
     monkeypatch.setattr(config, "V20_WAIT_SECONDS", 0)   # 不排队，立刻失败便于断言
 
-    with pytest.raises(browser_pool.AllAccountsGroupEmptyError) as exc:
-        _run(bp.generate_video("p", None, 10, "seedance-2.0"))
+    # 2.1.9：半额号余额本来就付不起 → 直接说「没有号付得起」，不再等满额号
+    with pytest.raises(RuntimeError) as exc:
+        _run(bp.generate_video("p", None, 15, "seedance-2.0"))
 
-    assert "满额" in str(exc.value)
+    assert "付得起" in str(exc.value)
     assert calls == []
 
 
@@ -134,10 +135,10 @@ def test_v20_picks_full_and_leaves_cooling(tmp_path, monkeypatch):
     calls = []
     _record(bp, calls)
 
-    result = _run(bp.generate_video("p", None, 10, "seedance-2.0"))
+    result = _run(bp.generate_video("p", None, 15, "seedance-2.0"))
 
     assert result["account"] in ("acc1", "acc2")
-    # 3 点用掉后只剩 1 点 → 冷却组，当天不再参与派发
+    # 2.0 的 15 秒 = 3 点，用掉后只剩 1 点 → 冷却组，当天不再参与派发
     row = next(a for a in bp.list_accounts() if a["name"] == result["account"])
     assert row["remaining"] == 1
     assert row["group"] == browser_pool.GROUP_COOLING

@@ -150,8 +150,9 @@ def test_duration_cost_never_returns_the_old_undercharge():
 def test_browser_pool_duration_cost_matches_server():
     from browser_pool import BrowserPool
 
-    assert BrowserPool._duration_cost(None, "seedance-2.5", 20) == 2
-    assert BrowserPool._duration_cost(None, "seedance-2.0", 5) == 3
+    # 2.1.9 起按「模型 + 时长」记账（见 config.credit_cost / tests/test_duration_costs.py）
+    assert BrowserPool._duration_cost(None, "seedance-2.5", 20) == config.credit_cost("seedance-2.5", 20)
+    assert BrowserPool._duration_cost(None, "seedance-2.0", 5) == config.credit_cost("seedance-2.0", 5)
     assert BrowserPool._duration_cost(None, "???", 5) == config.DEFAULT_CREDIT_COST
 
 
