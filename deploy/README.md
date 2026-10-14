@@ -78,7 +78,7 @@ systemctl enable --now stable-dola-pool stable-dola-pool-health.timer
 - 站点 `server_name` 指向你的域名，`proxy_pass http://127.0.0.1:8000;`（8000 不对外）；
 - **必须** `client_max_body_size 64m;`（画布会 multipart 传参考图，默认 1m 会 413）；
 - 保留 `location ~ \.well-known { allow all; }`，否则宝塔申请/续签证书会失败；
-- `proxy_read_timeout 1800s;`（30 秒档出片要 6~20 分钟，别用默认 60s 掐断）。
+- `proxy_read_timeout 1800s;`（30 秒档出片要 6～20 分钟，别用默认 60s 掐断）。
 
 宝塔面板里就是：**网站 → 你的域名 → 反向代理 → 目标 `http://127.0.0.1:8000`**，
 SSL 用面板一键申请（Let's Encrypt），续签计划任务面板自带。
