@@ -122,3 +122,19 @@ def test_queue_note_does_not_reset_queue_clock(tmp_path):
     st.set_queue_note("t1", "排队中：能接单的号所在的出口 IP 正被 dola 限流")
     row = st.get("t1")
     assert row["queue_note"].startswith("排队中") and row["updated_at"] == before
+
+
+def test_progress_text_is_not_labelled_as_dola():
+    """号池自己的进度说明走 progress=（面板「⏳」行），不当成 dola 原话、不挤掉 dola 的回复。"""
+    import pure_api_gen
+    got = {}
+
+    def on_poll(now, note=None, wait_seconds=None, progress=None):
+        got.update(note=note, progress=progress)
+
+    pure_api_gen._emit_note_text(on_poll, "30 秒：等第 1 段出片")
+    assert got == {"note": None, "progress": "30 秒：等第 1 段出片"}
+
+    legacy = []
+    pure_api_gen._emit_note_text(lambda now, note=None, wait_seconds=None: legacy.append(note), "x")
+    assert legacy == ["x"]                         # 老回调不认 progress= 时退回 note=

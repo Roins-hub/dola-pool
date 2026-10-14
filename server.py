@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.2.6"
+APP_VERSION = "2.2.7"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -638,8 +638,11 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 每个号的 dola 回执原话（按尝试顺序），面板把当前号显示在前、其它号折叠
         note_state: dict = {"account": None, "notes": []}
 
-        def on_poll(now, note=None, wait_seconds=None):
+        def on_poll(now, note=None, wait_seconds=None, progress=None):
             fields = {"last_poll_at": now}
+            if progress:
+                # 号池自己的进度说明（如「30 秒：等第 1 段出片」）：进「⏳」行，不当成 dola 原话
+                store.set_queue_note(task_id, progress)
             if note:
                 fields["upstream_note"] = note        # dola 回执原话（含「预计等待 N 分钟」）
                 acc = note_state["account"] or ""
@@ -841,8 +844,10 @@ async def _resume_task(row: dict):
         store.update(task_id, status="processing", last_poll_at=time.time(),
                      started_at=row.get("started_at") or time.time())
 
-        def on_poll(now, note=None, wait_seconds=None):
+        def on_poll(now, note=None, wait_seconds=None, progress=None):
             fields = {"last_poll_at": now}
+            if progress:
+                store.set_queue_note(task_id, progress)
             if note:
                 fields["upstream_note"] = note        # dola 回执原话（含「预计等待 N 分钟」）
             if wait_seconds:
@@ -2248,8 +2253,10 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
         # 测试生成同样消耗账号额度，因此写入正式任务库，便于在任务列表追踪结果。
         store.create(task_id, model, prompt, ratio, duration, account=name)
         store.update(task_id, status="processing", started_at=time.time())
-        def on_poll(now, note=None, wait_seconds=None):
+        def on_poll(now, note=None, wait_seconds=None, progress=None):
             fields = {"last_poll_at": now}
+            if progress:
+                store.set_queue_note(task_id, progress)
             if note:
                 fields["upstream_note"] = note
             if wait_seconds:

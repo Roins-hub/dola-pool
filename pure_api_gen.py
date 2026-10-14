@@ -471,11 +471,20 @@ def _upstream_note(dola, texts) -> str:
 
 
 def _emit_note_text(on_poll, note: str) -> None:
-    """直接回传一句说明（不是上游原话，如两段拼接的进度）。"""
+    """回传号池自己的进度说明（不是 dola 原话，如 30 秒的出片进度）。
+
+    走 progress=：面板显示在「⏳」行，不进「dola：」，也不会把 dola 的原话挤掉。
+    老的 on_poll(now, note=, wait_seconds=) 不认 progress 时退回 note=。
+    """
     if not on_poll or not note:
         return
     try:
-        on_poll(time.time(), note=note, wait_seconds=0)
+        on_poll(time.time(), progress=note)
+    except TypeError:
+        try:
+            on_poll(time.time(), note=note, wait_seconds=0)
+        except Exception:
+            pass
     except Exception:
         pass
 
