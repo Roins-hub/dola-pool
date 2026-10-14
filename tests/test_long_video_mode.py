@@ -124,10 +124,9 @@ def _pool(tmp_path, monkeypatch, names=("acc1", "acc2")):
 def test_pair_job_costs_two_videos_and_needs_full_account(tmp_path, monkeypatch):
     browser_pool, bp = _pool(tmp_path, monkeypatch)
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "pair")
-    monkeypatch.setitem(config.DURATION_COSTS, "seedance-2.5", {5: 2, 10: 2, 15: 2})
-    assert bp._duration_cost("seedance-2.5", 30) == 4
-    assert bp._duration_cost("seedance-2.5", 15) == 2
-    assert bp._allowed_quota_groups("seedance-2.5", 30) == (browser_pool.GROUP_FULL,)
+    assert bp._duration_cost("seedance-2.5", 30) == 4      # 两段「请求 30 秒」各扣 2 点
+    assert bp._duration_cost("seedance-2.5", 15) == 12     # 直接请求 15 秒反而要 12 点
+    assert bp._allowed_quota_groups("seedance-2.5", 30)[0] == browser_pool.GROUP_FULL   # 满额优先
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "reject")
     assert bp._duration_cost("seedance-2.5", 30) == config.credit_cost("seedance-2.5", 30)
 
@@ -135,7 +134,6 @@ def test_pair_job_costs_two_videos_and_needs_full_account(tmp_path, monkeypatch)
 def test_pair_job_skips_half_account(tmp_path, monkeypatch):
     browser_pool, bp = _pool(tmp_path, monkeypatch)
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "pair")
-    monkeypatch.setitem(config.DURATION_COSTS, "seedance-2.5", {5: 2, 10: 2, 15: 2})
     bp._claim("acc1", 2)                                  # acc1 只剩 2 点，不够两段
     gen = []
 
@@ -148,7 +146,7 @@ def test_pair_job_skips_half_account(tmp_path, monkeypatch):
     assert result["account"] == "acc2" and gen == ["acc2"]
 
 
-# ---------------------------------------------------------------- 出片：每段明确请求 15 秒
+# ---------------------------------------------------------------- 出片：每段请求 30 秒（上游压成 15 秒）
 
 class _Submit:
     def __init__(self, cid):
@@ -157,12 +155,22 @@ class _Submit:
         self.conversation_id = cid
 
 
+class _Poll:
+    def __init__(self, texts):
+        self.status = "pending"
+        self.texts = texts
+        self.failure_reasons = []
+
+
 class _PairDola:
     BASE = "https://www.dola.com"
 
-    def __init__(self):
+    def __init__(self, ack_texts=None):
         self.durations = []
         self.prompts = []
+        self.downloaded = []
+        self.ack_texts = ack_texts or ["视频生成目前支持 4 到 15 秒的时长。我将按最接近的支持时长 15 秒为你生成。",
+                                       "本次使用 Seedance 2.5 生成，将消耗 2 个视频生成额度，预计等待 50 分钟。"]
 
     def submit_chat_completion(self, session, ctx, headers, *, images, audios, prompt, duration,
                                model, ratio, timeout_sec, video_ability):
@@ -170,32 +178,62 @@ class _PairDola:
         self.prompts.append(prompt)
         return _Submit(f"c{len(self.durations)}")
 
+    def inspect_video_once(self, session, ctx, cid):
+        return _Poll(list(self.ack_texts))
+
     def get_video_result(self, session, ctx, cid, **k):
         return {"status": "succeeded", "download_url": f"https://cdn/{cid}.mp4", "texts": []}
 
     def download_video(self, url, path, **k):
+        self.downloaded.append(url)
         Path(path).write_bytes(b"part")
         return Path(path)
 
     def is_prompt_echo_text(self, t):
         return False
 
+    def extract_wait_minutes_from_text(self, t):
+        return ""
 
-def test_pair_requests_two_explicit_15s_segments(tmp_path, monkeypatch):
+
+def _pair(pure_api_gen, dola, tmp_path, notes=None):
+    return pure_api_gen._generate_capped_pair(
+        dola=dola, session=None, ctx={}, headers={}, account="acc1", prompt="一只猫",
+        ratio="16:9", model="seedance_v2.5", output_path=tmp_path / "o.mp4",
+        remove_watermark=False, proxy="", timeout=60, poll_interval=0,
+        on_poll=(lambda now, note=None, wait_seconds=None: notes.append(note)) if notes is not None else None)
+
+
+def test_pair_requests_30s_twice_and_concats_15s_parts(tmp_path, monkeypatch):
+    """每段请求 30 秒（上游压成 15 秒、扣 2 点），两段先一起提交，再拼接。"""
     import pure_api_gen
     dola = _PairDola()
     merged = []
     monkeypatch.setattr(pure_api_gen, "_concat_videos",
                         lambda parts, out: merged.append(list(parts)) or Path(out))
+    monkeypatch.setattr(pure_api_gen, "_media_duration", lambda p: 15.04)
     notes = []
-    out = pure_api_gen._generate_capped_pair(
-        dola=dola, session=None, ctx={}, headers={}, account="acc1", prompt="一只猫",
-        ratio="16:9", model="seedance_v2.5", output_path=tmp_path / "o.mp4",
-        remove_watermark=False, proxy="", timeout=60, poll_interval=0,
-        on_poll=lambda now, note=None, wait_seconds=None: notes.append(note),
-        segment_duration=15)
-    assert dola.durations == [15, 15]
+    out = _pair(pure_api_gen, dola, tmp_path, notes)
+    assert dola.durations == [30, 30]
     assert "前半段" in dola.prompts[0] and "后半段" in dola.prompts[1]
     assert len(merged) == 1 and len(merged[0]) == 2
-    assert any(n and "第 1/2 段" in n for n in notes)
+    assert any(n and "一起提交" in n for n in notes)
     assert out == tmp_path / "o.mp4"
+
+
+def test_pair_fails_fast_when_upstream_only_promises_5s(tmp_path, monkeypatch):
+    """上游回「按默认 5 秒」：不等几十分钟出片，立即失败（且不换号，见 PairSegmentShortError）。"""
+    import pure_api_gen
+    dola = _PairDola(ack_texts=["视频生成目前支持 4 到 15 秒。我将按默认 5 秒为你生成。"])
+    with pytest.raises(pure_api_gen.PairSegmentShortError, match="只答应生成 5 秒"):
+        _pair(pure_api_gen, dola, tmp_path)
+    assert dola.downloaded == []
+    assert issubclass(pure_api_gen.PairSegmentShortError, pure_api_gen.UnsupportedDurationError)
+
+
+def test_pair_rejects_short_downloaded_part(tmp_path, monkeypatch):
+    import pure_api_gen
+    dola = _PairDola()
+    monkeypatch.setattr(pure_api_gen, "_media_duration", lambda p: 5.04)
+    with pytest.raises(pure_api_gen.PairSegmentShortError, match="只有 5.0 秒"):
+        _pair(pure_api_gen, dola, tmp_path)

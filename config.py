@@ -103,8 +103,11 @@ ALLOW_30S_PAIR = os.getenv("DOLA_ALLOW_30S_PAIR", "0") == "1"
 LONG_VIDEO_MODE = os.getenv("DOLA_30S_MODE", "").strip().lower()
 if LONG_VIDEO_MODE not in ("reject", "pair", "native"):
     LONG_VIDEO_MODE = "pair" if ALLOW_30S_PAIR else "reject"
-# pair 模式每段的时长（dola 单条上限）
-PAIR_SEGMENT_SECONDS = int(os.getenv("DOLA_PAIR_SEGMENT_SECONDS", "15"))
+# pair 模式每段**向上游请求**的时长。请求 30 秒时 dola 回「按最接近的支持时长 15 秒为你生成，将消耗 2 个」
+# —— 拿到 15 秒只扣 2 点；而直接请求 15 秒要 12 点（2026-10-14 实测 + 网页截图）。所以默认请求 30。
+PAIR_SEGMENT_SECONDS = int(os.getenv("DOLA_PAIR_SEGMENT_SECONDS", "30"))
+# 每段至少要这么长才算数：上游有时回「按默认 5 秒」，5 秒段拼不出 30 秒，整单直接失败（不换号白烧额度）。
+PAIR_MIN_SEGMENT_SECONDS = float(os.getenv("DOLA_PAIR_MIN_SEGMENT_SECONDS", "13"))
 
 # 每账号每日视频生成额度（点数；官方每日免费额度随账号/区域浮动，超出后 Dola 会返回每日上限错误自动停号）
 DAILY_LIMIT = int(os.getenv("DOLA_DAILY_LIMIT", "4"))
@@ -129,15 +132,16 @@ DEFAULT_CREDIT_COST = 3
 # 2026-10-14 两台线上日志里上游回执的报价（「将消耗 N 个视频生成额度」）按任务时长对齐：
 #   seedance-2.5：5 秒 = 2（多次）、10 秒 = 4（5 次，配合上面注释「实测扣满一天 4 点」）、
 #                 15 秒 = 12（实测：普通 15 秒请求被回「需要消耗 12 个…今日剩余 4 个，无法生成」）
-#   seedance-2.0：10 秒 = 2
+#   seedance-2.0：5 秒 = 1（实测：受理时回「今日剩余 3 个」，号原有 4 点）、10 秒 = 2
 # 注意 2.5 不是按秒线性涨价（15 秒一档跳到 12）：免费号每日 4 点，2.5 最长只能出 10 秒。
 # 上游余额不够报价时直接拒绝（「需要消耗 N 个，今日剩余 M 个，无法生成」），所以派号必须按报价算。
 # 表里没有的时长：取表里比它长的最短一档；比表里都长就按最长一档的每秒单价外推（向上取整）；
 # 整个模型都没有表 → 退回 MODEL_COSTS。可用 DOLA_DURATION_COSTS 覆盖，格式：
 #   seedance-2.5:5=2,10=4,15=12;seedance-2.0:10=2
 DURATION_COSTS: dict[str, dict[int, int]] = {
-    "seedance-2.5": {5: 2, 10: 4, 15: 12},
-    "seedance-2.0": {10: 2},
+    # 30 = 请求 30 秒：上游压成 15 秒出片、按 2 点扣（线上 4 次报价 + 网页截图），pair 模式每段就这么请求
+    "seedance-2.5": {5: 2, 10: 4, 15: 12, 30: 2},
+    "seedance-2.0": {5: 1, 10: 2},
 }
 
 

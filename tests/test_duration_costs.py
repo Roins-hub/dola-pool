@@ -63,7 +63,9 @@ def test_credit_cost_table_and_extrapolation():
     assert c("seedance-2.5", 4) == 2           # 取比它长的最短一档
     assert c("seedance-2.5", 15) == 12         # 实测：15 秒报价 12（不是线性的 6）
     assert c("seedance-2.5", 12) == 12         # 取比它长的最短一档（15 秒）
-    assert c("seedance-2.5", 30) == 24         # 比表里都长：按 15 秒一档的每秒单价外推
+    assert c("seedance-2.5", 30) == 2          # 请求 30 秒：上游压成 15 秒、只扣 2 点（网页截图 + 线上报价）
+    assert c("seedance-2.0", 20) == 4          # 比表里都长：按最长一档（10 秒 2 点）的每秒单价外推
+    assert c("seedance-2.0", 5) == 1           # 实测
     assert c("seedance-2.0", 10) == 2
     assert c("seedance-2.0", 15) == 3
     assert c("seedance-2.0", 0) == config.MODEL_COSTS["seedance-2.0"]
@@ -80,7 +82,7 @@ def test_duration_cost_model_names_and_pair(monkeypatch):
     assert browser_pool.duration_cost("seedance-2.0", 10) == 2
     assert browser_pool.duration_cost("???", 5) == config.DEFAULT_CREDIT_COST    # 认不出 → 保守
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "pair")
-    assert browser_pool.duration_cost("seedance-2.5", 30) == 24               # 两段 15 秒 = 2×12
+    assert browser_pool.duration_cost("seedance-2.5", 30) == 4                # 两段「请求 30 秒」= 2×2
 
 
 # ---------------------------------------------------------------- 受理：付不起的组合直接拒
@@ -187,3 +189,62 @@ def test_parse_quota_quote():
 def test_part_hints_never_mention_30_seconds():
     import pure_api_gen
     assert all("30" not in h for h in pure_api_gen.PART_HINTS)
+
+
+
+def test_waits_for_busy_account_until_it_frees(tmp_path, monkeypatch):
+    """唯一付得起的号正在出片：排队等它空出来，而不是 15 秒后判「无可用账号」。"""
+    browser_pool, bp = _pool(tmp_path, monkeypatch, names=("acc1",))
+    monkeypatch.setattr(browser_pool, "WAIT_FREE_ACCOUNT_STEP", 0.2)
+    gen = []
+
+    async def fake_gen(account, *a, **k):
+        gen.append(account)
+        return {"account": account, "local_path": "x.mp4"}
+
+    bp._generate_effective = fake_gen
+
+    async def go():
+        lock = bp._locks.setdefault("acc1", asyncio.Lock())
+        await lock.acquire()                       # acc1 正在出片
+
+        async def release_later():
+            await asyncio.sleep(1.0)
+            lock.release()
+
+        asyncio.get_running_loop().create_task(release_later())
+        return await bp.generate_video("p", None, 5, "seedance-2.5", deadline=time.time() + 60)
+
+    started = time.time()
+    r = _run(go())
+    assert r["account"] == "acc1" and gen == ["acc1"]
+    assert 0.8 <= time.time() - started < 10
+
+
+def test_busy_until_deadline_says_busy_not_throttled(tmp_path, monkeypatch):
+    browser_pool, bp = _pool(tmp_path, monkeypatch, names=("acc1",))
+    monkeypatch.setattr(browser_pool, "WAIT_FREE_ACCOUNT_STEP", 0.2)
+
+    async def go():
+        await bp._locks.setdefault("acc1", asyncio.Lock()).acquire()
+        return await bp.generate_video("p", None, 5, "seedance-2.5", deadline=time.time() + 1.0)
+
+    with pytest.raises(RuntimeError, match="都在出片中"):
+        _run(go())
+
+
+
+def test_expensive_job_can_use_half_account_with_enough_balance(tmp_path, monkeypatch):
+    """2.0 的 15 秒要 3 点：满额号没有时，剩 3 点的半额号也能接（以前只认满额，任务干等）。"""
+    browser_pool, bp = _pool(tmp_path, monkeypatch, names=("acc4",))
+    bp._claim("acc4", 1)                           # 剩 3 点 → 半额组
+    gen = []
+
+    async def fake_gen(account, *a, **k):
+        gen.append(account)
+        return {"account": account, "local_path": "x.mp4"}
+
+    bp._generate_effective = fake_gen
+    r = _run(bp.generate_video("p", None, 15, "seedance-2.0", deadline=time.time() + 20))
+    assert r["account"] == "acc4" and gen == ["acc4"]
+    assert _row(bp, "acc4")["remaining"] == 0

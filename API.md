@@ -10,7 +10,7 @@
 | 项 | 值 |
 |---|---|
 | 服务名 | `stable-dola-pool` |
-| 代码版本 | `2.1.9`（见 `CHANGELOG.md`） |
+| 代码版本 | `2.2.0`（见 `CHANGELOG.md`） |
 | **Base URL** | `https://your-domain`（nginx 反代到本服务端口） |
 | 交互式文档 | `https://your-domain/docs`（FastAPI Swagger，实时以代码为准） |
 | OpenAPI Schema | `https://your-domain/openapi.json` |
@@ -539,8 +539,7 @@ open("out.mp4", "wb").write(requests.get(url, timeout=120).content)
 
 **Q：30 秒有什么额外注意？**
 dola 自 2026-10-12 起单条视频最长 15 秒，原生 30 秒已不可用。服务端按 `DOLA_30S_MODE` 处理：默认 `reject`，提交时直接返回
-`422 dola 自 2026-10-12 起单条视频最长 15 秒，30 秒无法直接生成…`；运维开启 `pair` 后，30 秒由前后两条 15 秒在服务端拼接，
-消耗双倍额度、耗时约为两条之和，两段之间可能有接缝。
+`422 dola 自 2026-10-12 起单条视频最长 15 秒，30 秒无法直接生成…`；运维开启 `pair` 后，30 秒由两次「请求 30 秒」（dola 各压成 15 秒、各扣 2 点）在服务端拼接，共 4 点；dola 若只答应 5 秒则立即失败（`PairSegmentShortError`，不换号重试）。耗时约等于 dola 报的排队时间（两段并行），两段之间可能有接缝。
 
 **Q：任务失败会退额度吗？**
 账号侧的每日点数是按"实际出片成功"记账的，**只看模型、不看时长**（`seedance-2.5` = 2 点 / `seedance-2.0` = 3 点，未知模型按最贵的 3 点算；见 `config.MODEL_COSTS`），失败重试会换号；但 **API Key 的 `daily_limit` 是按下发任务数计**的（`store.create` 时即计数，与结果无关），所以别用同一个 Key 反复试错。

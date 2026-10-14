@@ -33,7 +33,10 @@ logger = logging.getLogger("dola-pool.browser_pool")
 DAILY_LIMIT = config.DAILY_LIMIT
 COOLDOWN_SEC = 1800  # 风控冷却 30 分钟
 FAIL_COOLDOWN_SEC = 120   # 任一任务试号失败后的共享冷却：并发任务在此窗口内不再选同一账号
-WAIT_FREE_ACCOUNT_SEC = 15  # 候选账号全被其他任务占用时，最长等待重扫时间
+# 候选账号全被其他任务占用（出片中）时，没有任务时限的调用方最多等多久（秒）。
+# 有任务时限（deadline）的调用方一直等到时限：一条片要几分钟，以前固定只等 15 秒，
+# 能接这单的号恰好在出片时任务就被判「无可用账号」（2026-10-14 线上：2.0 的 15 秒被这样打死）。
+WAIT_FREE_ACCOUNT_SEC = 15
 GROUP_WAIT_STEP = 5       # 目标额度组暂时无号时的重扫步长（秒）
 FAIL_STREAK_TO_ABNORMAL = 3   # 同号连续失败几次后进【异常】组（到期自动恢复）
 
@@ -471,9 +474,14 @@ class BrowserPool:
         return GROUP_FULL
 
     def _allowed_quota_groups(self, model: str, duration: int = 0) -> tuple[str, ...]:
-        """seedance-2.0（3 点）只吃满额；seedance-2.5（2 点）先半额、后满额；两段拼接（≥3 点）只吃满额。"""
+        """派号时按哪些额度组、什么顺序挑号。能不能接最终看「余额 ≥ 这单的价」（派号循环里校验）：
+
+        - 贵的单（≥3 点）先用满额号，满额号没空时余额够的半额号也能接
+          （2026-10-14：acc4 剩 3 点，2.0 的 15 秒正好 3 点，旧规则「只吃满额」让任务一直干等）；
+        - 便宜的单先吃半额号，把满额号留给贵的单。
+        """
         if self._duration_cost(model, duration) >= 3:
-            return (GROUP_FULL,)
+            return (GROUP_FULL, GROUP_HALF)
         return (GROUP_HALF, GROUP_FULL)
 
     def _ordered_candidates(self, allowed: tuple[str, ...]) -> list:
@@ -1737,6 +1745,8 @@ class BrowserPool:
             throttle_wait = False
             throttle_deadline = 0.0
             throttle_announced = False
+            busy_announced = False
+            busy_timeout = False
             # max_attempts <= 0：不限次数，只要没到 deadline 就一轮轮换号重试。
             unlimited = max_attempts <= 0
 
@@ -1929,8 +1939,13 @@ class BrowserPool:
                 if not picked:
                     # 只剩被其他并发任务占用的账号：有界等待重扫，而不是立刻误判“无可用账号”。
                     if waiting_possible:
+                        busy_timeout = True     # 循环可能因任务时限直接退出，先记下「是在等出片中的号」
                         if wait_deadline == 0:
-                            wait_deadline = time.time() + WAIT_FREE_ACCOUNT_SEC
+                            wait_deadline = (deadline if deadline is not None
+                                             else time.time() + WAIT_FREE_ACCOUNT_SEC)
+                            if not busy_announced:
+                                busy_announced = True
+                                print("[pool] 能接这一单的号都在出片中，排队等它们空出来", flush=True)
                         if time.time() < wait_deadline:
                             await asyncio.sleep(WAIT_FREE_ACCOUNT_STEP)
                             continue
@@ -1988,6 +2003,10 @@ class BrowserPool:
                     # 截成 300 字会把原因切掉。长度上限由 server 落库时统一处理。
                     f"{prefix}连续 {attempt} 次生成均失败（依次尝试账号: {chain}）: {str(last_err)[:1500]}"
                 )
+            if busy_timeout and last_err is None and not picked:
+                raise RuntimeError(
+                    "能接这一单的号都在出片中，排队到任务时限仍未空出；请稍后重试"
+                    f"（{model} {duration} 秒要扣 {cost} 点，只有剩余 ≥ {cost} 点的号能接）")
             now = time.time()
             throttled = [a for a in self.list_accounts()
                          if str(a.get("abnormal_reason") or "").startswith(self.THROTTLE_REASON_PREFIX)

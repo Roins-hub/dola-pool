@@ -73,10 +73,14 @@ def _record(bp, calls):
 def test_allowed_groups_per_model(tmp_path, monkeypatch):
     browser_pool, bp = _pool(tmp_path, monkeypatch)
 
-    assert bp._allowed_quota_groups("seedance-2.0") == (browser_pool.GROUP_FULL,)
-    assert bp._allowed_quota_groups("seedance_v2.0") == (browser_pool.GROUP_FULL,)
+    # 不带时长按模型基础价（2.0 = 3 点）：贵的单满额优先、余额够的半额号也能接（2.1.9）
+    assert bp._allowed_quota_groups("seedance-2.0") == (browser_pool.GROUP_FULL, browser_pool.GROUP_HALF)
+    assert bp._allowed_quota_groups("seedance_v2.0") == (browser_pool.GROUP_FULL, browser_pool.GROUP_HALF)
+    # 便宜的单先吃半额号，把满额号留给贵的单
     assert bp._allowed_quota_groups("seedance-2.5") == (browser_pool.GROUP_HALF,
                                                        browser_pool.GROUP_FULL)
+    assert bp._allowed_quota_groups("seedance-2.5", 5) == (browser_pool.GROUP_HALF,
+                                                          browser_pool.GROUP_FULL)
 
 
 def test_quota_group_is_about_points_only(tmp_path, monkeypatch):

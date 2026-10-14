@@ -97,6 +97,13 @@ class UnsupportedDurationError(PureApiError):
     """上游明确表示这个时长不支持（如 30 秒只给 4~15 秒）：换号也一样，整个任务直接失败。"""
 
 
+class PairSegmentShortError(UnsupportedDurationError):
+    """两段拼接里有一段上游只给了短片（如「按默认 5 秒」）：拼不出目标时长。
+
+    继承 UnsupportedDurationError → 号池直接失败、不换号：一单 pair 用掉一个满额号一整天的额度，
+    换号重试只会再烧一个号。"""
+
+
 class ShortClipError(PureApiError):
     """上游只给了短视频（30 秒请求只回 ~15 秒）：默认不拼接，交给调用方换号重试。"""
 
@@ -630,16 +637,20 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                           segment_duration: int = 30) -> Path:
     """两段独立出片后本地拼成 30 秒。
 
-    segment_duration：每段向上游请求的时长。旧兜底用 30（指望上游自己压到 15 秒）；
-    2.1.8 的 pair 模式明确请求 15 秒 —— dola 现在对 30 秒请求只会回「按默认 5 秒 / 要不要拆」。
-    existing_parts：已经拿到的分段（例如上游静默压时长后落地的第一段），
-    只补生成缺的那几段再拼接。
+    segment_duration：每段向上游**请求**的时长。默认 30：dola 回「按最接近的支持时长 15 秒为你生成，
+    将消耗 2 个」（直接请求 15 秒反而要 12 点）。
+    流程：所有段先一起提交（上游排队常要几十分钟，并行能省一半时间）→ 逐段看第一次回执，
+    上游只答应短片（如「按默认 5 秒」）就立刻失败 → 等出片、下载后再用 ffprobe 校验每段时长。
+    existing_parts：已经拿到的分段（例如上游静默压时长后落地的第一段），只补生成缺的那几段。
     """
     tmp_dir = Path(tempfile.mkdtemp(prefix="dola-pair-"))
+    min_seconds = float(config.PAIR_MIN_SEGMENT_SECONDS)
+    total = len(PART_HINTS)
     try:
         parts: list[Path] = list(existing_parts or [])
+        # ---- 1. 缺的段一起提交
+        submitted: list[tuple[int, str]] = []
         for index, hint in enumerate(PART_HINTS[len(parts):], start=len(parts) + 1):
-            part_credits = _CreditTracker(credits.on_balance if credits else None)
             submit = dola.submit_chat_completion(
                 session, ctx, headers, images=images or [], audios=[],
                 prompt=f"{prompt}\n\n{hint}",
@@ -655,11 +666,28 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                     on_conversation_id(account, submit.conversation_id, time.time() + timeout)
                 except Exception:
                     pass
-            _emit_note_text(on_poll, f"两段拼接：第 {index}/{len(PART_HINTS)} 段（{segment_duration} 秒）生成中")
+            submitted.append((index, submit.conversation_id))
+        _emit_note_text(on_poll, f"两段拼接：{total} 段已一起提交，等上游回执")
+        # ---- 2. 逐段看第一次回执：上游只答应短片就别等了
+        for index, conv in submitted:
+            ack = _await_first_ack(
+                dola=dola, session=session, ctx=ctx, account=account, conversation_id=conv,
+                ack_deadline=time.time() + NO_ACK_SECONDS, poll_interval=poll_interval,
+                credits=credits, on_poll=on_poll) or []
+            announced = _announced_seconds(dola, ack)
+            if announced and announced < min_seconds:
+                raise PairSegmentShortError(
+                    f"{account} 两段拼接第 {index} 段上游只答应生成 {announced} 秒"
+                    f"（dola 原话：{_upstream_note(dola, ack)[:120]}），拼不出 {segment_duration} 秒；"
+                    "本单直接失败，不换号重试（每段都已扣额度）")
+        # ---- 3. 等出片、下载、校验时长
+        for index, conv in submitted:
+            part_credits = _CreditTracker(credits.on_balance if credits else None)
+            _emit_note_text(on_poll, f"两段拼接：等第 {index}/{total} 段出片")
             # 心跳：分段轮询期间刷 last_poll_at，免得看门狗把正常等待判成卡住
             with _progress_heartbeat(on_poll):
                 result = dola.get_video_result(
-                    session, ctx, submit.conversation_id,
+                    session, ctx, conv,
                     timeout=timeout, interval=poll_interval,
                     remove_watermark=remove_watermark, proxy=proxy or "",
                 )
@@ -681,10 +709,16 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
             part = tmp_dir / f"part{index}.mp4"
             dola.download_video(
                 url, str(part),
-                referer=f"{dola.BASE}/chat/{submit.conversation_id}", proxy=proxy or "",
+                referer=f"{dola.BASE}/chat/{conv}", proxy=proxy or "",
             )
+            seconds = _media_duration(part)
+            if seconds is not None and seconds < min_seconds:
+                raise PairSegmentShortError(
+                    f"{account} 两段拼接第 {index} 段只有 {seconds:.1f} 秒（至少要 {min_seconds:g} 秒），"
+                    "拼不出目标时长；本单直接失败，不换号重试")
             parts.append(part)
-            log.info("pure pair: %s 第 %s 段完成", account, index)
+            log.info("pure pair: %s 第 %s 段完成（%s 秒）", account, index,
+                     f"{seconds:.1f}" if seconds is not None else "?")
         return _concat_videos(parts, Path(output_path))
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
