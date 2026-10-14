@@ -92,6 +92,8 @@ class TaskStore:
                 # 每个号的回执原话（JSON 列表，按尝试顺序）与当前号开始时间（换号后倒计时从这里算）
                 ("upstream_notes", "TEXT"),
                 ("attempt_started_at", "REAL"),
+                # 排队 / 换号原因（含 dola 原话），派到号后清空；面板「报错/备注」显示
+                ("queue_note", "TEXT"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -267,6 +269,12 @@ class TaskStore:
         vals = list(fields.values()) + [task_id]
         with _LOCK:
             self._conn.execute(f"UPDATE tasks SET {cols} WHERE id=?", vals)
+            self._conn.commit()
+
+    def set_queue_note(self, task_id, note: str) -> None:
+        """只写排队原因，不动 updated_at：看门狗按 updated_at 算排队时长，写原因不能把排队时钟清零。"""
+        with _LOCK:
+            self._conn.execute("UPDATE tasks SET queue_note=? WHERE id=?", ((note or "")[:500], task_id))
             self._conn.commit()
 
     def get(self, task_id):

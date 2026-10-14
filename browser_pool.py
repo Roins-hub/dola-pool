@@ -155,6 +155,11 @@ def duration_cost(model: str, duration: int = 0) -> int:
 _QUOTE_RE = re.compile(r"需要消耗\s*(\d+)\s*个.*?剩余\s*(\d+)\s*个")
 
 
+def _wait_text(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    return f"{seconds} 秒" if seconds < 120 else f"{(seconds + 59) // 60} 分钟"
+
+
 def parse_quota_quote(message: str) -> tuple[int, int] | None:
     """「本次视频生成需要消耗 N 个视频生成额度，今日剩余 M 个…无法生成」→ (N, M)。"""
     m = _QUOTE_RE.search(message or "")
@@ -1729,8 +1734,10 @@ class BrowserPool:
                              on_poll=None, on_balance=None,
                              reference_image_paths: list[str] | None = None,
                              on_account_try=None, max_attempts: int = 3,
-                             deadline: float | None = None) -> dict:
+                             deadline: float | None = None, on_wait=None) -> dict:
         """挑一个可调度且空闲的号出片；失败自动换号重试（最多 max_attempts 次）。
+
+        on_wait(note)：排队 / 换号时回传一句给人看的原因（含 dola 原话），面板「报错/备注」显示。
 
         - 按模型分流：seedance-2.0（3 点）只从【满额】组取号；seedance-2.5（2 点）
           先取【半额】、半额空了再用【满额】兜底；冷却/风控/待激活/异常 一律不派发。
@@ -1762,6 +1769,17 @@ class BrowserPool:
             non_pure_announced = False
             # max_attempts <= 0：不限次数，只要没到 deadline 就一轮轮换号重试。
             unlimited = max_attempts <= 0
+            last_note = [""]
+
+            def say(note: str) -> None:
+                """排队原因回传给任务（同一句不重复写库）。"""
+                if not on_wait or not note or note == last_note[0]:
+                    return
+                last_note[0] = note
+                try:
+                    on_wait(note)
+                except Exception:
+                    pass
 
             def attempts_left() -> bool:
                 return unlimited or attempt < max_attempts
@@ -1778,6 +1796,7 @@ class BrowserPool:
                 short_only = True          # 本轮没派出去的号是否「只是今日余额不够这一单」
                 short_seen = 0
                 non_pure: list[str] = []   # pair 单跳过的浏览器登录号（拼接只走纯 API）
+                busy_names: list[str] = []  # 能接单、但正被别的任务占着出片的号
                 for a in self._ordered_candidates(allowed_groups):
                     if a["name"] in tried or self._recently_failed(a["name"]):
                         continue
@@ -1813,6 +1832,7 @@ class BrowserPool:
                     # 并发任务跳过已占用账号，避免多个请求排队到同一个 profile。
                     if lock.locked():
                         waiting_possible = True
+                        busy_names.append(account)
                         continue
                     async with lock:
                         if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
@@ -1824,6 +1844,7 @@ class BrowserPool:
                                   f"（{probe.get('status')}）→ 本次跳过该号"
                                   + ("，已进【风控】组" if probe.get("status") in ("logged_out", "no_reply")
                                      else "（软失败，不判风控）"), flush=True)
+                            say(f"{account} 派单前探测没过（dola：{probe.get('reason') or probe.get('status')}）→ 换下一个号")
                             tried.add(account)
                             tried_order.append(account)
                             self._mark_attempt_failed(account)
@@ -1920,6 +1941,7 @@ class BrowserPool:
                                 self.note_account_throttle(account, message)
                             last_err = e
                         self._mark_attempt_failed(account)
+                        say(f"{account} 没出成（{str(last_err or '')[:150]}）→ 换下一个号")
                         tried.add(account)
                         tried_order.append(account)
                         if not attempts_left() or not time_left():
@@ -1961,6 +1983,9 @@ class BrowserPool:
                             throttle_announced = True
                             print(f"[pool] 可用账号的出口都在被上游限流，排队等待出口恢复"
                                   f"（约 {int(throttle_min)} 秒）", flush=True)
+                        say("排队中：能接单的号所在的出口 IP 正被 dola 限流"
+                            "（dola：710022002 当前服务访问频繁，请稍后重试），"
+                            f"约 {_wait_text(throttle_min)}后再试")
                         await asyncio.sleep(max(1.0, min(throttle_min, 10.0, limit - now)))
                         continue
                 if not picked:
@@ -1973,6 +1998,7 @@ class BrowserPool:
                             if not busy_announced:
                                 busy_announced = True
                                 print("[pool] 能接这一单的号都在出片中，排队等它们空出来", flush=True)
+                        say(f"排队中：能接这一单的号都在出片中（{'、'.join(busy_names[:6])}），等它们空出来")
                         if time.time() < wait_deadline:
                             await asyncio.sleep(WAIT_FREE_ACCOUNT_STEP)
                             continue
@@ -1987,6 +2013,7 @@ class BrowserPool:
                                 group_deadline = time.time() + config.V20_WAIT_SECONDS
                                 print(f"[pool] {model} 暂无符合额度要求的账号，先排队等待"
                                      f"（上限 {waited} 分钟）", flush=True)
+                            say(f"排队中：暂无剩余 ≥ {cost} 点、能接 {model} {duration} 秒的号，最多等 {waited} 分钟")
                             if time.time() < group_deadline:
                                 await asyncio.sleep(GROUP_WAIT_STEP)
                                 continue
@@ -1995,6 +2022,8 @@ class BrowserPool:
                     # 全池都已达上限/积分不足时没有等待意义，直接走下方的 429 报错。
                     if (deadline is not None and unlimited and time_left() and tried_order
                             and not self.all_accounts_limited and not self.all_accounts_quota_blocked):
+                        say(f"排队中：这一轮能用的号都试过了（{'、'.join(tried_order[-5:])}），稍后再来一轮"
+                            + (f"；最近一次：{str(last_err)[:120]}" if last_err else ""))
                         tried.clear()
                         wait_deadline = 0.0
                         await asyncio.sleep(min(10.0, max(1.0, deadline - time.time())))

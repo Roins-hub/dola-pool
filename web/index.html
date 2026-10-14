@@ -1814,6 +1814,13 @@ function upstreamNote(t){
   }
   return html;
 }
+/** 排队 / 换号原因（含 dola 原话）：只在任务还没结束时显示。 */
+function queueNote(t){
+  if(t.status!=='queued'&&t.status!=='processing')return '';
+  const n=t.queue_note||(t.status==='queued'?'排队中：等待派号':'');
+  if(!n)return '';
+  return '<div class="tiny" style="color:#d48806">⏳ '+esc(n)+'</div>';
+}
 function recoverNote(t){
   if(t.recover_state==='watching')
     return '<div class="tiny" style="color:#2f6fde">⏳ 后台继续等 dola 出片（最晚到 '+fmtHM(t.recover_until)+'），出片后自动转为完成</div>';
@@ -1873,9 +1880,9 @@ async function loadTasks(){
       :'—',
     // 报错原文完整展示（含换行）：不再 slice(0,30)，上游「内容审核不合规 / 肖像保护 / 侵权」
     // 这类话术要能一眼看全。
-    recoverNote(t)+upstreamNote(t)+(t.error
+    queueNote(t)+recoverNote(t)+upstreamNote(t)+(t.error
       ?'<span class="err" title="'+esc(t.error)+'">'+esc(t.error)+'</span>'
-      :((t.recover_state||t.upstream_note)?'':'<span class="tiny">—</span>'))
+      :((t.recover_state||t.upstream_note||queueNote(t))?'':'<span class="tiny">—</span>'))
   ]);
   q('#tasksTable').innerHTML=table(
     ['ID','提示词','参考图','账号','客户','时长','状态','耗时','创建时间','视频','报错/备注'],rows);

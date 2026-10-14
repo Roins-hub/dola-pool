@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.2.5"
+APP_VERSION = "2.2.6"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -231,6 +231,9 @@ class KeyConcurrencyLimiter:
     def __init__(self):
         self._condition = asyncio.Condition()
         self._active: defaultdict[str, int] = defaultdict(int)
+
+    def is_full(self, api_key_hash: str | None, limit: int) -> bool:
+        return bool(api_key_hash) and limit > 0 and self._active[api_key_hash] >= limit
 
     async def acquire(self, api_key_hash: str | None, limit: int):
         if not api_key_hash or limit <= 0:
@@ -616,8 +619,12 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 重新受理：排队时钟（updated_at）与上一轮的报错一起清零。看门狗按「最后一次状态
         # 变化」算排队时长，不清零的话刚被重启捞回来的任务会带着旧的 updated_at 立刻被判
         # 「排队超时」——把刚修好的恢复路径又堵死。
-        store.update(task_id, status="queued", error="")
-        await key_limiter.acquire(api_key_hash, client.get("concurrency_limit", 0))
+        store.update(task_id, status="queued", error="", queue_note="")
+        key_limit = int(client.get("concurrency_limit", 0) or 0)
+        if key_limiter.is_full(api_key_hash, key_limit):
+            store.set_queue_note(task_id, f"排队中：这个客户（API Key）同时最多跑 {key_limit} 个任务，"
+                                          "前面的还没跑完")
+        await key_limiter.acquire(api_key_hash, key_limit)
         acquired = True
         # 这里不能急着标 processing：接下来 pool.generate_video 还可能在全局并发槽 /
         # 账号锁上等待，那段等待必须让客户端看到 queued（排队中）。真正拿到账号
@@ -652,7 +659,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             # 拿到账号即拿到并发槽 —— 此刻才算真正开始生成（等待期间保持 queued）。
             tried_accs.append(account)
             note_state["account"] = account
-            fields = dict(status="processing", account=account, attempt=attempt,
+            fields = dict(status="processing", account=account, attempt=attempt, queue_note="",
                           attempted_accounts=json.dumps(tried_accs, ensure_ascii=False),
                           last_poll_at=time.time(),
                           # 换号：预计等待清空、本号计时从现在起（倒计时不沿用上一个号的）
@@ -687,7 +694,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                 on_conversation_id=on_conversation_id, on_poll=on_poll,
                 reference_image_paths=reference_paths,
                 on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
-                deadline=task_deadline),
+                deadline=task_deadline,
+                on_wait=lambda note: store.set_queue_note(task_id, note)),
                 timeout=overall_timeout)
         except asyncio.TimeoutError:
             chain = "、".join(tried_accs) or "无"
