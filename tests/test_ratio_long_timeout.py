@@ -65,8 +65,9 @@ def test_protocol_keeps_21_9():
     assert "21:9" in dola.VALID_RATIOS
 
 
-def test_30s_waits_up_to_two_hours_by_default(monkeypatch):
+def test_30s_default_wait_and_hard_cap(monkeypatch):
     import importlib
     monkeypatch.delenv("DOLA_30S_TIMEOUT_MAX", raising=False)
-    assert importlib.reload(config).LONG_VIDEO_TIMEOUT_MAX == 7200
+    assert importlib.reload(config).LONG_VIDEO_TIMEOUT_MAX == 7200         # dola 没报预计时的默认
     assert config.LONG_VIDEO_TIMEOUT_MAX > config.PURE_API_TIMEOUT_MAX
+    assert config.WAIT_HARD_MAX == 21600                                   # 报了预计就按预计动态等，封顶 6 小时

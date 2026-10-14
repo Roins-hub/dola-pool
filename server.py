@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.2.7"
+APP_VERSION = "2.2.8"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -663,6 +663,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             tried_accs.append(account)
             note_state["account"] = account
             fields = dict(status="processing", account=account, attempt=attempt, queue_note="",
+                          conversation_id=None,
                           attempted_accounts=json.dumps(tried_accs, ensure_ascii=False),
                           last_poll_at=time.time(),
                           # 换号：预计等待清空、本号计时从现在起（倒计时不沿用上一个号的）
@@ -685,8 +686,9 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         task_deadline = time.time() + config.TASK_DEADLINE
         # 兜底总超时要容得下「最后一次出片」的完整等待：纯 API 会跟着上游「预计等待」
         # 放长到 DOLA_PURE_TIMEOUT_MAX，这里若只留 VIDEO_TIMEOUT（300 秒）会把它半路掐断。
+        # 出片等待跟着 dola 的预计动态放长，最长 WAIT_HARD_MAX：兜底总超时要容得下
         last_attempt_wait = max(config.VIDEO_TIMEOUT, config.PURE_API_TIMEOUT,
-                                config.PURE_API_TIMEOUT_MAX)
+                                config.PURE_API_TIMEOUT_MAX, config.WAIT_HARD_MAX)
         if int(duration or 0) > 15 and config.LONG_VIDEO_MODE == "pair":
             # 30 秒每次出片最多等 LONG_VIDEO_TIMEOUT_MAX；只出了半截还要补后半段：最多等两次
             last_attempt_wait = 2 * max(last_attempt_wait, config.LONG_VIDEO_TIMEOUT_MAX)
@@ -718,9 +720,16 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                      failure_code="429", finished_at=time.time())
     except asyncio.CancelledError:
         # 服务重启/任务被取消：CancelledError 不是 Exception，别把它吞了，
-        # 但也别把行留在 processing —— 退回 queued，下次启动或看门狗会重新派发。
-        store.update(task_id, status="queued", account=None, last_poll_at=0,
-                     error="任务被中断（服务重启），已重新排队")
+        # 但也别把行留在 processing —— 退回 queued，下次启动或看门狗会接上。
+        # 已经提交过上游的（有会话）保留账号：重启后接着等原会话，不重新提交、不再扣点；
+        # 还没提交的才清空账号重新派号。
+        cur = store.get(task_id) or {}
+        if cur.get("conversation_id") and cur.get("account"):
+            store.update(task_id, status="queued", last_poll_at=0,
+                         error="任务被中断（服务重启），重启后接着等 dola 原会话")
+        else:
+            store.update(task_id, status="queued", account=None, last_poll_at=0,
+                         error="任务被中断（服务重启），已重新排队")
         raise
     except Exception as e:
         store.update(task_id, status="failed", error=failure_text.summarize(str(e)),
@@ -816,12 +825,82 @@ async def _recover_loop(task_id: str) -> None:
         RECOVERING.discard(task_id)
 
 
+RESUMING: set[str] = set()
+
+
+async def _resume_pure_conversation(row: dict) -> None:
+    """cookie 号的任务已经提交过 dola（有会话）：重启 / 看门狗接手后**接着等原会话**，只查询不提交。
+
+    以前这里按原参数重新受理 —— 2026-10-14 AWS 升级重启：acc48 的 30 秒单被重新提交，
+    同一单扣了两次点、出两条片。现在：每 RESUME_POLL_SECONDS 用这个号查一次原会话，
+    出片就下载交付；dola 明确失败就记失败；到出片时限还没出，就转进「超时后台取回」继续盯。
+    """
+    task_id = row["id"]
+    if task_id in RESUMING or task_id in RECOVERING:
+        return
+    RESUMING.add(task_id)
+    account, conv = row["account"], row["conversation_id"]
+    duration = int(row.get("duration") or 0)
+    now = time.time()
+    deadline = float(row.get("deadline_at") or 0)
+    until = deadline if deadline > now + 60 else now + 600
+    store.update(task_id, status="processing", last_poll_at=now, error="")
+    store.set_queue_note(task_id, "服务重启后接着等 dola 原会话出片（不重新提交、不再扣点）")
+    print(f"[resume] {task_id}（{account}）接着等原会话 {conv}，最晚到 "
+          f"{time.strftime('%H:%M', time.localtime(until))}", flush=True)
+    try:
+        while True:
+            if time.time() > until:
+                err = "服务重启后接着等 dola 原会话，等到出片时限仍未出片（等待出片超时）"
+                store.update(task_id, status="failed", error=err, finished_at=time.time())
+                _maybe_start_recovery(task_id, TimeoutError(err))
+                return
+            res = None
+            if pool.egress_throttle_remaining(account) <= 0:   # 出口被限流时这一轮先不查
+                try:
+                    res = await asyncio.to_thread(pool.fetch_conversation_video, account, conv)
+                except Exception as exc:  # noqa: BLE001 - 单次查询失败下一轮再试
+                    print(f"[resume] {task_id} 查询失败（稍后再试）: {str(exc)[:160]}", flush=True)
+            store.update(task_id, last_poll_at=time.time())   # 心跳：别让看门狗当成卡住
+            if res and res.get("local_path"):
+                meta = await asyncio.to_thread(_video_metadata, res["local_path"], duration,
+                                               row.get("ratio"))
+                try:
+                    pool.claim_recovered(account, row.get("model") or "", duration, res)
+                except Exception as exc:  # noqa: BLE001 - 记账失败不影响交付
+                    print(f"[resume] {task_id} 记账失败: {exc}", flush=True)
+                got = float(meta.get("video_duration") or 0)
+                if duration > 15 and got and got < duration * 0.9:
+                    # 30 秒单原会话只出了半截：照实失败（不再补段，免得重启又多扣点）
+                    store.update(task_id, status="failed", queue_note="", finished_at=time.time(),
+                                 error=f"服务重启后取回的原会话成片只有 {got:.1f} 秒，不足 {duration} 秒")
+                    return
+                public_url = f"{config.PUBLIC_BASE}/videos/{Path(res['local_path']).name}"
+                store.update(task_id, status="completed", video_url=public_url, error="",
+                             queue_note="", last_poll_at=time.time(), finished_at=time.time(), **meta)
+                print(f"[resume] {task_id} 原会话出片 → {public_url}", flush=True)
+                await asyncio.to_thread(_prune_downloads)
+                return
+            if res and res.get("final"):
+                store.update(task_id, status="failed", queue_note="", finished_at=time.time(),
+                             error=failure_text.summarize(
+                                 f"dola 最终状态 {res.get('status')}：{(res.get('detail') or '')[:200]}"))
+                return
+            await asyncio.sleep(max(1, config.RESUME_POLL_SECONDS))
+    finally:
+        RESUMING.discard(task_id)
+
+
 async def _resume_task(row: dict):
     task_id = row["id"]
     account = row.get("account")
     # cookie 号（纯 API）重启后不该去调浏览器 resume —— 本机没有可用 Chromium，
     # 只会报 `Connection closed while reading from the driver` 把任务判死。
-    # 直接按原参数重新受理一次（参考图落盘文件已保留，不会丢）。
+    # 已经提交过上游（有会话）的接着等原会话；还没提交的才按原参数重新受理
+    # （参考图落盘文件已保留，不会丢）。
+    if account and pool.is_pure_account(account) and row.get("conversation_id"):
+        await _resume_pure_conversation(row)
+        return
     if account and pool.is_pure_account(account):
         ratio = None if row.get("ratio") == "default" else row.get("ratio")
         print(f"[resume] {task_id}（{account}）走纯 API 重新受理", flush=True)

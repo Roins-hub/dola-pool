@@ -51,14 +51,62 @@ def test_parse_wait_variants():
 
 
 def test_timeout_follows_upstream_estimate_with_cap(monkeypatch):
-    monkeypatch.setattr(config, "PURE_API_TIMEOUT_MAX", 3600)
+    """2.2.8：dola 说 X 就最多等 X × 1.5 + 30 分钟（不短于原超时，封顶 WAIT_HARD_MAX）。"""
+    monkeypatch.setattr(config, "UPSTREAM_WAIT_FACTOR", 1.5)
+    monkeypatch.setattr(config, "UPSTREAM_WAIT_MARGIN", 1800)
+    monkeypatch.setattr(config, "WAIT_HARD_MAX", 21600)
     t = pure_api_gen._timeout_for_upstream_wait
     assert t(900, 0) == 900                       # 没有预计：保持原超时
-    assert t(900, 5 * 60) == 900                  # 预计很短：不缩短原超时
-    assert t(900, 45 * 60) == 45 * 60 * 1.2 + 300  # 45 分钟 → 59 分钟
-    assert t(900, 3 * 3600) == 3600               # 封顶
-    monkeypatch.setattr(config, "PURE_API_TIMEOUT_MAX", 0)
+    assert t(7200, 5 * 60) == 7200                # 预计很短：不缩短原超时
+    assert t(900, 45 * 60) == 45 * 60 * 1.5 + 1800  # 45 分钟 → 97.5 分钟
+    assert t(900, 3600) == 3600 * 1.5 + 1800      # dola 说 60 分钟 → 等 120 分钟（不再卡在 60 分钟上）
+    assert t(900, 7200) == 7200 * 1.5 + 1800      # dola 说 2 小时 → 等 3.5 小时
+    assert t(900, 10 * 3600) == 21600             # 封顶 6 小时
+    monkeypatch.setattr(config, "WAIT_HARD_MAX", 0)
     assert t(900, 45 * 60) == 900                 # 上限比原超时还小：按原超时
+
+
+def test_wait_extends_when_dola_raises_its_estimate(monkeypatch):
+    """等到点时 dola 最新的预计变长了：顺延，而不是判超时。"""
+    import time as _time
+    monkeypatch.setattr(config, "UPSTREAM_WAIT_FACTOR", 1.5)
+    monkeypatch.setattr(config, "UPSTREAM_WAIT_MARGIN", 1800)
+    monkeypatch.setattr(config, "WAIT_HARD_MAX", 21600)
+    calls = []
+
+    class D:
+        def extract_wait_minutes_from_text(self, t):
+            return dola_pure_api.extract_wait_minutes_from_text(t)
+
+        def get_video_result(self, session, ctx, conv, *, timeout, **k):
+            calls.append(timeout)
+            if len(calls) == 1:     # 第一次等到点：dola 改口「预计等待 3 小时」
+                return {"status": "timeout", "texts": ["预计等待 60 分钟", "排队较多，预计等待 3 小时"]}
+            return {"status": "succeeded", "texts": []}
+
+    deadlines = []
+    started = _time.time() - 2.5 * 3600              # 已经等了 2.5 小时（60 分钟的预计早过了）
+    r = pure_api_gen._wait_for_video(
+        D(), None, {}, "c1", account="acc1", started_at=started, base_timeout=900,
+        wait_seconds=3600, poll_interval=0, remove_watermark=False, proxy="",
+        on_deadline=deadlines.append)
+    assert r["status"] == "succeeded" and len(calls) == 2
+    assert deadlines and abs(deadlines[0] - (started + 3 * 3600 * 1.5 + 1800)) < 1
+
+
+def test_wait_does_not_extend_without_new_estimate():
+    class D:
+        def extract_wait_minutes_from_text(self, t):
+            return dola_pure_api.extract_wait_minutes_from_text(t)
+
+        def get_video_result(self, *a, **k):
+            return {"status": "timeout", "texts": ["预计等待 60 分钟"]}
+
+    import time as _time
+    r = pure_api_gen._wait_for_video(
+        D(), None, {}, "c1", account="acc1", started_at=_time.time() - 3 * 3600, base_timeout=900,
+        wait_seconds=3600, poll_interval=0, remove_watermark=False, proxy="")
+    assert r["status"] == "timeout"
 
 
 def test_four_to_fifteen_text_is_not_a_split_request_for_short_jobs():

@@ -506,9 +506,14 @@ def _emit_upstream_note(on_poll, dola, texts) -> None:
         pass
 
 
-def _wait_seconds_from_texts(dola, texts) -> int:
-    """从上游回执里解析「预计等待 N 分钟 / N 小时 / 30-40 分钟」，返回秒数（取区间上限）。"""
-    for text in texts or []:
+def _wait_seconds_from_texts(dola, texts, *, latest: bool = False) -> int:
+    """从上游回执里解析「预计等待 N 分钟 / N 小时 / 30-40 分钟」，返回秒数（取区间上限）。
+
+    latest=True 从后往前找（dola 中途改口时取最新的预计）。
+    """
+    if not hasattr(dola, "extract_wait_minutes_from_text"):
+        return 0
+    for text in reversed(list(texts or [])) if latest else (texts or []):
         raw = dola.extract_wait_minutes_from_text(str(text))
         if not raw:
             continue
@@ -525,12 +530,44 @@ def _wait_seconds_from_texts(dola, texts) -> int:
 
 
 def _timeout_for_upstream_wait(base_timeout: int, wait_seconds: int) -> int:
-    """上游报了预计等待时：等 1.2 倍 + 5 分钟余量，不短于原超时、不超过上限。"""
+    """按 dola 的「预计等待」动态定出片等待：X × FACTOR + MARGIN，不短于原超时、不超过 WAIT_HARD_MAX。"""
     if wait_seconds <= 0:
         return int(base_timeout)
-    want = int(wait_seconds * 1.2) + 300
-    cap = max(int(base_timeout), int(config.PURE_API_TIMEOUT_MAX))
+    want = int(wait_seconds * config.UPSTREAM_WAIT_FACTOR) + int(config.UPSTREAM_WAIT_MARGIN)
+    cap = max(int(base_timeout), int(config.WAIT_HARD_MAX))
     return min(max(int(base_timeout), want), cap)
+
+
+def _wait_for_video(dola, session, ctx, conversation_id: str, *, account: str, started_at: float,
+                    base_timeout: int, wait_seconds: int, poll_interval, remove_watermark: bool,
+                    proxy: str, on_poll=None, on_deadline=None) -> dict:
+    """等 dola 出片，上限跟着 dola 的预计走；到点时再读一次 dola 最新的预计，变长了就顺延。
+
+    返回 get_video_result 的结果（到点仍没出片时 status=timeout）。
+    """
+    deadline = started_at + _timeout_for_upstream_wait(base_timeout, wait_seconds)
+    while True:
+        with _progress_heartbeat(on_poll):
+            result = dola.get_video_result(
+                session, ctx, conversation_id,
+                timeout=max(60, int(deadline - time.time())), interval=poll_interval,
+                remove_watermark=remove_watermark, proxy=proxy or "",
+            )
+        if result.get("status") != "timeout":
+            return result
+        newer = _wait_seconds_from_texts(dola, result.get("texts") or [], latest=True)
+        extended = started_at + _timeout_for_upstream_wait(base_timeout, newer)
+        if extended > deadline + 60 and extended > time.time() + 60:
+            log.info("pure: %s dola 改口预计等待 %d 分钟，出片等待顺延到 %d 分钟",
+                     account, newer // 60, int(extended - started_at) // 60)
+            deadline = extended
+            if on_deadline:
+                try:
+                    on_deadline(deadline)
+                except Exception:
+                    pass
+            continue
+        return result
 
 
 def _await_first_ack(*, dola, session, ctx, account: str, conversation_id: str,
@@ -750,6 +787,7 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
     try:
         parts: list[Path] = list(existing_parts or [])
         pending: list[tuple[int, str]] = []
+        plan: dict[str, tuple[float, int]] = {}      # 会话 → (提交时间, dola 预计等待秒数)
 
         def submit(index: int, *, whole: bool) -> str:
             # whole=True：第一次按完整提示词请求（多半直接出满 30 秒）；补段时才带「后半段」提示
@@ -771,6 +809,7 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
             if stats is not None:
                 stats["segments"] += 1
             pending.append((index, result.conversation_id))
+            plan[result.conversation_id] = (time.time(), 0)
             return result.conversation_id
 
         def acknowledge(index: int, conv: str) -> None:
@@ -789,9 +828,10 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                     raise PureApiError(
                         f"{account} 第 {index} 段 dola 在等确认（{_upstream_note(dola, ack)[:120]}），但回话失败")
                 _emit_note_text(on_poll, f"30 秒：第 {index} 段 dola 问要不要按 15 秒生成 → 已回「确认生成」")
-                _await_acceptance(dola=dola, session=session, ctx=ctx, account=account,
-                                  conversation_id=conv, poll_interval=poll_interval,
-                                  credits=credits, on_poll=on_poll)
+                ack = _await_acceptance(dola=dola, session=session, ctx=ctx, account=account,
+                                        conversation_id=conv, poll_interval=poll_interval,
+                                        credits=credits, on_poll=on_poll)
+            plan[conv] = (plan.get(conv, (time.time(), 0))[0], _wait_seconds_from_texts(dola, ack))
 
         first = len(parts) + 1
         if first <= total:
@@ -804,13 +844,13 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
             i += 1
             part_credits = _CreditTracker(credits.on_balance if credits else None)
             _emit_note_text(on_poll, f"30 秒：等第 {index} 段出片")
-            # 心跳：分段轮询期间刷 last_poll_at，免得看门狗把正常等待判成卡住
-            with _progress_heartbeat(on_poll):
-                result = dola.get_video_result(
-                    session, ctx, conv,
-                    timeout=timeout, interval=poll_interval,
-                    remove_watermark=remove_watermark, proxy=proxy or "",
-                )
+            started, wait = plan.get(conv, (time.time(), 0))
+            result = _wait_for_video(
+                dola, session, ctx, conv, account=account, started_at=started,
+                base_timeout=timeout, wait_seconds=wait, poll_interval=poll_interval,
+                remove_watermark=remove_watermark, proxy=proxy or "", on_poll=on_poll,
+                on_deadline=(lambda d: on_conversation_id(account, conv, d))
+                if (index == 1 and on_conversation_id) else None)
             part_credits.note(result.get("texts"))
             _emit_upstream_note(on_poll, dola, result.get("texts") or [])
             part_credits.note(result.get("failure_reasons"))
@@ -820,6 +860,12 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                 detail = " | ".join(
                     str(item) for item in (result.get("failure_reasons") or []) + (result.get("texts") or [])
                 )[:300]
+                if result.get("status") == "timeout" and index == 1 and not existing_parts:
+                    # dola 还在做、只是我们等到上限：按「等待超时」抛，号池不换号重提，
+                    # 服务端接着在后台盯这条会话（任务记的会话就是第 1 段），出片后自动交付
+                    raise TimeoutError(
+                        f"{account} 30 秒等待出片超时：已等 {int(time.time() - started) // 60} 分钟 "
+                        f"dola 仍未出片，转后台继续盯原会话（dola：{detail[:160]}）")
                 raise PureApiError(
                     f"{account} 第 {index} 段出片未成功 status={result.get('status')}: {detail}"
                 )
@@ -1327,23 +1373,21 @@ def generate_pure_video(
         upstream_wait = _wait_seconds_from_texts(dola, ack_texts)
         effective_timeout = _timeout_for_upstream_wait(timeout, upstream_wait)
         if effective_timeout > timeout:
-            deadline = submitted_at + effective_timeout
             log.info("pure: %s 上游预计等待 %d 分钟，出片等待放长到 %d 分钟",
                      account, upstream_wait // 60, effective_timeout // 60)
+
+        def _on_deadline(new_deadline):
             if on_conversation_id:
-                try:
-                    on_conversation_id(account, conversation_id, deadline)
-                except Exception:
-                    pass
-        poll_timeout = max(60, int(deadline - time.time()))
-        # 心跳：get_video_result 内部轮询不会回调进度，这里替它刷 last_poll_at，
+                on_conversation_id(account, conversation_id, new_deadline)
+
+        _on_deadline(submitted_at + effective_timeout)
+        # 心跳在 _wait_for_video 里：get_video_result 内部轮询不会回调进度，替它刷 last_poll_at，
         # 免得看门狗把正常等待判成「卡住」而重新派发（重投 = 白扣一次额度）。
-        with _progress_heartbeat(on_poll):
-            result = dola.get_video_result(
-                session, ctx, conversation_id,
-                timeout=poll_timeout, interval=poll_interval,
-                remove_watermark=remove_watermark, proxy=proxy or "",
-            )
+        result = _wait_for_video(
+            dola, session, ctx, conversation_id, account=account, started_at=submitted_at,
+            base_timeout=timeout, wait_seconds=upstream_wait, poll_interval=poll_interval,
+            remove_watermark=remove_watermark, proxy=proxy or "", on_poll=on_poll,
+            on_deadline=_on_deadline)
     credits.note(result.get("texts"))
     credits.note(result.get("failure_reasons"))
     status = result.get("status")
