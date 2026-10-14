@@ -729,7 +729,7 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
     1. 提交第 1 段，看第一次回执；上游反问「是否按 15 秒生成」→ 同会话回「确认生成」。
     2. 回执说会压成 15 秒 → 立刻提交第 2 段（两段并行出片）；说「按默认 5 秒」→ 直接失败。
     3. 回执没说压时长 → 先等第 1 段：真出了 ~30 秒就直接交付（只扣一次额度），
-       只出了 ~15 秒再补第 2 段。
+       只出了 ~15 秒再补第 2 段。任何一段落地 ≥27 秒都直接交付这一段，绝不拼成 60 秒。
     4. 每段下载后用 ffprobe 校验时长，再本地拼接。
     existing_parts：已经拿到的分段（例如上游静默压时长后落地的第一段），只补生成缺的那几段。
     stats：调用方传 dict 进来，回填 segments（实际提交了几段 = 扣了几次）与 native（是否原样 30 秒）。
@@ -842,8 +842,11 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                 referer=f"{dola.BASE}/chat/{conv}", proxy=proxy or "",
             )
             seconds = _media_duration(part)
-            if native_try and index == 1 and seconds is not None and seconds >= full_seconds:
-                log.info("pure pair: %s 第 1 段原样出了 %.1f 秒 → 直接交付，不再出第 2 段", account, seconds)
+            if seconds is not None and seconds >= full_seconds:
+                # 任何一段原样出了 ~30 秒都直接交付这一段，绝不拼成 60 秒。
+                # dola 嘴上说「按 15 秒生成」，实际按请求参数出 30 秒的情况有人实测到（10-14 网页「强开 30s」）。
+                log.info("pure pair: %s 第 %s 段原样出了 %.1f 秒 → 直接交付这一段，不拼接（已提交 %s 段）",
+                         account, index, seconds, len(pending))
                 out_path = Path(output_path)
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(part, out_path)

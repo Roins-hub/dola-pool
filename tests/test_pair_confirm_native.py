@@ -279,3 +279,16 @@ def test_native_30s_charges_one_segment(tmp_path, monkeypatch):
     r = _run(bp.generate_video("p", None, 30, "seedance-2.5", deadline=time.time() + 20))
     assert r["account"] == "acc1"
     assert _row(bp, "acc1")["remaining"] == 2      # 原样 30 秒只扣 2 点，不是 4
+
+
+def test_any_full_length_segment_is_delivered_alone_never_60s(tmp_path, monkeypatch):
+    """dola 嘴上说「按 15 秒生成」、实际按参数出了 30 秒：交付这一段，不拼成 60 秒。"""
+    import pure_api_gen
+    dola = _Dola([CAPPED, ACCEPTED])               # 回执说压到 15 秒 → 两段都已提交
+    monkeypatch.setattr(pure_api_gen, "_concat_videos",
+                        lambda parts, out: (_ for _ in ()).throw(AssertionError("不该拼成 60 秒")))
+    monkeypatch.setattr(pure_api_gen, "_media_duration", lambda p: 30.04)
+    stats = {}
+    out = _pair(pure_api_gen, dola, tmp_path, stats)
+    assert dola.video_submits == [30, 30] and out.exists()
+    assert stats == {"segments": 2, "native": True}  # 两段都扣了点，记账按 2 段
