@@ -269,6 +269,32 @@ def test_pair_with_only_browser_accounts_fails_fast(tmp_path, monkeypatch):
     assert time.time() - started < 5
 
 
+def test_half_account_can_take_30s_when_no_full(tmp_path, monkeypatch):
+    """30 秒按一次请求 2 点派号：只剩 2 点的半额号也能接（满额号优先）。"""
+    browser_pool, bp = _pool(tmp_path, monkeypatch, browser=())
+    bp._claim("acc1", 2)
+    gen = []
+
+    async def fake_gen(account, *a, **k):
+        gen.append(account)
+        return {"account": account, "local_path": "x.mp4", "pair_segments_charged": 1}
+
+    bp._generate_effective = fake_gen
+    r = _run(bp.generate_video("p", None, 30, "seedance-2.5", deadline=time.time() + 20))
+    assert r["account"] == "acc1" and _row(bp, "acc1")["remaining"] == 0
+
+
+def test_supplemented_30s_charges_two_requests(tmp_path, monkeypatch):
+    browser_pool, bp = _pool(tmp_path, monkeypatch, browser=())
+
+    async def fake_gen(account, *a, **k):
+        return {"account": account, "local_path": "x.mp4", "pair_segments_charged": 2}
+
+    bp._generate_effective = fake_gen
+    _run(bp.generate_video("p", None, 30, "seedance-2.5", deadline=time.time() + 20))
+    assert _row(bp, "acc1")["remaining"] == 0      # 补了后半段：2 + 2
+
+
 def test_native_30s_charges_one_segment(tmp_path, monkeypatch):
     browser_pool, bp = _pool(tmp_path, monkeypatch, browser=())
 
@@ -284,11 +310,11 @@ def test_native_30s_charges_one_segment(tmp_path, monkeypatch):
 def test_any_full_length_segment_is_delivered_alone_never_60s(tmp_path, monkeypatch):
     """dola 嘴上说「按 15 秒生成」、实际按参数出了 30 秒：交付这一段，不拼成 60 秒。"""
     import pure_api_gen
-    dola = _Dola([CAPPED, ACCEPTED])               # 回执说压到 15 秒 → 两段都已提交
+    dola = _Dola([CAPPED, ACCEPTED])               # 回执说「按 15 秒」——2026-10-14 AWS 实测 4 单都出了 30.08 秒
     monkeypatch.setattr(pure_api_gen, "_concat_videos",
                         lambda parts, out: (_ for _ in ()).throw(AssertionError("不该拼成 60 秒")))
-    monkeypatch.setattr(pure_api_gen, "_media_duration", lambda p: 30.04)
+    monkeypatch.setattr(pure_api_gen, "_media_duration", lambda p: 30.08)
     stats = {}
     out = _pair(pure_api_gen, dola, tmp_path, stats)
-    assert dola.video_submits == [30, 30] and out.exists()
-    assert stats == {"segments": 2, "native": True}  # 两段都扣了点，记账按 2 段
+    assert dola.video_submits == [30] and out.exists()   # 不再一上来就提交第二段
+    assert stats == {"segments": 1, "native": True}

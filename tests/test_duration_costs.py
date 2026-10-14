@@ -82,7 +82,7 @@ def test_duration_cost_model_names_and_pair(monkeypatch):
     assert browser_pool.duration_cost("seedance-2.0", 10) == 2
     assert browser_pool.duration_cost("???", 5) == config.DEFAULT_CREDIT_COST    # 认不出 → 保守
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "pair")
-    assert browser_pool.duration_cost("seedance-2.5", 30) == 4                # 两段「请求 30 秒」= 2×2
+    assert browser_pool.duration_cost("seedance-2.5", 30) == 2                # 先原样请求一次 30 秒
 
 
 # ---------------------------------------------------------------- 受理：付不起的组合直接拒

@@ -721,36 +721,33 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                           credits: "_CreditTracker | None" = None,
                           segment_duration: int = 30,
                           stats: dict | None = None) -> Path:
-    """两段独立出片后本地拼成 30 秒；第一段若原样出了 30 秒就直接交付。
+    """30 秒：先原样请求一次 30 秒，出满了直接交付；只出了半截再补后半段、本地拼接。
 
-    segment_duration：每段向上游**请求**的时长。默认 30：dola 回「按最接近的支持时长 15 秒为你生成，
-    将消耗 2 个」（直接请求 15 秒反而要 12 点）。
-    流程（2.2.2）：
-    1. 提交第 1 段，看第一次回执；上游反问「是否按 15 秒生成」→ 同会话回「确认生成」。
-    2. 回执说会压成 15 秒 → 立刻提交第 2 段（两段并行出片）；说「按默认 5 秒」→ 直接失败。
-    3. 回执没说压时长 → 先等第 1 段：真出了 ~30 秒就直接交付（只扣一次额度），
-       只出了 ~15 秒再补第 2 段。任何一段落地 ≥27 秒都直接交付这一段，绝不拼成 60 秒。
-    4. 每段下载后用 ffprobe 校验时长，再本地拼接。
+    依据（2026-10-14 AWS 实测 4 个会话）：请求 30 秒时 dola 回执说「按最接近的支持时长 15 秒生成，
+    将消耗 2 个」，实际成片却是 **30.08 秒**（24fps、721 帧）。回执里的秒数不可信，只认落地时长。
+    流程：
+    1. 第 1 段用原提示词请求 segment_duration（默认 30）秒；dola 反问「是否按 15 秒生成」→ 同会话回「确认生成」。
+    2. 等它出片、ffprobe 量时长：≥27 秒直接交付（只扣一次，2 点）；不到 13 秒判失败。
+    3. 13~27 秒（真被压成 15 秒）→ 余额够就补「后半段」再请求一次，两段拼成 30 秒（共 4 点）。
     existing_parts：已经拿到的分段（例如上游静默压时长后落地的第一段），只补生成缺的那几段。
-    stats：调用方传 dict 进来，回填 segments（实际提交了几段 = 扣了几次）与 native（是否原样 30 秒）。
+    stats：调用方传 dict 进来，回填 segments（实际提交了几次 = 扣了几次）与 native（是否原样 30 秒）。
     """
     tmp_dir = Path(tempfile.mkdtemp(prefix="dola-pair-"))
     min_seconds = float(config.PAIR_MIN_SEGMENT_SECONDS)
     full_seconds = float(segment_duration) * NATIVE_FULL_RATIO
     total = len(PART_HINTS)
-    capped_fn = getattr(dola, "looks_like_duration_capped", None) or (lambda _t: False)
     if stats is not None:
         stats.update(segments=0, native=False)
     try:
         parts: list[Path] = list(existing_parts or [])
         pending: list[tuple[int, str]] = []
 
-        def submit(index: int) -> str:
-            hint = PART_HINTS[index - 1]
+        def submit(index: int, *, whole: bool) -> str:
+            # whole=True：第一次按完整提示词请求（多半直接出满 30 秒）；补段时才带「后半段」提示
+            text = prompt if whole else f"{prompt}\n\n{PART_HINTS[index - 1]}"
             result = dola.submit_chat_completion(
                 session, ctx, headers, images=images or [], audios=[],
-                prompt=f"{prompt}\n\n{hint}",
-                duration=segment_duration, model=model, ratio=ratio,
+                prompt=text, duration=segment_duration, model=model, ratio=ratio,
                 timeout_sec=180, video_ability=True,
             )
             if result.error:
@@ -767,8 +764,8 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
             pending.append((index, result.conversation_id))
             return result.conversation_id
 
-        def acknowledge(index: int, conv: str) -> bool:
-            """看这一段的第一次回执；返回上游是否说了要压时长。"""
+        def acknowledge(index: int, conv: str) -> None:
+            """等第一次回执；dola 在反问时长就回「确认生成」。回执里说几秒不作数，只认落地时长。"""
             ack = _await_first_ack(
                 dola=dola, session=session, ctx=ctx, account=account, conversation_id=conv,
                 ack_deadline=time.time() + NO_ACK_SECONDS, poll_interval=poll_interval,
@@ -782,38 +779,22 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                 if not replied:
                     raise PureApiError(
                         f"{account} 第 {index} 段 dola 在等确认（{_upstream_note(dola, ack)[:120]}），但回话失败")
-                _emit_note_text(on_poll, f"两段拼接：第 {index} 段 dola 问要不要按 15 秒生成 → 已回「确认生成」")
-                ack = _await_acceptance(dola=dola, session=session, ctx=ctx, account=account,
-                                        conversation_id=conv, poll_interval=poll_interval,
-                                        credits=credits, on_poll=on_poll)
-            announced = _announced_seconds(dola, ack)
-            if announced and announced < min_seconds:
-                raise PairSegmentShortError(
-                    f"{account} 两段拼接第 {index} 段上游只答应生成 {announced} 秒"
-                    f"（dola 原话：{_upstream_note(dola, ack)[:120]}），拼不出 {segment_duration} 秒；"
-                    "本单直接失败，不换号重试（已扣额度）")
-            return bool(announced and announced < full_seconds) or any(capped_fn(str(t)) for t in ack)
-
-        def submit_rest(start: int) -> None:
-            for index in range(start, total + 1):
-                acknowledge(index, submit(index))
-            _emit_note_text(on_poll, f"两段拼接：{total} 段都已受理，等出片")
+                _emit_note_text(on_poll, f"30 秒：第 {index} 段 dola 问要不要按 15 秒生成 → 已回「确认生成」")
+                _await_acceptance(dola=dola, session=session, ctx=ctx, account=account,
+                                  conversation_id=conv, poll_interval=poll_interval,
+                                  credits=credits, on_poll=on_poll)
 
         first = len(parts) + 1
-        native_try = False
         if first <= total:
-            capped = acknowledge(first, submit(first))
-            native_try = first == 1 and not capped
-            if native_try:
-                _emit_note_text(on_poll, "两段拼接：dola 没说要压时长，先等第 1 段——原样出了 30 秒就直接交付")
-            else:
-                submit_rest(first + 1)
+            acknowledge(first, submit(first, whole=not parts))
+            if not parts:
+                _emit_note_text(on_poll, "30 秒：已原样请求 30 秒（dola 常说「按 15 秒」，实际多数出满 30 秒），等出片")
         i = 0
         while i < len(pending):
             index, conv = pending[i]
             i += 1
             part_credits = _CreditTracker(credits.on_balance if credits else None)
-            _emit_note_text(on_poll, f"两段拼接：等第 {index}/{total} 段出片")
+            _emit_note_text(on_poll, f"30 秒：等第 {index} 段出片")
             # 心跳：分段轮询期间刷 last_poll_at，免得看门狗把正常等待判成卡住
             with _progress_heartbeat(on_poll):
                 result = dola.get_video_result(
@@ -843,9 +824,8 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
             )
             seconds = _media_duration(part)
             if seconds is not None and seconds >= full_seconds:
-                # 任何一段原样出了 ~30 秒都直接交付这一段，绝不拼成 60 秒。
-                # dola 嘴上说「按 15 秒生成」，实际按请求参数出 30 秒的情况有人实测到（10-14 网页「强开 30s」）。
-                log.info("pure pair: %s 第 %s 段原样出了 %.1f 秒 → 直接交付这一段，不拼接（已提交 %s 段）",
+                # 原样出满了：直接交付这一段，绝不再拼（否则 60 秒）
+                log.info("pure pair: %s 第 %s 段原样出了 %.1f 秒 → 直接交付（共提交 %s 次）",
                          account, index, seconds, len(pending))
                 out_path = Path(output_path)
                 out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -855,21 +835,22 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                 return out_path
             if seconds is not None and seconds < min_seconds:
                 raise PairSegmentShortError(
-                    f"{account} 两段拼接第 {index} 段只有 {seconds:.1f} 秒（至少要 {min_seconds:g} 秒），"
-                    "拼不出目标时长；本单直接失败，不换号重试")
+                    f"{account} 第 {index} 段只出了 {seconds:.1f} 秒（至少要 {min_seconds:g} 秒），"
+                    "拼不出 30 秒；本单直接失败，不换号重试")
             parts.append(part)
             log.info("pure pair: %s 第 %s 段完成（%s 秒）", account, index,
                      f"{seconds:.1f}" if seconds is not None else "?")
-            if native_try and index == 1:
-                # 回执没提压时长，落地却只有 ~15 秒：现在补后面的段
-                native_try = False
+            if i == len(pending) and len(parts) < total:
+                # 真被压成了半截：余额够就补后半段
+                nxt = len(parts) + 1
                 need = _segment_cost(model, segment_duration)
                 left = credits.left if credits is not None else None
                 if left is not None and left < need:
                     raise PureApiError(
-                        f"{account} 第 1 段只出了 {seconds or 0:.1f} 秒，账号今日只剩 {left} 点，"
-                        f"补第 2 段要 {need} 点，拼不出 30 秒")
-                submit_rest(2)
+                        f"{account} 第 {index} 段只出了 {seconds or 0:.1f} 秒，账号今日只剩 {left} 点，"
+                        f"补第 {nxt} 段要 {need} 点，拼不出 30 秒")
+                _emit_note_text(on_poll, f"30 秒：第 {index} 段只出了 {seconds or 0:.1f} 秒，补第 {nxt} 段再拼接")
+                acknowledge(nxt, submit(nxt, whole=False))
         return _concat_videos(parts, Path(output_path))
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1242,8 +1223,8 @@ def generate_pure_video(
     submit_prompt = (dola.enrich_multi_image_prompt(prompt, len(uploaded_images))
                      if uploaded_images else prompt)
     if int(duration or 0) > 15 and config.LONG_VIDEO_MODE == "pair":
-        # dola 单条最长 15 秒：「前半段 / 后半段」各请求一次 30 秒（上游压成 15 秒、各扣 2 点），本地拼接；
-        # 第一段若原样出了 30 秒就直接交付（见 _generate_capped_pair）。
+        # 先原样请求 30 秒（dola 嘴上说「按 15 秒」，实测多数出满 30 秒、只扣 2 点）；
+        # 只出了半截再补后半段、本地拼接（见 _generate_capped_pair）。
         out_dir = Path(output_dir or config.DOWNLOAD_DIR)
         out_dir.mkdir(parents=True, exist_ok=True)
         merged_path = out_dir / f"{account}_{uuid.uuid4().hex[:12]}.{CONCAT_CONTAINER}"
@@ -1262,7 +1243,7 @@ def generate_pure_video(
             "download_url": "", "duration": int(duration), "model": pure_model,
             "pure_api": True, "merged_segments": 1 if pair_stats.get("native") else len(PART_HINTS),
             "merge_mode": "native_30s" if pair_stats.get("native") else "pair_15s",
-            # 实际向上游提交了几段（= 扣了几次）：原样 30 秒只扣一次，号池据此少记一半
+            # 实际向上游提交了几次（= 扣了几次）：原样 30 秒只扣一次，补了后半段扣两次
             "pair_segments_charged": pair_stats.get("segments") or len(PART_HINTS),
             **credits.fields(),
         }

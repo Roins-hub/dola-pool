@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.2.3"
+APP_VERSION = "2.2.4"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -675,6 +675,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 放长到 DOLA_PURE_TIMEOUT_MAX，这里若只留 VIDEO_TIMEOUT（300 秒）会把它半路掐断。
         last_attempt_wait = max(config.VIDEO_TIMEOUT, config.PURE_API_TIMEOUT,
                                 config.PURE_API_TIMEOUT_MAX)
+        if int(duration or 0) > 15 and config.LONG_VIDEO_MODE == "pair":
+            last_attempt_wait *= 2      # 30 秒只出了半截时还要补后半段：最多等两次出片
         overall_timeout = config.TASK_DEADLINE + last_attempt_wait + 60
         try:
             result = await asyncio.wait_for(pool.generate_video(

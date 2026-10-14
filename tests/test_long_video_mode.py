@@ -124,7 +124,7 @@ def _pool(tmp_path, monkeypatch, names=("acc1", "acc2")):
 def test_pair_job_costs_two_videos_and_needs_full_account(tmp_path, monkeypatch):
     browser_pool, bp = _pool(tmp_path, monkeypatch)
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "pair")
-    assert bp._duration_cost("seedance-2.5", 30) == 4      # 两段「请求 30 秒」各扣 2 点
+    assert bp._duration_cost("seedance-2.5", 30) == 2      # 先原样请求一次 30 秒，扣 2 点
     assert bp._duration_cost("seedance-2.5", 15) == 12     # 直接请求 15 秒反而要 12 点
     assert bp._allowed_quota_groups("seedance-2.5", 30)[0] == browser_pool.GROUP_FULL   # 满额优先
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "reject")
@@ -205,7 +205,7 @@ def _pair(pure_api_gen, dola, tmp_path, notes=None):
 
 
 def test_pair_requests_30s_twice_and_concats_15s_parts(tmp_path, monkeypatch):
-    """每段请求 30 秒（上游压成 15 秒、扣 2 点），两段先一起提交，再拼接。"""
+    """第一次原样请求 30 秒只出了 15 秒 → 补「后半段」再请求一次 30 秒，两段拼接。"""
     import pure_api_gen
     dola = _PairDola()
     merged = []
@@ -215,19 +215,20 @@ def test_pair_requests_30s_twice_and_concats_15s_parts(tmp_path, monkeypatch):
     notes = []
     out = _pair(pure_api_gen, dola, tmp_path, notes)
     assert dola.durations == [30, 30]
-    assert "前半段" in dola.prompts[0] and "后半段" in dola.prompts[1]
+    assert dola.prompts[0] == "一只猫" and "后半段" in dola.prompts[1]   # 第一次不带分段提示
     assert len(merged) == 1 and len(merged[0]) == 2
-    assert any(n and "都已受理" in n for n in notes)
+    assert any(n and "补第 2 段" in n for n in notes)
     assert out == tmp_path / "o.mp4"
 
 
-def test_pair_fails_fast_when_upstream_only_promises_5s(tmp_path, monkeypatch):
-    """上游回「按默认 5 秒」：不等几十分钟出片，立即失败（且不换号，见 PairSegmentShortError）。"""
+def test_pair_judges_by_real_length_not_announcement(tmp_path, monkeypatch):
+    """回执说几秒不作数（「按 15 秒」实测出了 30 秒）；真只出了 5 秒才失败，且不再补段、不换号。"""
     import pure_api_gen
     dola = _PairDola(ack_texts=["视频生成目前支持 4 到 15 秒。我将按默认 5 秒为你生成。"])
-    with pytest.raises(pure_api_gen.PairSegmentShortError, match="只答应生成 5 秒"):
+    monkeypatch.setattr(pure_api_gen, "_media_duration", lambda p: 5.04)
+    with pytest.raises(pure_api_gen.PairSegmentShortError, match="只出了 5.0 秒"):
         _pair(pure_api_gen, dola, tmp_path)
-    assert dola.downloaded == []
+    assert dola.durations == [30]
     assert issubclass(pure_api_gen.PairSegmentShortError, pure_api_gen.UnsupportedDurationError)
 
 
@@ -235,5 +236,5 @@ def test_pair_rejects_short_downloaded_part(tmp_path, monkeypatch):
     import pure_api_gen
     dola = _PairDola()
     monkeypatch.setattr(pure_api_gen, "_media_duration", lambda p: 5.04)
-    with pytest.raises(pure_api_gen.PairSegmentShortError, match="只有 5.0 秒"):
+    with pytest.raises(pure_api_gen.PairSegmentShortError, match="只出了 5.0 秒"):
         _pair(pure_api_gen, dola, tmp_path)

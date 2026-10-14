@@ -136,7 +136,8 @@ SHORT_CLIP_MARKERS = (
 def duration_cost(model: str, duration: int = 0) -> int:
     """出一条视频上游要扣（报价）的点数：按「模型 + 时长」（2.1.9 起，见 config.credit_cost）。
 
-    两段拼接（DOLA_30S_MODE=pair）= 两条 PAIR_SEGMENT_SECONDS 秒的价。
+    DOLA_30S_MODE=pair 的 30 秒按「请求一次 PAIR_SEGMENT_SECONDS 秒」的价派号（2.5 = 2 点）：
+    实测多数一次就出满 30 秒；只出了半截要补后半段时，出片路径自己再查余额。
     认不出的模型一律按 2.0 计（宁可少派，也不要拿号去白撞额度）。
     """
     m = (model or "").lower().replace("_", "-")
@@ -147,7 +148,7 @@ def duration_cost(model: str, duration: int = 0) -> int:
     else:
         return config.DEFAULT_CREDIT_COST
     if _is_pair_duration(duration):
-        return 2 * config.credit_cost(version, config.PAIR_SEGMENT_SECONDS)
+        return config.credit_cost(version, config.PAIR_SEGMENT_SECONDS)
     return config.credit_cost(version, duration)
 
 
@@ -435,8 +436,9 @@ class BrowserPool:
         才退回上游报价。上游真实余额由回执里的「今日剩余 N 个」回写校正。
         """
         quoted = int((result or {}).get("credits_used") or 0)
-        if (result or {}).get("pair_segments_charged") == 1 and table_cost:
-            table_cost = max(1, table_cost // 2)      # 两段拼接第一段就原样出了 30 秒：只扣了一次
+        segments = int((result or {}).get("pair_segments_charged") or 0)
+        if segments > 1 and table_cost:
+            table_cost *= segments                    # 30 秒只出了半截、补了后半段：扣了两次
         charge = table_cost or quoted or 1
         if quoted and quoted != charge:
             print(f"[pool] {account} 记账 {charge} 点（额度表）· 上游报价 {quoted} 点", flush=True)
@@ -489,7 +491,8 @@ class BrowserPool:
           （2026-10-14：acc4 剩 3 点，2.0 的 15 秒正好 3 点，旧规则「只吃满额」让任务一直干等）；
         - 便宜的单先吃半额号，把满额号留给贵的单。
         """
-        if self._duration_cost(model, duration) >= 3:
+        # 30 秒（pair）也先用满额号：万一只出了半截，满额号还有余额补后半段
+        if self._duration_cost(model, duration) >= 3 or self._is_pair_job(duration):
             return (GROUP_FULL, GROUP_HALF)
         return (GROUP_HALF, GROUP_FULL)
 
