@@ -1012,6 +1012,21 @@ async function submitSetAccountProxy(name){
   hide('dlg');refresh();
 }
 
+/** 「怎么获取 Cookie？」折叠说明（完整版见仓库 COOKIE.md）。 */
+function cookieHowto(){
+  return `<details style="margin-top:8px;font-size:12px;color:var(--sub)">
+    <summary style="cursor:pointer;color:var(--text)">怎么获取 Cookie？</summary>
+    <div style="line-height:1.7;margin-top:6px">
+      <b>方法 1：Cookie-Editor 插件（推荐）</b><br>
+      ① Chrome/Edge 应用商店安装 <b>Cookie-Editor</b>；② 打开 dola.com 登录，进到聊天页面；
+      ③ 点插件图标 → <b>Export</b> → <b>Header String</b>（自动复制）；④ 粘贴到上面的框里，<b>一个账号一行</b>，点【开始导入】。<br>
+      <b>方法 2：不装插件</b><br>
+      F12 → Network → F5 刷新 → 点第一条请求 → Request Headers 里的 <code>cookie:</code> → 右键 Copy value。
+      不要用控制台 <code>document.cookie</code>，它取不到 sessionid。<br>
+      <b>注意</b>：内容里必须有 <code>sessionid=</code>；多个号请用浏览器多用户（或导完一个关一个无痕窗口）分别登录；
+      导出后<b>不要点退出登录</b>（Cookie 会当场作废），直接关窗口。导入后绑定代理 → 点「你好探测」激活。
+    </div></details>`;
+}
 let batchAddMode='text';
 let batchCookieFiles=[];
 function batchAddModeSwitch(){
@@ -1045,6 +1060,7 @@ function renderBatchAddForm(){
       <textarea id="f_cookieHeader" rows="10" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-top:4px" placeholder="passport_csrf_token=aaa; sessionid=sid-one; sid_guard=g1
 passport_csrf_token=bbb; sessionid=sid-two"></textarea>
       <div class="hint" style="margin-top:6px">每行一个 Cookie 头，或粘贴浏览器扩展导出的 Cookie JSON 数组（一个数组一个账号，可多段连续粘贴）；自动跳过注释/空行/邮箱行，按 sessionid 去重并自动命名 accN。<br>含 localStorage/sessionStorage/indexedDB 的完整会话请改用「Cookie JSON 文件」模式。</div>
+      ${cookieHowto()}
       <label style="display:flex;align-items:flex-start;gap:6px;color:var(--sub);margin:8px 0">
         <input type="checkbox" id="f_cookieHeaderSkip" style="margin-top:2px;width:auto" checked>
         <span>跳过在线验证（先导入、保留 profile，之后在列表点“验证”复核）</span>
