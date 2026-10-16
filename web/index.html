@@ -268,7 +268,11 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0">代理列表</h3>
-        <button class="btn btn-p" onclick="openAddProxy()">＋ 添加代理</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" onclick="selAllToggle('proxies')">全选 / 取消</button>
+          <button class="btn btn-danger" id="delSel_proxies" disabled onclick="delSelected('proxies')">删除选中</button>
+          <button class="btn btn-p" onclick="openAddProxy()">＋ 添加代理</button>
+        </div>
       </div>
       <div class="hint" style="margin-bottom:12px">
         可添加多个 HTTP/SOCKS 代理：<b>静态IP</b>填一条固定出口；<b>动态IP</b>不用填 IP、端口，
@@ -282,7 +286,16 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
   </section>
 
   <section id="tab-tasks" style="display:none">
-    <div class="card"><h3>任务列表（最近 50 条）</h3><div id="tasksTable"></div></div>
+    <div class="card">
+      <div class="toolbar">
+        <h3 style="margin:0">任务列表（最近 50 条）</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" onclick="selAllToggle('tasks')">全选 / 取消</button>
+          <button class="btn btn-danger" id="delSel_tasks" disabled onclick="delSelected('tasks')">删除选中</button>
+        </div>
+      </div>
+      <div id="tasksTable"></div>
+    </div>
   </section>
 
   <section id="tab-videos" style="display:none">
@@ -314,7 +327,11 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0">用户管理</h3>
-        <button class="btn btn-p" onclick="openAddUser()">＋ 新增管理员</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" onclick="selAllToggle('users')">全选 / 取消</button>
+          <button class="btn btn-danger" id="delSel_users" disabled onclick="delSelected('users')">删除选中</button>
+          <button class="btn btn-p" onclick="openAddUser()">＋ 新增管理员</button>
+        </div>
       </div>
       <div class="hint" style="margin-bottom:12px">可增加/删除/修改子管理账号与密码；主账号 admin 不能删除或禁用。</div>
       <div id="usersTable"></div>
@@ -1379,9 +1396,11 @@ async function loadProxies(){
   const r=await api('/api/admin/proxies');
   proxyCache=r.proxies||[];
   const dp=q('#defaultProxyShow');if(dp)dp.textContent=r.default_proxy?'（'+r.default_proxy+'）':'（未设置）';
+  selPrune('proxies',proxyCache.map(p=>p.id));
   q('#proxiesTable').innerHTML=table(
-    ['名称','类型','协议','地址','端口','用户名','已绑账号','出口IP','备注','操作'],
+    [selAllBox('proxies'),'名称','类型','协议','地址','端口','用户名','已绑账号','出口IP','备注','操作'],
     proxyCache.map(p=>[
+      selBox('proxies',p.id,false),
       esc(p.name),
       p.mode==='extract'?(p.extract_url?'<span class="badge b-blue">提取链接</span>'
                                         :'<span class="badge b-blue">粘贴节点</span>')
@@ -1400,6 +1419,7 @@ async function loadProxies(){
        <button class="btn btn-danger" onclick="delProxy('${p.id}')">删除</button>`
     ])
   );
+  selUpdate('proxies');
 }
 async function showNodes(id){
   let r;
@@ -1685,13 +1705,67 @@ async function delProxy(id){
   loadProxies();
 }
 
+/* ---- 通用多选（代理 / 任务 / 用户）：勾选单个或多个、全选，然后「删除选中」 ----
+   选中状态存在 SEL 里，自动刷新重画表格时保持勾选；已经不在列表里（或变成不可删）的自动去掉。 */
+const SEL={proxies:new Set(),tasks:new Set(),users:new Set()};
+const SEL_LABEL={proxies:'个代理',tasks:'条任务',users:'个管理员'};
+function selBox(kind,id,disabled,why){
+  return `<input type="checkbox" data-sel="${kind}" value="${esc(id)}" ${SEL[kind].has(id)?'checked':''}`
+    +` ${disabled?'disabled':''} title="${esc(why||'')}" onchange="selToggle('${kind}',this.value,this.checked)">`;
+}
+function selAllBox(kind){
+  return `<input type="checkbox" id="selAll_${kind}" title="全选当前列表" onchange="selAllSet('${kind}',this.checked)">`;
+}
+function selBoxes(kind){return [...document.querySelectorAll(`input[data-sel="${kind}"]:not(:disabled)`)];}
+function selToggle(kind,id,on){on?SEL[kind].add(id):SEL[kind].delete(id);selUpdate(kind);}
+function selAllSet(kind,on){
+  selBoxes(kind).forEach(cb=>{cb.checked=on;on?SEL[kind].add(cb.value):SEL[kind].delete(cb.value);});
+  selUpdate(kind);
+}
+function selAllToggle(kind){
+  const boxes=selBoxes(kind);
+  selAllSet(kind,!(boxes.length&&boxes.every(cb=>cb.checked)));
+}
+function selPrune(kind,validIds){
+  const ok=new Set(validIds);
+  for(const id of [...SEL[kind]])if(!ok.has(id))SEL[kind].delete(id);
+}
+function selUpdate(kind){
+  const n=SEL[kind].size,b=q('#delSel_'+kind);
+  if(b){b.disabled=!n;b.textContent='删除选中'+(n?'（'+n+'）':'');}
+  const all=q('#selAll_'+kind),boxes=selBoxes(kind);
+  if(all){all.checked=boxes.length>0&&boxes.every(cb=>cb.checked);all.disabled=!boxes.length;}
+}
+async function delSelected(kind){
+  const ids=[...SEL[kind]];
+  if(!ids.length)return;
+  let tip='确定删除选中的 '+ids.length+' '+SEL_LABEL[kind]+'？';
+  if(kind==='proxies'){
+    const bound=proxyCache.filter(p=>SEL.proxies.has(p.id)).reduce((s,p)=>s+(p.account_count||0),0);
+    if(bound)tip+='\n其中共绑定了 '+bound+' 个账号，删除后这些账号改回默认代理。';
+  }
+  if(kind==='tasks')tip+='\n已完成任务的视频文件会一起删除，无法恢复。';
+  if(!confirm(tip))return;
+  const url={proxies:'/api/admin/proxies/delete-batch',tasks:'/api/admin/tasks/delete-batch',
+             users:'/api/admin/users/delete-batch'}[kind];
+  const body=kind==='users'?{usernames:ids}:{ids};
+  let r;
+  try{r=await api(url,{method:'POST',body});}catch(e){return alert(e.message);}
+  (r.deleted||[]).forEach(id=>SEL[kind].delete(id));
+  if(r.skipped&&r.skipped.length)alert('已删除 '+(r.deleted||[]).length+' '+SEL_LABEL[kind]+'；跳过：\n'+r.skipped.join('\n'));
+  ({proxies:loadProxies,tasks:loadTasks,users:loadUsers})[kind]();
+}
+
 /* ---- 用户管理 ---- */
 async function loadUsers(){
   const r=await api('/api/admin/users');
   const me=r.current_username||'';
+  selPrune('users',r.users.filter(u=>u.role!=='owner'&&u.username!==me).map(u=>u.username));
   q('#usersTable').innerHTML=table(
-    ['用户名','角色','状态','创建时间','操作'],
+    [selAllBox('users'),'用户名','角色','状态','创建时间','操作'],
     r.users.map(u=>[
+      selBox('users',u.username,u.role==='owner'||u.username===me,
+             u.role==='owner'?'主管理员不能删除':(u.username===me?'不能删除当前登录的账号':'')),
       esc(u.username)+(u.username===me?' <span class="badge b-blue">当前</span>':''),
       u.role==='owner'?'<span class="badge b-green">主管理员</span>':'<span class="badge b-blue">管理员</span>',
       u.enabled?'<span class="badge b-green">启用</span>':'<span class="badge b-red">停用</span>',
@@ -1700,6 +1774,7 @@ async function loadUsers(){
       `<button class="btn ${u.username===me?'btn':''}" ${u.username===me?'disabled':''} style="margin-right:6px" onclick="delUser('${esc(u.username)}')">删除</button>`
     ])
   );
+  selUpdate('users');
 }
 function openAddUser(){
   showDlg(`<h2>新增管理员</h2>
@@ -1864,7 +1939,10 @@ async function loadTasks(){
   TASK_MAP={};
   r.tasks.forEach(t=>{TASK_MAP[t.id]=t;});
   const sb={'queued':'<span class="badge b-gray">排队中</span>','processing':'<span class="badge b-blue">生成中</span>','completed':'<span class="badge b-green">完成</span>','failed':'<span class="badge b-red">失败</span>','风控':'<span class="badge b-orange">风控</span>'};
+  const running=t=>t.status==='queued'||t.status==='processing';
+  selPrune('tasks',r.tasks.filter(t=>!running(t)).map(t=>t.id));
   const rows=r.tasks.map(t=>[
+    selBox('tasks',t.id,running(t),running(t)?'还在排队/生成中，不能删除':''),
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
     '<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>'
       +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">查看</button>',
@@ -1885,7 +1963,8 @@ async function loadTasks(){
       :((t.recover_state||t.upstream_note||queueNote(t))?'':'<span class="tiny">—</span>'))
   ]);
   q('#tasksTable').innerHTML=table(
-    ['ID','提示词','参考图','账号','客户','时长','状态','耗时','创建时间','视频','报错/备注'],rows);
+    [selAllBox('tasks'),'ID','提示词','参考图','账号','客户','时长','状态','耗时','创建时间','视频','报错/备注'],rows);
+  selUpdate('tasks');
 }
 
 function refThumbs(t){

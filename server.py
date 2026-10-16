@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.2.8"
+APP_VERSION = "2.2.9"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -2556,6 +2556,23 @@ async def admin_proxy_delete(proxy_id: str,
     return {"ok": True}
 
 
+class BatchIds(BaseModel):
+    ids: list[str] = []
+
+
+@app.post("/api/admin/proxies/delete-batch")
+async def admin_proxy_delete_batch(body: BatchIds, x_admin_key: str | None = Header(default=None)):
+    """勾选多个代理一起删；已绑定这些代理的账号改回默认代理（与单个删除一致）。"""
+    _admin_auth(x_admin_key)
+    known = {p["id"] for p in list_proxies()}
+    deleted = []
+    for proxy_id in dict.fromkeys(body.ids):
+        if proxy_id in known:
+            delete_proxy(proxy_id)
+            deleted.append(proxy_id)
+    return {"ok": True, "deleted": deleted, "skipped": [i for i in body.ids if i not in deleted]}
+
+
 # ===== 动态代理：出口 IP 探测 / 轮换 =====
 
 
@@ -2685,6 +2702,31 @@ async def admin_user_update(username: str, body: AdminUserUpdate,
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"updated": updated}
+
+
+class BatchUsers(BaseModel):
+    usernames: list[str] = []
+
+
+@app.post("/api/admin/users/delete-batch")
+async def admin_user_delete_batch(body: BatchUsers, x_admin_key: str | None = Header(default=None)):
+    """勾选多个管理员一起删：主管理员和当前登录的账号自动跳过。"""
+    _admin_auth(x_admin_key)
+    me = ADMIN_SESSIONS.get(x_admin_key or "", {}).get("username")
+    deleted, skipped = [], []
+    for username in dict.fromkeys(body.usernames):
+        if username == me:
+            skipped.append(f"{username}（当前登录）")
+            continue
+        try:
+            if not user_get(username):
+                skipped.append(f"{username}（不存在）")
+                continue
+            user_delete(username)
+            deleted.append(username)
+        except ValueError as exc:
+            skipped.append(f"{username}（{exc}）")
+    return {"ok": True, "deleted": deleted, "skipped": skipped}
 
 
 @app.delete("/api/admin/users/{username}")
@@ -2881,13 +2923,8 @@ async def admin_videos(limit: int = 100, x_admin_key: str | None = Header(defaul
     }
 
 
-@app.delete("/api/admin/videos/{task_id}")
-async def admin_video_delete(task_id: str, x_admin_key: str | None = Header(default=None)):
-    """删除视频文件并同步删除对应的任务记录。"""
-    _admin_auth(x_admin_key)
-    row = store.get(task_id)
-    if not row or row.get("status") != "completed":
-        raise HTTPException(404, "task not found")
+def _delete_task_files_and_record(row: dict) -> None:
+    """删一条任务：视频文件 + 参考图缩略图 + 任务记录。"""
     url = row.get("video_url")
     if url:
         local = Path(config.DOWNLOAD_DIR) / Path(url).name
@@ -2897,8 +2934,35 @@ async def admin_video_delete(task_id: str, x_admin_key: str | None = Header(defa
         except OSError:
             pass
     delete_reference_thumbnails(_task_reference_thumbs(row.get("reference_thumbs")))
-    store.delete_task(task_id)
+    store.delete_task(row["id"])
+
+
+@app.delete("/api/admin/videos/{task_id}")
+async def admin_video_delete(task_id: str, x_admin_key: str | None = Header(default=None)):
+    """删除视频文件并同步删除对应的任务记录。"""
+    _admin_auth(x_admin_key)
+    row = store.get(task_id)
+    if not row or row.get("status") != "completed":
+        raise HTTPException(404, "task not found")
+    _delete_task_files_and_record(row)
     return {"ok": True, "deleted": task_id}
+
+
+@app.post("/api/admin/tasks/delete-batch")
+async def admin_task_delete_batch(body: BatchIds, x_admin_key: str | None = Header(default=None)):
+    """勾选多条任务一起删（连同视频文件）。排队中 / 生成中的跳过：还在跑，删了上游照样扣点、出片没处放。"""
+    _admin_auth(x_admin_key)
+    deleted, skipped = [], []
+    for task_id in dict.fromkeys(body.ids):
+        row = store.get(task_id)
+        if not row:
+            skipped.append(f"{task_id}（不存在）")
+        elif row.get("status") in ("queued", "processing") or task_id in RESUMING or task_id in RECOVERING:
+            skipped.append(f"{task_id}（还在排队/生成中）")
+        else:
+            _delete_task_files_and_record(row)
+            deleted.append(task_id)
+    return {"ok": True, "deleted": deleted, "skipped": skipped}
 
 
 @app.get("/api/admin/stats")
