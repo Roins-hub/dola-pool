@@ -155,6 +155,8 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
 .dialog h2{font-size:16px;margin-bottom:16px}
 .dialog label{display:block;font-size:12px;color:var(--sub);margin:10px 0 4px}
 .dialog input{width:100%;padding:8px 12px;font-size:13px}
+/* 单选 / 勾选框别被上面的 width:100% 拉满：否则圆点和文字隔得老远（添加代理弹窗里很明显） */
+.dialog input[type=radio],.dialog input[type=checkbox]{width:auto;padding:0;flex:none;margin:0}
 .dialog .row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
 .keyfull{font-family:monospace;background:rgba(255,255,255,.07);border:1px dashed var(--stroke-hi);border-radius:10px;padding:12px;word-break:break-all;margin:10px 0}
 .chart{display:flex;align-items:flex-end;gap:14px;height:140px;padding:0 4px}
@@ -1561,23 +1563,53 @@ function proxyAddTabs(on){
     <button class="ptab ${on==='quick'?'on':''}" onclick="quickProxyDialog()">☰ 快捷添加</button>
   </div>`;
 }
-/** 快捷添加：一行一个代理，批量建成「静态IP」代理（每行 = 一个固定出口）。 */
+/** 快捷添加：一行一个代理，三种建法——
+    static：每行一条「静态IP」代理（一个固定出口）；
+    pool  ：所有行合成一个「动态IP · 节点池」代理（一个节点分给一个号；不同协议各建一个池）；
+    tunnel：每行一个「隧道/旋转网关」代理（服务端给每个号拼一个独立 session = 独立出口 IP）。 */
+const QP_HINT={
+  static:'每行建成一条<b>静态IP</b>代理（一个固定出口）。已存在的（同地址 + 端口 + 用户名）自动跳过。',
+  pool:'所有行合成<b>一个动态IP节点池</b>：一个节点分给一个号，号多了就从池里继续分；用完/失效的节点可在「节点池」里补充、清理。'
+      +'不同协议的行各建一个池。适合一次买的一批 <code>host:port:user:pass</code>。',
+  tunnel:'每行是一个<b>隧道/旋转网关</b>：服务端把 <b>{session}</b> 拼进用户名，每个号一个独立 session（= 独立出口 IP）。'
+      +'适合「一个网关地址 + 账号密码」、靠用户名切换出口的服务商。已存在的自动跳过。'
+};
 function quickProxyDialog(){
   showDlg(`<h2>添加代理</h2>${proxyAddTabs('quick')}
+    <label>出口类型</label>
+    <select id="f_qpmode" onchange="onQuickProxyModeChange()" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
+      <option value="static">静态IP（每行一条代理，一个固定出口）</option>
+      <option value="pool">动态IP · 节点池（所有行合成一个池，一个节点分给一个号）</option>
+      <option value="tunnel">动态IP · 隧道/旋转网关（每行一个网关，每号一个独立 session）</option>
+    </select>
     <label>代理列表</label>
     <textarea id="f_qplist" rows="8" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-top:4px"
       placeholder="每行输入一个代理，支持以下格式：&#10;socks5://user:pass@192.168.1.1:1080&#10;http://192.168.1.1:8080&#10;https://user:pass@proxy.example.com:443&#10;192.168.1.1:8080:user:pass&#10;user:pass@192.168.1.1:8080"></textarea>
-    <div class="tiny" style="margin-top:6px">没写协议的行按下面的「默认协议」处理；每行建成一条<b>静态IP</b>代理（一个固定出口）。
-      已存在的（同地址 + 端口 + 用户名）自动跳过。动态IP / 节点池请用「标准添加」。</div>
+    <div class="tiny" style="margin-top:6px">没写协议的行按下面的「默认协议」处理。<span id="f_qphint">${QP_HINT.static}</span></div>
     <div style="display:flex;gap:10px">
       <div style="flex:1"><label>名称前缀</label><input id="f_qpprefix" value="代理" placeholder="生成的名称：前缀-地址:端口"></div>
       <div style="flex:1"><label>默认协议</label><select id="f_qpproto" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${proxyProtocolOptions('http')}</select></div>
     </div>
+    <div id="f_qptunnel" style="display:none">
+      <label>用户名模板（隧道网关用）</label>
+      <input id="f_qptpl" placeholder="{user}-{session}（默认，按服务商要求改，如 {user}-session-{session}）">
+      <div style="display:flex;gap:10px">
+        <div style="flex:1"><label>session 有效期（秒）</label><input id="f_qpttl" type="number" value="0" placeholder="0 = 不过期"></div>
+        <div style="flex:1"><label>最小换IP间隔（秒）</label><input id="f_qpminint" type="number" value="60"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-weight:400">
+        <input type="checkbox" id="f_qprisk" checked> 被风控时自动换出口 IP</label>
+    </div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-weight:400">
-      <input type="checkbox" id="f_qpprobe" checked style="width:auto"> 添加后自动探测出口 IP（确认是不是日本 / 韩国）</label>
+      <input type="checkbox" id="f_qpprobe" checked> 添加后自动探测出口 IP（确认是不是日本 / 韩国）</label>
     <div id="f_qpres" class="qp-res" style="margin-top:8px"></div>
     <div class="row"><button class="btn" id="f_qpcancel" onclick="hide('dlg')">取消</button>
       <button class="btn btn-p" id="f_qpgo" onclick="submitQuickProxies()">批量添加</button></div>`);
+}
+function onQuickProxyModeChange(){
+  const m=q('#f_qpmode').value;
+  q('#f_qphint').innerHTML=QP_HINT[m];
+  q('#f_qptunnel').style.display=m==='tunnel'?'block':'none';
 }
 /** 解析一行代理 → {protocol, host, port, username, password}；不认识返回 null。 */
 function parseProxyLine(line, defProto){
@@ -1593,7 +1625,21 @@ function parseProxyLine(line, defProto){
   if(m)return {protocol:proto(m[1]),host:m[2],port:Number(m[3]),username:m[4],password:m[5]};
   return null;
 }
+/** 探测一条刚建好的代理的出口，结果写进日志最后一行。 */
+async function quickProbe(id,label,log,render){
+  log.push(`… ${label} 已添加，探测出口中`);render();
+  try{
+    const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/probe',{method:'POST'});
+    if(r.ok){
+      proxyProbeCache[id]=r.ip+(r.country?`（${r.country}${r.isp?' / '+r.isp:''}）`:'');
+      const good=['JP','KR'].includes(String(r.country||'').toUpperCase());
+      log[log.length-1]=`${good?'✓':'⚠'} ${label} → ${r.ip}（${r.country||'未知'}${r.isp?' / '+r.isp:''}）${good?'':'  不是日本/韩国出口，dola 会拒绝'}`;
+    }else log[log.length-1]=`⚠ ${label} 已添加，但探测失败：${r.error||'未知错误'}`;
+  }catch(e){log[log.length-1]=`⚠ ${label} 已添加，但探测失败：${e.message}`;}
+  render();
+}
 async function submitQuickProxies(){
+  const mode=q('#f_qpmode').value;
   const text=q('#f_qplist').value;
   const defProto=q('#f_qpproto').value;
   const prefix=(q('#f_qpprefix').value.trim()||'代理');
@@ -1603,8 +1649,10 @@ async function submitQuickProxies(){
   if(!lines.length)return alert('请粘贴代理，一行一个');
   try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
   const keyOf=x=>`${String(x.host).toLowerCase()}:${x.port}:${x.username||''}`;
-  const existing=new Set(proxyCache.map(keyOf));
+  // 节点池不按单条去重（同一个网关地址的不同账号就是不同节点）
+  const existing=new Set(mode==='pool'?[]:proxyCache.filter(x=>x.mode!=='extract').map(keyOf));
   const names=new Set(proxyCache.map(x=>x.name));
+  const uniqueName=base=>{let name=base,n=2;while(names.has(name))name=`${base}-${n++}`;names.add(name);return name;};
   const items=[],log=[];
   lines.forEach((line,i)=>{
     const p=parseProxyLine(line,defProto);
@@ -1614,37 +1662,54 @@ async function submitQuickProxies(){
     const k=keyOf(p);
     if(existing.has(k)){log.push(`– 第 ${i+1} 行已存在，跳过：${p.host}:${p.port}`);return;}
     existing.add(k);
-    let name=`${prefix}-${p.host}:${p.port}`,n=2;
-    while(names.has(name))name=`${prefix}-${p.host}:${p.port}-${n++}`;
-    names.add(name);p.name=name;items.push(p);
+    items.push(p);
   });
   const go=q('#f_qpgo'),cancel=q('#f_qpcancel');
   go.disabled=true;cancel.disabled=true;
   const render=()=>{out.textContent=log.join('\n');out.scrollTop=out.scrollHeight;};
   render();
-  let ok=0;
-  for(const p of items){
-    const label=`${p.name}（${p.protocol}）`;
-    let created=null;
-    try{
-      const r=await api('/api/admin/proxies',{method:'POST',body:{name:p.name,protocol:p.protocol,host:p.host,port:p.port,
-        username:p.username,password:p.password,remark:'快捷添加',mode:'static'}});
-      created=r.created||{};ok++;
-    }catch(e){log.push(`✗ ${label} 添加失败：${e.message}`);render();continue;}
-    if(doProbe&&created.id){
-      log.push(`… ${label} 已添加，探测出口中`);render();
+  let ok=0,made=0;
+  if(mode==='pool'){
+    // 按协议分组，每组建一个节点池代理；节点行统一成 host:port[:user:pass]
+    const groups={};
+    items.forEach(p=>{(groups[p.protocol]=groups[p.protocol]||[]).push(p);});
+    for(const [proto,ps] of Object.entries(groups)){
+      const name=uniqueName(`${prefix}-节点池-${proto}`);
+      const nodes=ps.map(p=>p.username?`${p.host}:${p.port}:${p.username}:${p.password}`:`${p.host}:${p.port}`).join('\n');
+      const label=`${name}（${proto}，${ps.length} 个节点）`;
       try{
-        const r=await api('/api/admin/proxies/'+encodeURIComponent(created.id)+'/probe',{method:'POST'});
-        if(r.ok){
-          proxyProbeCache[created.id]=r.ip+(r.country?`（${r.country}${r.isp?' / '+r.isp:''}）`:'');
-          const good=['JP','KR'].includes(String(r.country||'').toUpperCase());
-          log[log.length-1]=`${good?'✓':'⚠'} ${label} → ${r.ip}（${r.country||'未知'}${r.isp?' / '+r.isp:''}）${good?'':'  不是日本/韩国出口，dola 会拒绝'}`;
-        }else log[log.length-1]=`⚠ ${label} 已添加，但探测失败：${r.error||'未知错误'}`;
-      }catch(e){log[log.length-1]=`⚠ ${label} 已添加，但探测失败：${e.message}`;}
-    }else log.push(`✓ ${label} 已添加`);
-    render();
+        const r=await api('/api/admin/proxies',{method:'POST',body:{name,protocol:proto,mode:'extract',
+          nodes_text:nodes,remark:'快捷添加·节点池'}});
+        ok+=ps.length;made++;
+        if(doProbe&&r.created&&r.created.id)await quickProbe(r.created.id,label,log,render);
+        else{log.push(`✓ ${label} 已添加`);render();}
+      }catch(e){log.push(`✗ ${label} 添加失败：${e.message}`);render();}
+    }
+    log.push(`—— 完成：建了 ${made} 个节点池，共 ${ok} 个节点（${lines.length} 行）。到「账号管理」给号选这个代理，每个号会分到池里不同的节点`);
+  }else{
+    const tunnel=mode==='tunnel';
+    for(const p of items){
+      const name=uniqueName(`${prefix}-${tunnel?'网关-':''}${p.host}:${p.port}`);
+      const label=`${name}（${p.protocol}）`;
+      const body={name,protocol:p.protocol,host:p.host,port:p.port,username:p.username,password:p.password,
+        remark:tunnel?'快捷添加·隧道网关':'快捷添加',mode:tunnel?'dynamic':'static'};
+      if(tunnel){
+        body.session_template=q('#f_qptpl').value.trim();
+        body.sticky_ttl=Number(q('#f_qpttl').value||0);
+        body.rotate_min_interval=Number(q('#f_qpminint').value||0);
+        body.rotate_on_risk=q('#f_qprisk').checked;
+      }
+      let created=null;
+      try{
+        const r=await api('/api/admin/proxies',{method:'POST',body});
+        created=r.created||{};ok++;
+      }catch(e){log.push(`✗ ${label} 添加失败：${e.message}`);render();continue;}
+      if(doProbe&&created.id)await quickProbe(created.id,label,log,render);
+      else{log.push(`✓ ${label} 已添加`);render();}
+    }
+    log.push(`—— 完成：新增 ${ok} 个${tunnel?'隧道网关':''}，共 ${lines.length} 行`);
   }
-  log.push(`—— 完成：新增 ${ok} 个，共 ${lines.length} 行`);render();
+  render();
   go.disabled=false;cancel.disabled=false;cancel.textContent='关闭';
   go.textContent='继续添加';go.onclick=()=>{q('#f_qplist').value='';go.textContent='批量添加';go.onclick=submitQuickProxies;};
   loadProxies();
