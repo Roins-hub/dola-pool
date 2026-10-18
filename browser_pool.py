@@ -26,6 +26,8 @@ import config
 import cred_store
 import failure_text
 import proxy_store
+import sites
+from doubao_gen import DoubaoModelLockedError, DoubaoQuotaError
 from pool import AccountConfig as _PoolAccountConfig, AccountPool as _PoolEngine
 
 logger = logging.getLogger("dola-pool.browser_pool")
@@ -89,6 +91,12 @@ def group_of(a: dict, now: float, *, busy: bool = False,
         balance = a.get("credit_balance")
         detail = f"（今日剩余 {balance}）" if balance is not None else ""
         return GROUP_COOLING, f"上游报额度不足{detail}"
+    if a.get("site") == sites.DOUBAO:
+        # 豆包号不报剩余条数：额度用完由上游话术判（进上面的冷却），这里不按点数分组
+        if remaining <= 0:
+            return GROUP_COOLING, f"今日已派满 {limit} 条（DOUBAO_DAILY_LIMIT）"
+        tier = {"member": "会员", "free": "免费号"}.get(str(a.get("tier") or ""), "")
+        return GROUP_FULL, f"豆包{tier}号，今日已出 {int(a.get('used_today') or 0)} 条"
     if remaining <= 1:
         return GROUP_COOLING, f"剩余 {remaining} 点（额度日 23:00 重置）"
     if remaining < limit:
@@ -140,6 +148,8 @@ def duration_cost(model: str, duration: int = 0) -> int:
     实测多数一次就出满 30 秒；只出了半截要补后半段时，出片路径自己再查余额。
     认不出的模型一律按 2.0 计（宁可少派，也不要拿号去白撞额度）。
     """
+    if sites.is_doubao_model(model):
+        return 1        # 豆包不按点数扣：每条记 1（真实额度看上游话术）
     m = (model or "").lower().replace("_", "-")
     if "2.5" in m or "2-5" in m:
         version = "seedance-2.5"
@@ -342,6 +352,8 @@ class BrowserPool:
             # ---- 2.1.7：号级限流暂停按连续次数递增 ----
             ("throttle_streak", "INTEGER DEFAULT 0"),  # 连续被上游限流的次数（成功即清零）
             ("throttle_last", "REAL DEFAULT 0"),       # 最近一次被限流的时间
+            # ---- 2.3.0：豆包号会员档（member / free / 空=未知），决定能不能接 2.0 标准版、2.5 ----
+            ("tier", "TEXT DEFAULT ''"),
         ):
             try:
                 self._conn.execute(f"ALTER TABLE accounts_meta ADD COLUMN {column} {definition}")
@@ -483,6 +495,8 @@ class BrowserPool:
         """
         remaining = int(account_row.get("remaining") or 0)
         limit = int(account_row.get("limit") or config.DAILY_LIMIT or DAILY_LIMIT)
+        if account_row.get("site") == sites.DOUBAO:
+            return GROUP_FULL if remaining > 0 else GROUP_COOLING
         if remaining <= 1:
             return GROUP_COOLING
         if remaining < limit:
@@ -684,7 +698,11 @@ class BrowserPool:
             m = self._meta(a)
             used = self.used_today(a)
             lock = self._locks.get(a)
+            site = self.site_of(a)
+            limit = config.DOUBAO_DAILY_LIMIT if site == sites.DOUBAO else DAILY_LIMIT
             out.append({
+                "site": site,
+                "tier": (m["tier"] if m and "tier" in m.keys() else "") or "",
                 "name": a,
                 "scheduling": bool(m["scheduling"]) if m else True,
                 "note": m["note"] if m else "",
@@ -714,8 +732,8 @@ class BrowserPool:
                 "status": self._derive_status(m, now),
                 "effective_egress": self._egress_for(a),
                 "used_today": used,
-                "limit": DAILY_LIMIT,
-                "remaining": max(0, DAILY_LIMIT - used),
+                "limit": limit,
+                "remaining": max(0, limit - used),
                 "busy": bool(lock and lock.locked()),
                 "risk_since": m["risk_since"] if m else 0,
                 "abnormal_until": m["abnormal_until"] if m else 0,
@@ -810,10 +828,14 @@ class BrowserPool:
                       "reply": "", "elapsed": 0.0}
         else:
             try:
-                result = hello_probe(
-                    state, proxy=self._proxy_url_for(name),
-                    prompt=config.HELLO_PROBE_PROMPT,
-                    timeout_sec=config.HELLO_PROBE_TIMEOUT)
+                if self.site_of(name) == sites.DOUBAO:
+                    from doubao_gen import hello_probe as doubao_probe
+                    result = doubao_probe(state, proxy=self._proxy_url_for(name))
+                else:
+                    result = hello_probe(
+                        state, proxy=self._proxy_url_for(name),
+                        prompt=config.HELLO_PROBE_PROMPT,
+                        timeout_sec=config.HELLO_PROBE_TIMEOUT)
             except Exception as exc:  # 探测本身炸了也算不通过（宁可保守）
                 result = {"ok": False, "status": "error", "login_ok": False, "replied": False,
                           "cached": False, "probed": True,
@@ -1018,8 +1040,12 @@ class BrowserPool:
         reason = ""
         pure_state = self._pure_state(name)
         if pure_state is not None and self._is_cookie_source(name):
+            if self.site_of(name) == sites.DOUBAO:
+                from doubao_gen import probe_login as login_probe
+            else:
+                login_probe = probe_login
             ok, msg = await asyncio.to_thread(
-                probe_login, pure_state, proxy=self._proxy_url_for(name),
+                login_probe, pure_state, proxy=self._proxy_url_for(name),
             )
             if not ok:
                 reason = str(msg or "")[:200]
@@ -1073,7 +1099,7 @@ class BrowserPool:
     def _schedulable(self, a: dict) -> bool:
         return (a["scheduling"] and not a["cooling"] and not a["rate_limited"]
                 and not a["quota_blocked"] and a["login_ok"] != 0
-                and a["used_today"] < DAILY_LIMIT
+                and a["used_today"] < int(a.get("limit") or DAILY_LIMIT)
                 and (a["credit_balance"] is None or a["credit_balance"] >= 2))
 
     def _recently_failed(self, account: str) -> bool:
@@ -1088,14 +1114,16 @@ class BrowserPool:
         """所有开启调度且未处于风控冷却的账号都已达到每日上限。"""
         candidates = [a for a in self.list_accounts() if a["scheduling"] and not a["cooling"]]
         return bool(candidates) and all(
-            a["rate_limited"] or a["used_today"] >= DAILY_LIMIT for a in candidates
+            a["rate_limited"] or a["used_today"] >= int(a.get("limit") or DAILY_LIMIT)
+            for a in candidates
         )
 
     @property
     def all_accounts_quota_blocked(self) -> bool:
         candidates = [a for a in self.list_accounts() if a["scheduling"] and not a["cooling"]]
         return bool(candidates) and all(
-            a["quota_blocked"] or a["rate_limited"] or a["used_today"] >= DAILY_LIMIT
+            a["quota_blocked"] or a["rate_limited"]
+            or a["used_today"] >= int(a.get("limit") or DAILY_LIMIT)
             for a in candidates
         ) and any(a["quota_blocked"] for a in candidates)
 
@@ -1357,6 +1385,17 @@ class BrowserPool:
             if result.get("rotated"):
                 logger.info("出口 %s 异常，已为 %s 换出口 IP（%s）", egress, name, reason)
 
+    def site_of(self, name: str) -> str:
+        """账号属于哪个站点（看 cookie 域名）：dola / doubao。浏览器登录号一律 dola。"""
+        p = Path(self.accounts_dir) / name / "cookie_state.json"
+        return sites.site_of_state_file(p) if p.is_file() else sites.DOLA
+
+    def set_tier(self, name: str, tier: str) -> None:
+        """豆包号会员档：免费号请求会员模型被拒 → free；会员模型出片成功 → member。"""
+        self._ensure_meta(name)
+        self._conn.execute("UPDATE accounts_meta SET tier=? WHERE name=?", (tier or "", name))
+        self._conn.commit()
+
     def _pure_state(self, name: str) -> str | None:
         """cookie 账号的纯 API 状态文件；不存在则返回 None（走浏览器出片）。"""
         if not config.PURE_API_ENABLED:
@@ -1373,6 +1412,10 @@ class BrowserPool:
         state = self._pure_state(account)
         if state is None:
             raise RuntimeError(f"{account} 不是纯 API 账号，无法自动取回")
+        if self.site_of(account) == sites.DOUBAO:
+            from doubao_gen import fetch_conversation_video as fetch_doubao
+            return fetch_doubao(state, conversation_id, proxy=self._proxy_url_for(account),
+                                output_dir=config.DOWNLOAD_DIR)
         from pure_api_gen import fetch_conversation_video
         return fetch_conversation_video(state, conversation_id,
                                         proxy=self._proxy_url_for(account),
@@ -1401,6 +1444,23 @@ class BrowserPool:
         所以 cookie 号只用纯 API；login 号走浏览器出片。
         """
         pure_state = self._pure_state(account)
+        site = self.site_of(account)
+        if site == sites.DOUBAO or sites.is_doubao_model(model):
+            if site != sites.DOUBAO or not sites.is_doubao_model(model):
+                raise RuntimeError(f"{account} 是 {sites.SITE_LABELS[site]} 号，接不了模型 {model}")
+            if pure_state is None:
+                raise RuntimeError(f"{account} 缺少 cookie_state.json，豆包号只能走纯 API")
+            from doubao_gen import generate_doubao_video
+            result = await asyncio.to_thread(
+                generate_doubao_video,
+                account=account, prompt=prompt, ratio=ratio, duration=duration,
+                model=model, cookie_state_path=pure_state,
+                proxy=self._proxy_url_for(account),
+                on_conversation_id=on_conversation_id, on_poll=on_poll,
+                on_balance=on_balance,
+                reference_image_paths=reference_image_paths,
+            )
+            return await self._web_playable(result)
         if pure_state is not None and self._is_cookie_source(account):
             # cookie 号：纯 API 出片；失败抛真实错误，不再回退浏览器
             result = await asyncio.to_thread(
@@ -1460,7 +1520,7 @@ class BrowserPool:
             proxied = bool(self._proxy_url_for(account))
         except Exception:  # noqa: BLE001
             proxied = True
-        if not proxied:
+        if not proxied and row.get("site") != sites.DOUBAO:
             out.append("该号没绑代理，会用服务器本机 IP 直连；服务器不在日本/韩国时 dola 会拒绝"
                        "（710022002 或地区限制）")
         cost = self._duration_cost(model or "", int(duration or 0)) if model else 0
@@ -1479,6 +1539,10 @@ class BrowserPool:
         """
         if account not in self.accounts:
             raise FileNotFoundError(f"profile 不存在: {account}")
+        if self.site_of(account) == sites.DOUBAO and not sites.is_doubao_model(model):
+            # 面板「测试生成」默认是 dola 模型：豆包号换成免费号也能用的 Mini（时长夹到 15 秒内）
+            model = "doubao-seedance-2.0-mini"
+            duration = max(sites.DOUBAO_MIN_DURATION, min(15, int(duration or 5)))
         lock = self._locks.setdefault(account, asyncio.Lock())
         async with lock:
             cost = self._duration_cost(model, duration)
@@ -1518,6 +1582,12 @@ class BrowserPool:
                 return {"ok": False, "account": account, "error": f"登录态失效: {exc}"}
             except FileNotFoundError as exc:
                 return {"ok": False, "account": account, "error": f"profile 缺失: {exc}"}
+            except DoubaoModelLockedError as exc:
+                self.set_tier(account, "free")
+                return {"ok": False, "account": account, "error": str(exc)[:300]}
+            except DoubaoQuotaError as exc:
+                self._mark_daily_limit(account, str(exc))
+                return {"ok": False, "account": account, "error": str(exc)[:300]}
             except Exception as exc:
                 if "登录态失效" in str(exc):
                     self._set_risk(account, str(exc))
@@ -1753,7 +1823,18 @@ class BrowserPool:
             self._sync_engine()
             cost = self._duration_cost(model, duration)
             allowed_groups = self._allowed_quota_groups(model, duration)
-            pair_job = self._is_pair_job(duration)
+            want_site = sites.site_for_model(model)
+            member_only = sites.doubao_member_only(model)
+            # 豆包 2.5 原生 30 秒：不走 dola 的两段拼接
+            pair_job = self._is_pair_job(duration) and want_site == sites.DOLA
+            if want_site == sites.DOUBAO:
+                allowed_groups = (GROUP_FULL, GROUP_HALF)
+                rows = [a for a in self.list_accounts() if a.get("site") == sites.DOUBAO]
+                if not rows:
+                    raise RuntimeError(f"号池里没有豆包号，接不了 {model}；请先在账号管理导入 doubao.com 的 Cookie")
+                if member_only and all(a.get("tier") == "free" for a in rows):
+                    raise RuntimeError(f"{model} 只有豆包会员号能用，号池里的豆包号都是免费号；"
+                                       "免费号请用 doubao-seedance-2.0-mini 或 doubao-seedance-2.0-fast")
             last_err = None
             attempt = 0
             tried: set[str] = set()
@@ -1799,6 +1880,12 @@ class BrowserPool:
                 busy_names: list[str] = []  # 能接单、但正被别的任务占着出片的号
                 for a in self._ordered_candidates(allowed_groups):
                     if a["name"] in tried or self._recently_failed(a["name"]):
+                        continue
+                    # 站点要对上：dola 模型只派 dola 号，豆包模型只派豆包号
+                    if a.get("site", sites.DOLA) != want_site:
+                        continue
+                    # 会员模型（豆包 2.0 标准版 / 2.5）不派给已知的免费号
+                    if member_only and a.get("tier") == "free":
                         continue
                     # 冷却/风控/待激活/异常一律不派发
                     if a.get("group") in self.BLOCKED_GROUPS:
@@ -1874,10 +1961,26 @@ class BrowserPool:
                                 "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
                                 (time.time(), account))
                             self._conn.commit()
+                            if member_only and a.get("tier") != "member":
+                                self.set_tier(account, "member")
                             self._fail_streak.pop(account, None)   # 出片成功 → 连续失败清零
                             self._reset_throttle_streak(account)   # 连续限流计数也清零
                             self.clear_egress_throttle(account)    # 出口走通 → 退避清零
                             return result
+                        except DoubaoModelLockedError as e:
+                            # 免费号请求会员模型：上游没扣额度，也不是号的毛病 → 记「免费号」，换号
+                            print(f"[pool] {account} 不是豆包会员，接不了 {model} → 记为免费号、换号: {e}",
+                                  flush=True)
+                            self.set_tier(account, "free")
+                            last_err = e
+                            say(f"{account} 是豆包免费号，用不了 {model} → 换会员号")
+                            tried.add(account)
+                            tried_order.append(account)
+                            continue
+                        except DoubaoQuotaError as e:
+                            print(f"[pool] {account} 豆包今日额度用完，标记到额度刷新: {e}", flush=True)
+                            self._mark_daily_limit(account, str(e))
+                            last_err = e
                         except CreditInsufficientError as e:
                             print(f"[pool] {account} 生成前积分不足，跳过: {e}", flush=True)
                             self._mark_quota_blocked(account, str(e))

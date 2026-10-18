@@ -33,6 +33,7 @@ import config
 import cred_store
 import failure_text
 import proxy_store
+import sites
 from add_account import add_account_flow
 from cookie_login import import_cookie_account, import_cookie_accounts_from_text
 from credential_import import allocate_credentials, parse_account_text
@@ -81,7 +82,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.2.11"
+APP_VERSION = "2.3.0"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -344,12 +345,12 @@ class VideoGenRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     size: str | None = None
     ratio: str | None = None
-    duration: int | None = Field(None, ge=5, le=30)
+    duration: int | None = Field(None, ge=4, le=30)
     # 时长别名：new-api 的 sora/vinted 任务插件会把画布传来的 duration 统一改写成
     # `seconds` 再转发到本服务，所以这里必须一起认；否则 30 秒请求会被当成「没带时长」
     # 而落到默认 10 秒（画布「选 30 秒却生成 10 秒」就是这个原因）。
-    seconds: int | None = Field(None, ge=5, le=30)
-    duration_seconds: int | None = Field(None, ge=5, le=30)
+    seconds: int | None = Field(None, ge=4, le=30)
+    duration_seconds: int | None = Field(None, ge=4, le=30)
     # 参考图：兼容各画布工具的常见字段形态（字符串/数组/{"url": ...}）
     reference_images: list[str] = Field(default_factory=list)
     image_url: Any = None
@@ -362,7 +363,7 @@ class TestGenRequest(BaseModel):
     """账号级「测试生成」：用指定账号跑一条真实出片，看该号能否成功。"""
     prompt: str = Field(..., min_length=1)
     model: str = "seedance-2.0"
-    duration: int = Field(10, ge=5, le=30)
+    duration: int = Field(10, ge=4, le=30)
     ratio: str | None = None
     # 号处于风控/限流暂停/没绑代理等状态时，先返回提醒；确认后带 force=true 再发
     force: bool = False
@@ -1331,12 +1332,28 @@ def _reject_unaffordable(model: str, duration) -> None:
             + ("或 seedance-2.0" if "2.5" in model else ""))
 
 
+def _check_doubao_model(model, duration) -> str:
+    """豆包模型：只认 sites.DOUBAO_MODELS 里的精确名字，时长 4~15（2.5 到 30）任意整数。"""
+    spec = sites.doubao_spec(model)
+    try:
+        seconds = int(duration)
+    except (TypeError, ValueError):
+        raise HTTPException(422, f"时长无效：{duration!r}")
+    low, high = sites.DOUBAO_MIN_DURATION, spec[1]
+    if not (low <= seconds <= high):
+        raise HTTPException(422, f"{sites.canonical_doubao_model(model)} 支持 {low}~{high} 秒（收到 {seconds} 秒）")
+    return sites.canonical_doubao_model(model)
+
+
 async def _submit_task(client, model, prompt, ratio, duration, reference_images):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
-    _reject_unsupported_long(duration)
-    resolved = _resolve_model_for_duration(model, duration)
-    if resolved is not None:
-        _reject_unaffordable(resolved, duration)
+    if sites.is_doubao_model(model):
+        resolved = _check_doubao_model(model, duration)
+    else:
+        _reject_unsupported_long(duration)
+        resolved = _resolve_model_for_duration(model, duration)
+        if resolved is not None:
+            _reject_unaffordable(resolved, duration)
     if resolved is None:
         version = _model_version(model)
         if version is not None:
@@ -1354,7 +1371,9 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images)
             f"seedance-2.0 仅支持 {list(config.V20_DURATIONS)} 秒）",
         )
     model = resolved
-    if duration not in client["allowed_durations"]:
+    # Key 的时长白名单只管 dola 的档位；豆包的任意秒数只受上面的模型范围约束
+    if duration not in client["allowed_durations"] and not (
+            sites.is_doubao_model(model) and duration not in SUPPORTED_DURATIONS):
         raise HTTPException(422, f"当前 API Key 不允许生成 {duration} 秒视频")
     try:
         reference_images = await validate_reference_urls(reference_images)
@@ -1449,6 +1468,9 @@ async def list_models():
         "data": [
             {"id": "seedance-2.0", "object": "model", "owned_by": "dola-pool", "created": 0},
             {"id": "seedance-2.5", "object": "model", "owned_by": "dola-pool", "created": 0},
+        ] + [
+            {"id": name, "object": "model", "owned_by": "dola-pool-doubao", "created": 0}
+            for name in sites.DOUBAO_MODELS
         ],
     }
 
@@ -1496,6 +1518,13 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
     ratio = _map_ark_ratio(body.get("ratio"))
     if reference_images:
         print(f"[api] Ark 收到参考图 {len(reference_images)} 张: {reference_images[0][:80]}", flush=True)
+    if sites.is_doubao_model(requested_model):
+        try:
+            seconds = int(body.get("duration") or body.get("seconds") or 5)
+        except (TypeError, ValueError):
+            seconds = 5
+        resp = await _submit_task(client, requested_model, prompt, ratio, seconds, reference_images)
+        return {"id": resp.id, "status": resp.status}
     version = _model_version(requested_model)
     if version is not None:
         # 显式指定了版本：只在该版本支持的时长里就近取档。
@@ -1714,6 +1743,8 @@ class BatchProxyBody(BaseModel):
 class ImportTextBody(BaseModel):
     text: str = ""
     skip_verify: bool = False
+    # Cookie 头格式不带域名：dola（默认）/ doubao。JSON 格式自带域名，自动识别。
+    site: str = "dola"
 
 
 class AccountAdd(BaseModel):
@@ -2453,7 +2484,8 @@ async def admin_import_cookies(body: ImportTextBody,
         raise HTTPException(400, "text 不能为空")
     try:
         result = await import_cookie_accounts_from_text(
-            pool, body.text, require_login=not body.skip_verify
+            pool, body.text, require_login=not body.skip_verify,
+            site="doubao" if (body.site or "").lower() == "doubao" else "dola",
         )
     except Exception as exc:
         raise HTTPException(400, str(exc)[:300]) from exc
@@ -2973,7 +3005,8 @@ async def admin_stats(x_admin_key: str | None = Header(default=None)):
     sched = [a for a in accs if a["scheduling"] and not a["cooling"]]
     st["total_accounts"] = len(accs)
     st["available_accounts"] = sum(1 for a in sched if a["remaining"] > 0)
-    st["total_remaining"] = sum(a["remaining"] for a in sched)
+    # 剩余「点数」只算 dola 号：豆包号不报剩余，本地上限只是兜底（默认 999），加进来会把总数撑爆
+    st["total_remaining"] = sum(a["remaining"] for a in sched if a.get("site") != "doubao")
     totals = st.pop("per_account_total", {})
     st["per_account"] = [{**a, "completed_total": totals.get(a["name"], 0)} for a in accs]
     st.update(_group_summary(accs))

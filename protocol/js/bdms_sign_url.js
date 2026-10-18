@@ -16,6 +16,10 @@ const BDMS_SDK_PATH = path.join(SCRIPT_DIR, 'bdms-sdk.js');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
 
 const daemon = process.env.DOLA_SIGNER_DAEMON === '1' || process.argv.includes('--daemon');
+// 站点：默认 dola；豆包（doubao.com）由 pure_signer 用环境变量起一组独立进程
+const SITE_HOST = process.env.BDMS_HOST || 'www.dola.com';
+const SITE_AID = Number(process.env.BDMS_AID || 495671);
+const EXTRA_PATHS = String(process.env.BDMS_EXTRA_PATHS || '').split(',').map(s => s.trim()).filter(Boolean);
 
 if (daemon) {
   const readline = require('readline');
@@ -115,7 +119,7 @@ function buildCtx(cookies) {
   ctx.document = {
     cookie: cookieString(cookies), hidden: false, visibilityState: 'visible',
     referrer: '', title: 'Dola', characterSet: 'UTF-8', charset: 'UTF-8',
-    readyState: 'complete', domain: 'www.dola.com', compatMode: 'CSS1Compat',
+    readyState: 'complete', domain: SITE_HOST, compatMode: 'CSS1Compat',
     createElement(tag) {
       const el = {
         style: {}, tagName: (tag || '').toUpperCase(), src: '', async: false,
@@ -143,8 +147,8 @@ function buildCtx(cookies) {
   };
 
   ctx.location = {
-    href: 'https://www.dola.com/chat/create-image', origin: 'https://www.dola.com',
-    protocol: 'https:', host: 'www.dola.com', hostname: 'www.dola.com',
+    href: `https://${SITE_HOST}/chat/create-image`, origin: `https://${SITE_HOST}`,
+    protocol: 'https:', host: SITE_HOST, hostname: SITE_HOST,
     pathname: '/chat/create-image', search: '', hash: '', port: '',
     assign() {}, replace() {}, reload() {},
   };
@@ -255,9 +259,9 @@ async function signUrl({ url, method = 'POST', headers = {}, body = '{}', cookie
   const bdms = execBdmsModule(ctx, moduleFn);
 
   bdms.init({
-    aid: 495671,
+    aid: SITE_AID,
     pageId: 26930,
-    paths: ['/alice', '/samantha', '/passport', '/chat/completion', '/im/chain', '/im/chain/single'],
+    paths: ['/alice', '/samantha', '/passport', '/chat/completion', '/im/chain', '/im/chain/single', ...EXTRA_PATHS],
     ic: 0,
     ddrt: 0,
   });

@@ -155,6 +155,19 @@ Content-Type: application/json
 - 请求里**显式写了 2.0 / 2.5 版本**，就只允许该版本的时长，不会"悄悄换型号"。
 - 写不出可识别的版本（如 `model: "seedance"`）时，按请求时长自动挑一个支持的版本。
 
+### 2.1.1 豆包号的模型（2.3.0 起）
+
+| 模型 | 支持时长 | 谁能用 |
+|---|---|---|
+| `doubao-seedance-2.0-mini` | 4～15 秒任意整数 | 豆包免费号、会员 |
+| `doubao-seedance-2.0-fast` | 4～15 秒任意整数 | 豆包免费号、会员 |
+| `doubao-seedance-2.0` | 4～15 秒任意整数 | 豆包会员 |
+| `doubao-seedance-2.5` | 4～30 秒任意整数（原生 30 秒） | 豆包会员 |
+
+- 只派给号池里的豆包号（doubao.com 的 Cookie 导入）；没有豆包号时报 `号池里没有豆包号…`。
+- 时长超范围直接 `422 doubao-seedance-2.0-mini 支持 4~15 秒（收到 20 秒）`；API Key 的时长白名单只约束 5/10/15/30 这几个档位。
+- 成片无水印；免费额度用完后按 `DOUBAO_ALLOW_PAID` 决定是否走付费额度。
+
 ### 2.2 尺寸 → 画幅
 
 | 传入 `size` | 归一化 `ratio` |
@@ -284,7 +297,11 @@ GET /v1/models        # 无需鉴权
 ```json
 {"object":"list","data":[
   {"id":"seedance-2.0","object":"model","owned_by":"dola-pool","created":0},
-  {"id":"seedance-2.5","object":"model","owned_by":"dola-pool","created":0}
+  {"id":"seedance-2.5","object":"model","owned_by":"dola-pool","created":0},
+  {"id":"doubao-seedance-2.0-mini","object":"model","owned_by":"dola-pool-doubao","created":0},
+  {"id":"doubao-seedance-2.0-fast","object":"model","owned_by":"dola-pool-doubao","created":0},
+  {"id":"doubao-seedance-2.0","object":"model","owned_by":"dola-pool-doubao","created":0},
+  {"id":"doubao-seedance-2.5","object":"model","owned_by":"dola-pool-doubao","created":0}
 ]}
 ```
 

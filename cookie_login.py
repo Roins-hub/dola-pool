@@ -344,8 +344,13 @@ async def import_cookie_account(name: str, cookie_data,
     _write_cookie_state(profile_dir, cookies, storage_bundle)
     state_file = profile_dir / "cookie_state.json"
 
+    import sites
+    site = sites.site_of_cookies(cookies)
     ok, reason = browser_backend_available()
     use_browser = ok if browser is None else bool(browser)
+    if site == sites.DOUBAO:
+        # 豆包号只走纯 API（浏览器 profile 那套是给 dola.com 页面准备的）
+        use_browser, reason = False, "豆包号只走纯 API"
     engine = "browser" if use_browser else "pure"
     browser_error = "" if use_browser else reason
     session_cookie_present = any(
@@ -388,7 +393,10 @@ async def import_cookie_account(name: str, cookie_data,
                 verify_error = page_error or "dola.com 未返回已登录状态"
         else:
             # cookie 账号走纯 API 探活：不开浏览器，也不会占 profile
-            from pure_api_gen import probe_login
+            if site == sites.DOUBAO:
+                from doubao_gen import probe_login
+            else:
+                from pure_api_gen import probe_login
 
             valid, detail = await asyncio.to_thread(probe_login, state_file)
             verified = bool(valid)
@@ -412,7 +420,8 @@ async def import_cookie_account(name: str, cookie_data,
 
 async def import_cookie_accounts_from_text(pool, raw_text: str,
                                            name_prefix: str = "acc",
-                                           require_login: bool = True) -> dict:
+                                           require_login: bool = True,
+                                           site: str = "dola") -> dict:
     """Cookie 头文本 / Cookie JSON 批量导入（对齐 api-pool 的 import-cookies）。
 
     - 按 sessionid 去重：已存在则记入 updated（不重复建号）；
@@ -422,7 +431,7 @@ async def import_cookie_accounts_from_text(pool, raw_text: str,
     """
     from cookie_import import parse_cookie_header_text, sessionid_from_state
 
-    states = parse_cookie_header_text(raw_text)
+    states = parse_cookie_header_text(raw_text, site)
     existing = set(pool.accounts)
     created: list[str] = []
     updated: list[str] = []

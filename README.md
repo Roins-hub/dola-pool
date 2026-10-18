@@ -33,6 +33,28 @@
 - 成片为 1280×720、24fps、H.265，码率约 1.5～4 Mbps（由上游决定，画面越简单文件越小）。
 - `seedance-2.0` 在 Dola 端实际使用 Seedance 2.0 Fast 生成。
 
+### 豆包（doubao.com）号的模型（2.3.0 起）
+
+号池可以同时放 dola 号和豆包号：**豆包号只接下面这 4 个模型，dola 号只接 `seedance-2.0/2.5`**，互不串。
+
+| 模型 | 豆包里的名字 | 时长 | 谁能用 | 消耗（豆包每日额度） |
+|---|---|---|---|---|
+| `doubao-seedance-2.0-mini` | Seedance 2.0 Mini | 4～15 秒任意整数 | 免费号、会员 | 1 倍 |
+| `doubao-seedance-2.0-fast` | Seedance 2.0 Fast | 4～15 秒任意整数 | 免费号、会员 | — |
+| `doubao-seedance-2.0` | Seedance 2.0 | 4～15 秒任意整数 | **只有会员** | 2 倍 |
+| `doubao-seedance-2.5` | Seedance 2.5 | 4～**30** 秒任意整数（原生，不拼接） | **只有会员** | 5 倍 |
+
+- 比例支持 `16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9`，不传则由豆包自动定。成片 720p，**无水印**（走豆包官方的无水印下载接口）。
+- 豆包会先回「请先确认参数」，号池核对时长、模型都对才自动回「确认生成」；对不上就不确认（不扣额度）、直接报错。
+- 免费额度用完时豆包问「本次将消耗付费额度，是否继续？」：`DOUBAO_ALLOW_PAID=1`（默认）自动确认走付费；
+  设成 `0` 则判这个号今天额度用完、换号。号没有付费额度时同样换号。
+- 免费号请求 2.0 / 2.5 时豆包回「当前无法使用 Seedance 2.5，是否改用 Mini」：号池**绝不确认**（会悄悄降级），
+  把这个号记为「免费号」、换会员号重派；会员模型出片成功的号记为「会员」，面板「来源」列能看到。
+- 豆包不报剩余条数，面板显示「今日已出 N 条」；`DOUBAO_DAILY_LIMIT`（默认 999）只是兜底上限。
+- 境外服务器能直接用（2026-10-18 从日本出口实测通过），不需要日本 / 韩国代理。
+- 只支持 Cookie 导入（见 [COOKIE.md](COOKIE.md) 的「豆包号」一节）。new-api Doubao 插件的官方名
+  `doubao-seedance-2-0-260128` 等**不是**豆包号模型，照旧走 dola。
+
 ## 调度与超时
 
 每个任务在 **总时限**内持续换号出片，超时即判定失败，不会无限等待：
@@ -168,6 +190,9 @@ curl -o out.mp4 https://your-domain/v1/videos/video_xxx/content -H "Authorizatio
 | `DOLA_MAX_PENDING_TASKS` | `100` | 待处理任务上限，超过返回 429 |
 | `DOLA_DAILY_LIMIT` | `4` | 每账号每日额度点数 |
 | `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `Asia/Tokyo` / `0` | 每日额度重置时区与时刻 |
+| `DOUBAO_ALLOW_PAID` | `1` | 豆包号免费额度用完后是否自动确认走付费额度；`0` = 换号 |
+| `DOUBAO_DAILY_LIMIT` | `999` | 豆包号每天最多派几条（兜底；真实额度看豆包回复） |
+| `DOUBAO_POLL_INTERVAL` | `10` | 豆包出片轮询间隔（秒） |
 | `DOLA_PURE_API` | `1` | 优先使用纯 HTTP 出片路径 |
 | `DOLA_PURE_FALLBACK_BROWSER` | `1` | 纯 HTTP 失败时回退浏览器路径 |
 | `DOLA_PURE_TIMEOUT` | `900` | 纯 HTTP 路径单次出片轮询超时（秒） |

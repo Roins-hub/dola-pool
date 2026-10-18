@@ -452,8 +452,7 @@ async function loadDash(){
       accLabel(a),
       groupBadge(a),
       `<label class="sw"><input type="checkbox" ${a.scheduling?'checked':''} onchange="setSched('${a.name}',this.checked)"><i></i></label>`,
-      `<b>${a.remaining}</b> / ${a.limit}<span class="tiny">（点数/上限）</span>`+
-        (a.credit_balance==null?'':`<div class="tiny">上游余额 ${a.credit_balance}${a.credit_balance<2?'（已用完）':''}</div>`),
+      quotaCell(a,true),
       a.completed_total||0,
       fmt(a.last_used_at),
       noteCell(a)
@@ -579,8 +578,20 @@ function matchGroup(x){
 
 function srcBadge(x){
   if(x.source==='login')return '<span class="badge b-green" title="Google 账号登录">账号登录</span>';
+  if(x.site==='doubao'){
+    const tier={member:'会员',free:'免费号'}[x.tier]||'';
+    return '<span class="badge b-blue" title="doubao.com 账号（Cookie 载入），接 doubao-seedance-* 模型">豆包</span>'
+      +(tier?'<div class="tiny">'+tier+'</div>':'');
+  }
   if(x.source==='cookie')return '<span class="badge b-orange" title="Cookie 载入">Cookie 载入</span>';
   return '<span class="tiny">—</span>';
+}
+/** 剩余额度列：dola 号按点数；豆包号不报剩余，只显示今天出了几条 */
+function quotaCell(x,unit){
+  if(x.site==='doubao')
+    return '<span class="tiny">今日已出 </span><b>'+(x.used_today||0)+'</b><span class="tiny"> 条（豆包按上游额度）</span>';
+  return `<b>${x.remaining}</b> / ${x.limit}`+(unit?'<span class="tiny">（点数/上限）</span>':'')+
+    (x.credit_balance==null?'':`<div class="tiny">上游余额 ${x.credit_balance}${x.credit_balance<2?'（已用完）':''}</div>`);
 }
 async function loadAccounts(){
   const [a,j]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]);
@@ -621,8 +632,7 @@ async function loadAccounts(){
       badge+ipInfo,
       srcBadge(x),
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
-      `<b>${x.remaining}</b> / ${x.limit}`+
-        (x.credit_balance==null?'':`<div class="tiny">上游余额 ${x.credit_balance}${x.credit_balance<2?'（已用完）':''}</div>`),
+      quotaCell(x,false),
       fmt(x.last_used_at),
       fmt(x.created_at),
       noteCell(x),
@@ -758,12 +768,19 @@ let testGenPollTimer=null;
 function stopTestGenPoll(){if(testGenPollTimer){clearInterval(testGenPollTimer);testGenPollTimer=null;}}
 function openTestGen(name){
   stopTestGenPoll();
+  const isDoubao=((allAccounts.find(a=>a.name===name)||{}).site==='doubao');
+  const modelOpts=isDoubao
+    ?`<option value="doubao-seedance-2.0-mini" selected>doubao-seedance-2.0-mini（免费号可用）</option>
+      <option value="doubao-seedance-2.0-fast">doubao-seedance-2.0-fast（免费号可用）</option>
+      <option value="doubao-seedance-2.0">doubao-seedance-2.0（会员，2 倍消耗）</option>
+      <option value="doubao-seedance-2.5">doubao-seedance-2.5（会员，5 倍消耗，最长 30 秒）</option>`
+    :`<option value="seedance-2.0" selected>seedance-2.0</option>
+      <option value="seedance-2.5">seedance-2.5</option>`;
   showDlg(`<h2>测试生成：${esc(name)}</h2>
     <p class="tiny" style="line-height:1.6;margin-bottom:10px">用<strong>该账号</strong>跑一条真实视频生成，验证此号能否成功出片（消耗该账号真实额度）。</p>
     <label>模型</label>
     <select id="tg_model" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
-      <option value="seedance-2.0" selected>seedance-2.0</option>
-      <option value="seedance-2.5">seedance-2.5</option>
+      ${modelOpts}
     </select>
     <label>时长（秒）</label>
     <select id="tg_duration" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
@@ -1100,6 +1117,13 @@ function renderBatchAddForm(){
       <textarea id="f_cookieHeader" rows="10" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-top:4px" placeholder="passport_csrf_token=aaa; sessionid=sid-one; sid_guard=g1
 passport_csrf_token=bbb; sessionid=sid-two"></textarea>
       <div class="hint" style="margin-top:6px">每行一个 Cookie 头，或粘贴浏览器扩展导出的 Cookie JSON 数组（一个数组一个账号，可多段连续粘贴）；自动跳过注释/空行/邮箱行，按 sessionid 去重并自动命名 accN。<br>含 localStorage/sessionStorage/indexedDB 的完整会话请改用「Cookie JSON 文件」模式。</div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px">站点
+        <select id="f_cookieSite" style="width:auto;padding:4px 8px;border:1px solid var(--line);border-radius:6px">
+          <option value="dola" selected>dola.com</option>
+          <option value="doubao">豆包 doubao.com</option>
+        </select>
+        <span class="tiny">只对「Cookie 头」格式生效；Cookie JSON 自带域名，会自动识别</span>
+      </label>
       ${cookieHowto()}
       <label style="display:flex;align-items:flex-start;gap:6px;color:var(--sub);margin:8px 0">
         <input type="checkbox" id="f_cookieHeaderSkip" style="margin-top:2px;width:auto" checked>
@@ -1192,7 +1216,8 @@ async function submitBatchCookieHeader(){
   btn.disabled=true;res.textContent='导入中…';
   try{
     const r=await api('/api/admin/accounts/import-cookies',{method:'POST',body:{
-      text, skip_verify:q('#f_cookieHeaderSkip').checked
+      text, skip_verify:q('#f_cookieHeaderSkip').checked,
+      site:(q('#f_cookieSite')||{}).value||'dola'
     }});
     const lines=[];
     if(r.created&&r.created.length)lines.push('✓ 已创建：'+r.created.join('、'));

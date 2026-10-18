@@ -99,9 +99,11 @@ def use_account(account_id: str) -> Iterator[None]:
 
 
 class PersistentSigner:
-    def __init__(self, script: Path, name: str = "signer"):
+    def __init__(self, script: Path, name: str = "signer", env: dict[str, str] | None = None):
         self.script = Path(script)
         self.name = name
+        # 站点环境变量（BDMS_HOST/BDMS_AID/...）：空 = dola 默认
+        self.env = dict(env or {})
         self._lock = threading.Lock()
         self._proc: subprocess.Popen[str] | None = None
         self._generation = 0
@@ -120,6 +122,7 @@ class PersistentSigner:
 
     def _start(self) -> None:
         env = os.environ.copy()
+        env.update(self.env)
         env["DOLA_SIGNER_DAEMON"] = "1"
         self._queue = queue.Queue()
         self._stderr_tail.clear()
@@ -340,6 +343,7 @@ class PersistentSigner:
             cwd=str(self.script.parent),
             encoding="utf-8",
             errors="replace",
+            env={**os.environ, **self.env} if self.env else None,
         )
         if proc.returncode != 0:
             raise RuntimeError(
@@ -425,11 +429,12 @@ class SignerPool:
     池子只做负载分配，签名语义与单进程完全一致。
     """
 
-    def __init__(self, script: Path, size: int = SIGNER_PROCESSES):
+    def __init__(self, script: Path, size: int = SIGNER_PROCESSES,
+                 env: dict[str, str] | None = None, prefix: str = "signer"):
         size = max(1, int(size))
         self._script = Path(script)
         self._signers = [
-            PersistentSigner(self._script, name=f"signer-{i + 1}")
+            PersistentSigner(self._script, name=f"{prefix}-{i + 1}", env=env)
             for i in range(size)
         ]
         self._lock = threading.Lock()
@@ -499,3 +504,19 @@ def install() -> None:
     signer = get_signer()
     dola_pure_api.set_sign_url_impl(signer)
     return signer
+
+
+_SITE_SIGNERS: dict[str, SignerPool] = {}
+
+
+def install_site(module, site: str, env: dict[str, str]) -> SignerPool:
+    """给另一个站点的协议模块实例（如豆包）装一组独立签名进程：域名/aid 不同，不能和 dola 共用。"""
+    with _SIGNER_LOCK:
+        pool = _SITE_SIGNERS.get(site)
+        if pool is None:
+            size = max(1, min(SIGNER_PROCESSES, int(os.getenv("DOUBAO_SIGNER_PROCESSES", "2") or 2)))
+            pool = SignerPool(signer_script(), size=size, env=env, prefix=f"{site}-signer")
+            _SITE_SIGNERS[site] = pool
+            log.info("BDMS 签名进程池（%s）已就绪：%d 个进程", site, pool.size)
+    module.set_sign_url_impl(pool)
+    return pool

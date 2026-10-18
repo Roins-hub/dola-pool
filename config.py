@@ -371,3 +371,13 @@ THROTTLE_ACCOUNT_STREAK_RESET_SECONDS = int(os.getenv("DOLA_THROTTLE_ACCOUNT_STR
 # 上游明确说「按默认 5 秒为你生成」时不等，直接失败。0 = 不设上限（等到总超时）。
 CAP_30S_GRACE_SECONDS = int(os.getenv("DOLA_30S_CAP_GRACE_SECONDS", "600"))
 PURE_API_POLL_INTERVAL = int(os.getenv("DOLA_PURE_POLL_INTERVAL", "30"))
+
+# ---- 豆包（doubao.com）号 ----
+# 免费额度用完时，豆包问「本次将消耗付费额度，是否继续？」：1 = 自动确认走付费额度；
+# 0 = 不走付费，判这个号今天额度用完、换号。
+DOUBAO_ALLOW_PAID = os.getenv("DOUBAO_ALLOW_PAID", "1") == "1"
+# 豆包号每天最多派几条（本地记账口径，每条记 1）。豆包不报剩余条数，真实额度以上游话术为准
+# （额度用完 / 免费用完且不走付费 → 当天不再派），这个数只是兜底上限。
+DOUBAO_DAILY_LIMIT = max(1, int(os.getenv("DOUBAO_DAILY_LIMIT", "999")))
+# 豆包出片轮询间隔（秒）：确认 / 付费追问要及时回，所以比 dola 的 30 秒短
+DOUBAO_POLL_INTERVAL = max(3, int(os.getenv("DOUBAO_POLL_INTERVAL", "10")))

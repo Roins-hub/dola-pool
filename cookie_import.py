@@ -20,8 +20,15 @@ _EMAIL_CRED_SEP = re.compile(r"@[^@\s]+\.[^@\s]+\s*(?:----|\||,|:|\s)")
 _JSON_BUNDLE_KEYS = ("cookies_list", "cookies")
 
 
-def parse_cookie_header_line(line: str) -> list[dict]:
-    """解析一行 Cookie 头为 name/value 列表，domain 统一 .dola.com。"""
+SITE_DOMAINS = {"dola": ".dola.com", "doubao": ".doubao.com"}
+# 只保留这两个站点的 cookie（扩展导出常带第三方站点）
+_SITE_HOSTS = ("dola.com", "doubao.com")
+
+
+def parse_cookie_header_line(line: str, site: str = "dola") -> list[dict]:
+    """解析一行 Cookie 头为 name/value 列表。Cookie 头本身不带域名，按 site 定：
+    dola → .dola.com，doubao → .doubao.com。"""
+    domain = SITE_DOMAINS.get(site or "dola", ".dola.com")
     line = (line or "").strip().strip(";")
     if not line or line.startswith("#"):
         return []
@@ -43,7 +50,7 @@ def parse_cookie_header_line(line: str) -> list[dict]:
         cookies.append({
             "name": name,
             "value": value,
-            "domain": ".dola.com",
+            "domain": domain,
             "path": "/",
         })
     return cookies
@@ -78,8 +85,8 @@ def _state_from_cookies(cookies: list[dict], header: str = "") -> dict:
 def _cookies_from_json_items(items: list) -> list[dict]:
     """Cookie JSON 对象 → name/value/domain/path。
 
-    只保留 dola 域（与纯 API 路径 apply_state_cookies 的过滤口径一致，避免把扩展导出的
-    第三方站点 cookie 塞进 dola 会话）；扩展导出的其它字段下游用不到，落盘时也只留这四个。
+    只保留 dola / 豆包域（与纯 API 路径 apply_state_cookies 的过滤口径一致，避免把扩展导出的
+    第三方站点 cookie 塞进会话）；扩展导出的其它字段下游用不到，落盘时也只留这四个。
     """
     cookies = []
     for item in items:
@@ -89,7 +96,7 @@ def _cookies_from_json_items(items: list) -> list[dict]:
         if not name:
             continue
         domain = str(item.get("domain") or "").strip() or ".dola.com"
-        if "dola.com" not in domain:
+        if not any(host in domain for host in _SITE_HOSTS):
             continue
         cookies.append({
             "name": name,
@@ -133,11 +140,11 @@ def parse_cookie_json_text(raw: str) -> list[dict]:
     return states
 
 
-def cookie_header_to_state(header: str) -> dict | None:
+def cookie_header_to_state(header: str, site: str = "dola") -> dict | None:
     """把一行 Cookie 头转成 state；非 cookie 头（邮箱凭据/无 =）返回 None。"""
     if _is_email_cred_line(header):
         return None
-    cookies = parse_cookie_header_line(header)
+    cookies = parse_cookie_header_line(header, site)
     if not cookies:
         return None
     return _state_from_cookies(cookies, header.strip().strip(";"))
@@ -147,8 +154,10 @@ def sessionid_from_state(state: dict) -> str:
     return (state.get("cookies") or {}).get("sessionid", {}).get("value", "")
 
 
-def parse_cookie_header_text(raw: str) -> list[dict]:
-    """多行文本 → state 列表；Cookie JSON 数组与 Cookie 头两种格式都支持。"""
+def parse_cookie_header_text(raw: str, site: str = "dola") -> list[dict]:
+    """多行文本 → state 列表；Cookie JSON 数组与 Cookie 头两种格式都支持。
+
+    JSON 自带域名，自动认站点；Cookie 头不带域名，按 site（dola / doubao）定。"""
     raw = (raw or "").lstrip("\ufeff")
     if raw.lstrip().startswith(("[", "{")):
         states = parse_cookie_json_text(raw)
@@ -156,7 +165,7 @@ def parse_cookie_header_text(raw: str) -> list[dict]:
             return states
     states = []
     for line in raw.splitlines():
-        state = cookie_header_to_state(line)
+        state = cookie_header_to_state(line, site)
         if state:
             states.append(state)
     return states

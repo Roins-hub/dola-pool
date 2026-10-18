@@ -41,6 +41,12 @@ import requests
 BASE = "https://www.dola.com"
 AID = "495671"
 BOT_ID = "7339470689562525703"
+# 站点：这份协议代码同时服务 dola.com 和 doubao.com。豆包由 protocol.doubao_site 以**独立模块实例**
+# 加载后改写下面这些常量，两个站点的号同时跑互不影响；这里的默认值就是 dola，行为不变。
+SITE = "dola"
+SITE_HOST = "dola.com"
+COOKIE_DOMAIN = ".dola.com"
+SIGNER_ENV: dict[str, str] = {}
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
@@ -245,7 +251,7 @@ def apply_state(session: requests.Session) -> dict[str, Any]:
     if isinstance(cookies, dict):
         for name, info in cookies.items():
             if isinstance(info, dict):
-                session.cookies.set(name, info.get("value", ""), domain=info.get("domain") or ".dola.com", path=info.get("path") or "/")
+                session.cookies.set(name, info.get("value", ""), domain=info.get("domain") or COOKIE_DOMAIN, path=info.get("path") or "/")
     return state
 
 
@@ -256,12 +262,12 @@ def apply_state_cookies(session: requests.Session, state: dict[str, Any]) -> Non
         for c in cookie_list:
             if not isinstance(c, dict) or not c.get("name"):
                 continue
-            if "dola.com" not in str(c.get("domain") or ""):
+            if SITE_HOST not in str(c.get("domain") or ""):
                 continue
             session.cookies.set(
                 str(c["name"]),
                 str(c.get("value", "")),
-                domain=str(c.get("domain") or ".dola.com"),
+                domain=str(c.get("domain") or COOKIE_DOMAIN),
                 path=str(c.get("path") or "/"),
             )
         return
@@ -272,7 +278,7 @@ def apply_state_cookies(session: requests.Session, state: dict[str, Any]) -> Non
                 session.cookies.set(
                     str(name),
                     str(info.get("value", "")),
-                    domain=str(info.get("domain") or ".dola.com"),
+                    domain=str(info.get("domain") or COOKIE_DOMAIN),
                     path=str(info.get("path") or "/"),
                 )
 
@@ -292,7 +298,7 @@ def state_cookie_header(state: dict[str, Any]) -> str:
             name = str(c.get("name") or "")
             if not name or name in seen:
                 continue
-            if "dola.com" not in str(c.get("domain") or ""):
+            if SITE_HOST not in str(c.get("domain") or ""):
                 continue
             seen.add(name)
             parts.append(f"{name}={c.get('value', '')}")
@@ -400,13 +406,13 @@ def _ensure_spa_cookies(session: requests.Session, ctx: dict[str, str], region: 
             continue
         if session.cookies.get(name):
             continue
-        session.cookies.set(name, value, domain=".dola.com", path="/")
+        session.cookies.set(name, value, domain=COOKIE_DOMAIN, path="/")
 
 
 def save_state(session: requests.Session, ctx: dict[str, str] | None = None, path: Path = SESSION_FILE) -> None:
     cookies: dict[str, dict[str, str]] = {}
     for c in session.cookies:
-        cookies[c.name] = {"value": c.value, "domain": c.domain or ".dola.com", "path": c.path or "/"}
+        cookies[c.name] = {"value": c.value, "domain": c.domain or COOKIE_DOMAIN, "path": c.path or "/"}
     data: dict[str, Any] = {"cookies": cookies, "updated_at": int(time.time())}
     if ctx:
         data["ctx"] = ctx
@@ -483,6 +489,7 @@ def sign_url(url: str, *, method: str = "POST", headers: dict[str, str] | None =
         capture_output=True,
         text=True,
         timeout=20,
+        env={**os.environ, **SIGNER_ENV} if SIGNER_ENV else None,
         cwd=str(SCRIPT_DIR),
         encoding="utf-8",
         errors="replace",
@@ -1729,8 +1736,20 @@ def build_text_block(text: str) -> dict[str, Any]:
     }
 
 
-def build_prompt_text(prompt: str, ratio: str | None) -> str:
+def build_prompt_text(prompt: str, ratio: str | None, duration: int | None = None) -> str:
     prompt = prompt or ""
+    if SITE == "doubao":
+        # 豆包的视频智能体从**消息文字**里读比例和时长（ability_param 里的它不认）：
+        # 不写「，5s」它自己挑时长（实测 5 秒请求被改成 15 秒）；不写「，9:16」它按 16:9 出片。
+        # 网页版的写法就是「生成视频：<提示词>，9:16，5s」；比例「自动」时不写。
+        body = prompt[len("生成视频："):] if prompt.startswith("生成视频：") else prompt
+        ratio_value = normalize_ratio(ratio)
+        parts = [f"生成视频：{body}"]
+        if ratio_value and ratio_value != "auto":
+            parts.append(ratio_value)
+        if duration:
+            parts.append(f"{int(duration)}s")
+        return "，".join(parts)
     ratio_value = normalize_ratio(ratio)
     if ratio_value and ratio_value not in prompt and "画面比例" not in prompt:
         return f"生成视频：{prompt}，{ratio_value}"
@@ -1792,7 +1811,17 @@ def normalize_video_prompt_for_audios(prompt: str, audios: list[UploadedAudio]) 
     return text
 
 
-def build_ability(model: str, duration: int, ratio: str | None) -> dict[str, Any]:
+def build_ability(model: str, duration: int, ratio: str | None, prompt: str = "") -> dict[str, Any]:
+    if SITE == "doubao":
+        # 豆包：模型原样下发（Mini/Fast/2.0/2.5 由调用方定），时长是 4~30 的任意整数；
+        # 网页版还带 input_box_content（输入框原文 + 回显格式），照抄。
+        param: dict[str, Any] = {
+            "ratio": normalize_ratio(ratio) or "auto",
+            "model": model,
+            "duration": int(duration),
+            "input_box_content": {"user_input_content": prompt or "", "reply_message_format": "生成视频：%s"},
+        }
+        return {"ability_type": 17, "ability_param": compact_json(param)}
     duration = normalize_duration(duration, default=duration)
     # 非 2.0 原生档位（含 30）一律走 seedance 2.5。
     if duration not in V20_DURATIONS:
@@ -1829,9 +1858,16 @@ def build_payload(
     local_message_id: str | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     now_ms = int(time.time() * 1000)
-    duration = normalize_duration(duration, default=5)
-    if duration not in V20_DURATIONS:
-        model = SEEDANCE_25
+    if SITE == "doubao":
+        # 豆包原生支持 4~30 秒任意整数：不吸附档位、不强制换 2.5
+        try:
+            duration = max(MIN_DURATION, min(MAX_DURATION, int(duration or 5)))
+        except (TypeError, ValueError):
+            duration = 5
+    else:
+        duration = normalize_duration(duration, default=5)
+        if duration not in V20_DURATIONS:
+            model = SEEDANCE_25
     ratio_value = normalize_ratio(ratio) if video_ability else None
     need_create = (not conversation_id) if need_create_conversation is None else bool(need_create_conversation)
     local_conv_id = local_conversation_id or ("local_" + str(random.randint(10**15, 10**16 - 1)))
@@ -1839,7 +1875,7 @@ def build_payload(
     audios = audios or []
     text_msg_id = str(uuid.uuid4()) if (images or audios) else attachment_msg_id
     collect_id = str(uuid.uuid4())
-    prompt_text = build_prompt_text(prompt, ratio_value) if video_ability else (prompt or "")
+    prompt_text = build_prompt_text(prompt, ratio_value, duration) if video_ability else (prompt or "")
     messages: list[dict[str, Any]] = []
     if images or audios:
         messages.append({
@@ -1908,7 +1944,7 @@ def build_payload(
         "ext": ext,
     }
     if video_ability:
-        payload["chat_ability"] = build_ability(model, duration, ratio_value)
+        payload["chat_ability"] = build_ability(model, duration, ratio_value, prompt=prompt)
     return payload, local_conv_id, attachment_msg_id
 
 
