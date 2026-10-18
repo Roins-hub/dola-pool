@@ -81,7 +81,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.2.10"
+APP_VERSION = "2.2.11"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -3036,6 +3036,20 @@ async def admin_key_patch(key: str, body: KeyPatch,
         fields["expires_at"] = body.expires_at
     store.update_key(key, **fields)
     return {"ok": True}
+
+
+@app.post("/api/admin/keys/delete-batch")
+async def admin_key_delete_batch(body: BatchIds, x_admin_key: str | None = Header(default=None)):
+    """勾选多个 API 密钥一起删（调用方立即失效）；环境变量里的 key 不在列表里，删不到。"""
+    _admin_auth(x_admin_key)
+    deleted, skipped = [], []
+    for key in dict.fromkeys(body.ids):
+        if store.get_key(key):
+            store.delete_key(key)
+            deleted.append(key)
+        else:
+            skipped.append(key[:8] + "…（不存在）")
+    return {"ok": True, "deleted": deleted, "skipped": skipped}
 
 
 @app.delete("/api/admin/keys/{key}")

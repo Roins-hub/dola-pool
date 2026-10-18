@@ -318,7 +318,11 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0">API 密钥</h3>
-        <button class="btn btn-p" onclick="openCreateKey()">＋ 创建密钥</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" onclick="selAllToggle('keys')">全选 / 取消</button>
+          <button class="btn btn-danger" id="delSel_keys" disabled onclick="delSelected('keys')">删除选中</button>
+          <button class="btn btn-p" onclick="openCreateKey()">＋ 创建密钥</button>
+        </div>
       </div>
       <div class="hint" style="margin-bottom:12px">每个 Key 可独立设置每日额度、并发数和允许时长；0 表示不限。环境变量里的 key 始终有效、不在此列表。</div>
       <div id="keysTable"></div>
@@ -537,16 +541,33 @@ function renderEgressWarn(a){
     +t.accounts.length+' 个号暂停派发和探测，约 '+fmtDur(t.remaining)+' 后自动恢复'
     +(t.streak>1?'（连续第 '+t.streak+' 次，退避时间已加倍）':'')+'</div>');
   const warn=a.egress_share_warn||0;
+  const shared=[];
   if(warn>0){
     const groups={};
     accs.forEach(x=>{if(!x.scheduling)return;const e=x.effective_egress||'direct';(groups[e]=groups[e]||[]).push(x.name);});
     Object.entries(groups).filter(([,l])=>l.length>warn).sort((x,y)=>y[1].length-x[1].length).forEach(([e,l])=>{
-      lines.push('<div class="ew ew-yellow">⚠ '+l.length+' 个号共用出口 <b>'+esc(egressLabel(e,accs))+'</b>'
-        +'（建议每个出口不超过 '+warn+' 个）。同一出口的号越多越容易被上游判「访问频繁」(710022002)，'
-        +'请给账号绑定更多不同 IP 的代理'+(e==='direct'?'；服务器不在日本/韩国时必须配代理':'')+'。</div>');
+      shared.push({n:l.length,e});
     });
   }
+  // 出口共用提醒可能有几十条：折叠成一行汇总，点开才看明细；红色的「正在被限流」照常全部显示
+  if(shared.length){
+    const total=shared.reduce((s,x)=>s+x.n,0);
+    const open=egressWarnOpen();
+    lines.push('<details class="ew ew-yellow" '+(open?'open':'')+' ontoggle="egressWarnToggle(this)">'
+      +'<summary style="cursor:pointer">⚠ '+shared.length+' 个出口挂的号太多（共 '+total+' 个号，建议每个出口不超过 '+warn
+      +' 个）。同一出口的号越多越容易被上游判「访问频繁」(710022002)，请给账号绑定更多不同 IP 的代理。'
+      +'<span class="tiny">（点击'+(open?'收起':'展开明细')+'）</span></summary>'
+      +'<div style="margin-top:6px;line-height:1.8">'
+      +shared.map(x=>'· '+x.n+' 个号共用出口 <b>'+esc(egressLabel(x.e,accs))+'</b>'
+        +(x.e==='direct'?'（服务器直连，不在日本/韩国时必须配代理）':'')).join('<br>')
+      +'</div></details>');
+  }
   box.innerHTML=lines.join('');
+}
+function egressWarnOpen(){try{return localStorage.getItem('egressWarnOpen')==='1';}catch(e){return false;}}
+function egressWarnToggle(el){
+  try{localStorage.setItem('egressWarnOpen',el.open?'1':'0');}catch(e){}
+  const hint=el.querySelector('summary .tiny');if(hint)hint.textContent='（点击'+(el.open?'收起':'展开明细')+'）';
 }
 function setGroupFilter(key){groupFilterVal=key;accPage=1;loadAccounts();}
 function setGroupFilterGo(key){groupFilterVal=key;accPage=1;switchTab('accounts');}
@@ -1772,8 +1793,8 @@ async function delProxy(id){
 
 /* ---- 通用多选（代理 / 任务 / 用户）：勾选单个或多个、全选，然后「删除选中」 ----
    选中状态存在 SEL 里，自动刷新重画表格时保持勾选；已经不在列表里（或变成不可删）的自动去掉。 */
-const SEL={proxies:new Set(),tasks:new Set(),users:new Set()};
-const SEL_LABEL={proxies:'个代理',tasks:'条任务',users:'个管理员'};
+const SEL={proxies:new Set(),tasks:new Set(),users:new Set(),keys:new Set()};
+const SEL_LABEL={proxies:'个代理',tasks:'条任务',users:'个管理员',keys:'个 API 密钥'};
 function selBox(kind,id,disabled,why){
   return `<input type="checkbox" data-sel="${kind}" value="${esc(id)}" ${SEL[kind].has(id)?'checked':''}`
     +` ${disabled?'disabled':''} title="${esc(why||'')}" onchange="selToggle('${kind}',this.value,this.checked)">`;
@@ -1810,15 +1831,16 @@ async function delSelected(kind){
     if(bound)tip+='\n其中共绑定了 '+bound+' 个账号，删除后这些账号改回默认代理。';
   }
   if(kind==='tasks')tip+='\n已完成任务的视频文件会一起删除，无法恢复。';
+  if(kind==='keys')tip+='\n用这些密钥的调用方会立即失效。';
   if(!confirm(tip))return;
   const url={proxies:'/api/admin/proxies/delete-batch',tasks:'/api/admin/tasks/delete-batch',
-             users:'/api/admin/users/delete-batch'}[kind];
+             users:'/api/admin/users/delete-batch',keys:'/api/admin/keys/delete-batch'}[kind];
   const body=kind==='users'?{usernames:ids}:{ids};
   let r;
   try{r=await api(url,{method:'POST',body});}catch(e){return alert(e.message);}
   (r.deleted||[]).forEach(id=>SEL[kind].delete(id));
   if(r.skipped&&r.skipped.length)alert('已删除 '+(r.deleted||[]).length+' '+SEL_LABEL[kind]+'；跳过：\n'+r.skipped.join('\n'));
-  ({proxies:loadProxies,tasks:loadTasks,users:loadUsers})[kind]();
+  ({proxies:loadProxies,tasks:loadTasks,users:loadUsers,keys:loadKeys})[kind]();
 }
 
 /* ---- 用户管理 ---- */
@@ -2166,7 +2188,9 @@ async function loadKeys(){
   // 允许时长由后端下发（随 DOLA_NATIVE_DURATION_MAX 变化），不再前端硬编码。
   if(Array.isArray(r.supported_durations)&&r.supported_durations.length)SUPPORTED_DURATIONS=r.supported_durations;
   const mask=k=>'sk-'+k.slice(3,9)+'…'+k.slice(-4);
+  selPrune('keys',r.keys.map(k=>k.key));
   const rows=r.keys.map(k=>[
+    selBox('keys',k.key,false),
     '<span style="font-family:monospace">'+mask(k.key)+'</span>',
     k.name||'—',
     (k.allowed_durations||[]).join(' / ')+' 秒',
@@ -2176,8 +2200,9 @@ async function loadKeys(){
     fmt(k.last_used_at),
     `<button class="btn" style="margin-right:6px" onclick="copyKey('${k.key}')">复制</button><button class="btn" style="margin-right:6px" onclick="openEditKey('${k.key}')">设置</button><button class="btn btn-danger" onclick="delKey('${k.key}')">删除</button>`
   ]);
-  q('#keysTable').innerHTML=table(['Key','名称','允许时长','今日任务','并发','启用','最近使用','操作'],rows)
+  q('#keysTable').innerHTML=table([selAllBox('keys'),'Key','名称','允许时长','今日任务','并发','启用','最近使用','操作'],rows)
     +(r.env_keys>0?`<div class="hint" style="margin-top:10px">另有 ${r.env_keys} 个环境变量 key（永久有效，面板只读）</div>`:'');
+  selUpdate('keys');
 }
 async function setKey(key,on){
   try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{enabled:on}});}catch(e){alert(e.message);}refresh();

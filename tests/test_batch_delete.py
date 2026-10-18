@@ -99,3 +99,14 @@ def test_proxy_batch_delete(server, monkeypatch):
     monkeypatch.setattr(server, "delete_proxy", gone.append)
     r = _run(server.admin_proxy_delete_batch(server.BatchIds(ids=["p1", "p3", "p1", "zz"]), x_admin_key="k"))
     assert gone == ["p1", "p3"] and r["deleted"] == ["p1", "p3"] and r["skipped"] == ["zz"]
+
+
+def test_key_batch_delete(server):
+    """2.2.11：API 密钥勾选多个一起删。"""
+    st = server.store
+    k1 = st.create_key("a")["key"]
+    k2 = st.create_key("b")["key"]
+    k3 = st.create_key("c")["key"]
+    r = _run(server.admin_key_delete_batch(server.BatchIds(ids=[k1, k3, "sk-nope"]), x_admin_key="k"))
+    assert sorted(r["deleted"]) == sorted([k1, k3]) and len(r["skipped"]) == 1
+    assert st.get_key(k1) is None and st.get_key(k3) is None and st.get_key(k2) is not None
