@@ -220,6 +220,57 @@ def _download(dp, session, ctx, conversation_id: str, vid: str, chain: Any, out_
     return Path(saved), url, unwatermarked
 
 
+def _post_plain(dp, session, ctx, endpoint: str, body: dict) -> dict:
+    """网页对 /privacy/* 这类设置接口不加 a_bogus 签名，照抄（签名器也不认这个路径）。"""
+    headers = {**dp.headers_base(f"{dp.BASE}/chat/"), **dp.ajax_headers(),
+               "Accept": "application/json, text/plain, */*", "Content-Type": "application/json",
+               "agw-js-conv": "str"}
+    resp = dp.send_with_cookie_header(session, "POST", dp.build_url(endpoint, ctx), headers=headers,
+                                      data=dp.compact_json(body), timeout=30)
+    return dp.request_json(resp, endpoint)
+
+
+def watermark_off(dp, session, ctx) -> bool | None:
+    """这个号的「AI 生成水印管理 → 图片、视频」是不是「无水印」（读不到返回 None）。
+
+    /creativity/user_config/get 的 config_map["1"].watermark_option.is_on：true = 无水印（2026-10-18 实测：
+    关掉后出片干净；没有这一项 / false = 右下角「豆包AI生成」）。"""
+    data = dp.dola_api_post_json(session, ctx, "/creativity/user_config/get", {}, label="user_config_get",
+                                 referer=f"{dp.BASE}/chat/")
+    config_map = (data.get("data") or {}).get("config_map")
+    if not isinstance(config_map, dict):
+        return None
+    option = ((config_map.get("1") or {}).get("watermark_option") or {})
+    return bool(option.get("is_on"))
+
+
+def set_no_watermark(dp, session, ctx) -> None:
+    """和网页里点「无水印」发的两条请求一样（3-test.har）：隐私设置 object=150 → 1，创作设置 is_on → true。"""
+    _post_plain(dp, session, ctx, "/privacy/watermark_config/set",
+                {"configs": [{"object": 150, "value": 1, "version": 0}]})
+    dp.dola_api_post_json(session, ctx, "/creativity/user_config/set",
+                          {"config_type": 1, "config_value": {"watermark_option": {"is_on": True}}},
+                          label="user_config_set", referer=f"{dp.BASE}/chat/")
+
+
+def ensure_no_watermark(dp, session, ctx, account: str = "") -> bool | None:
+    """读水印设置；没关且 DOUBAO_AUTO_NO_WATERMARK 开着就替号关掉。返回最终是不是「无水印」（读不到 None）。"""
+    try:
+        off = watermark_off(dp, session, ctx)
+    except Exception as exc:  # noqa: BLE001 - 读设置失败不影响出片
+        log.info("doubao 水印设置读取失败 %s: %s", account, str(exc)[:160])
+        return None
+    if off or off is None or not config.DOUBAO_AUTO_NO_WATERMARK:
+        return off
+    try:
+        set_no_watermark(dp, session, ctx)
+        off = watermark_off(dp, session, ctx)
+        log.info("doubao %s 已关闭 AI 生成明水印 → %s", account, "成功" if off else "未生效")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("doubao %s 关闭水印失败: %s", account, str(exc)[:160])
+    return off
+
+
 def _check_login(dp, session, ctx) -> tuple[bool, str]:
     """用额度查询接口判登录（不发消息、不花额度）。返回 (已登录, 原因)。"""
     resp = dp.dola_api_post_response(session, ctx, "/alice/commerce/sale/subscription/quota/summary/",
@@ -259,11 +310,14 @@ def hello_probe(state_file, proxy: str = "", **_ignored) -> dict[str, Any]:
     dp = _site()
     session = None
     status, login_ok, reason = "error", False, ""
+    no_watermark = None
     try:
         _load_state(Path(state_file))
         session, ctx, _ = _session(dp, state_file, proxy)
         login_ok, reason = _check_login(dp, session, ctx)
         status = "ok" if login_ok else "logged_out"
+        if login_ok:
+            no_watermark = ensure_no_watermark(dp, session, ctx)
     except Exception as exc:  # noqa: BLE001
         reason = str(exc).replace("\n", " ")[:200] or exc.__class__.__name__
     finally:
@@ -271,7 +325,7 @@ def hello_probe(state_file, proxy: str = "", **_ignored) -> dict[str, Any]:
             session.close()
     return {"ok": status == "ok", "status": status, "login_ok": login_ok, "replied": login_ok,
             "reason": "豆包登录有效" if status == "ok" else reason, "reply": "",
-            "elapsed": round(time.time() - started, 2)}
+            "no_watermark": no_watermark, "elapsed": round(time.time() - started, 2)}
 
 
 def generate_doubao_video(
@@ -307,6 +361,8 @@ def generate_doubao_video(
     dp = _site()
     session, ctx, headers = _session(dp, state_file, proxy)
     try:
+        # 水印是按号的设置，出片时生效：提交前确认这个号已关（没关就替它关）
+        no_watermark = ensure_no_watermark(dp, session, ctx, account)
         images: list[dict[str, Any]] = []
         for path in (dp.normalize_image_paths(reference_image_paths) if reference_image_paths else []):
             try:
@@ -429,7 +485,9 @@ def generate_doubao_video(
             "model": upstream_model,
             "pure_api": True,
             "site": sites.DOUBAO,
-            "unwatermarked": unwatermarked,
+            # 下载接口对没关水印的号也会给「无水印」地址，但画面里照样有「豆包AI生成」：以号的设置为准
+            "unwatermarked": bool(unwatermarked and no_watermark),
+            "no_watermark_setting": no_watermark,
             "doubao_paid": paid,
             "credits_used": None,
             "credits_left": None,

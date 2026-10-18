@@ -178,9 +178,29 @@ class _FakeDP:
     def find_latest_message_index(self, chain):
         return 9
 
+    watermark_is_on = True        # 号的「无水印」设置（True = 已关明水印）
+    settings_posts: list = []
+
     def dola_api_post_json(self, session, ctx, endpoint, body, **k):
+        if endpoint == "/creativity/user_config/get":
+            cm = {"2": {"portrait_auth": {"status": 0}}}
+            if self.watermark_is_on is not None:
+                cm["1"] = {"watermark_option": {"is_on": self.watermark_is_on}}
+            return {"code": 0, "data": {"config_map": cm}}
+        if endpoint == "/creativity/user_config/set":
+            self.settings_posts.append((endpoint, body))
+            self.watermark_is_on = body["config_value"]["watermark_option"]["is_on"]
+            return {"code": 0}
         assert endpoint == "/creativity/resource/get_without_watermark"
         return {"code": 0, "data": {"download_video": {"v0abc": {"download_url": "https://cdn/x.mp4", "duration": 5.05}}}}
+
+    def send_with_cookie_header(self, session, method, url, **k):
+        assert "/privacy/watermark_config/set" in url
+        self.settings_posts.append(("/privacy/watermark_config/set", json.loads(k["data"])))
+        return types.SimpleNamespace(status_code=200, text='{"code":0}', json=lambda: {"code": 0})
+
+    def request_json(self, resp, label):
+        return resp.json()
 
     def download_video(self, url, path, **k):
         Path(path).write_bytes(b"mp4")
@@ -330,3 +350,24 @@ def test_doubao_quota_error_marks_daily_limit(tmp_path, monkeypatch):
     assert res["account"] == "db2"
     rows = {a["name"]: a for a in bp.list_accounts()}
     assert rows["db1"]["rate_limited"]
+
+
+def test_flow_turns_off_watermark_before_submit(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "DOUBAO_AUTO_NO_WATERMARK", True)
+    dp = _FakeDP([(0, CONFIRM, []), (1, FREE_ACCEPTED, [])], vid_after=1)
+    dp.watermark_is_on = None          # 免费号默认：配置里没有这一项 = 有「豆包AI生成」
+    dp.settings_posts = []
+    res = _gen(monkeypatch, tmp_path, dp)
+    assert [e for e, _ in dp.settings_posts] == ["/privacy/watermark_config/set", "/creativity/user_config/set"]
+    assert dp.settings_posts[0][1] == {"configs": [{"object": 150, "value": 1, "version": 0}]}
+    assert res["unwatermarked"] is True and res["no_watermark_setting"] is True
+
+
+def test_flow_keeps_watermark_setting_when_auto_disabled(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "DOUBAO_AUTO_NO_WATERMARK", False)
+    dp = _FakeDP([(0, CONFIRM, []), (1, FREE_ACCEPTED, [])], vid_after=1)
+    dp.watermark_is_on = False
+    dp.settings_posts = []
+    res = _gen(monkeypatch, tmp_path, dp)
+    assert dp.settings_posts == []
+    assert res["unwatermarked"] is False        # 下载接口说「无水印」也不算：号的设置没关

@@ -166,7 +166,8 @@ Content-Type: application/json
 
 - 只派给号池里的豆包号（doubao.com 的 Cookie 导入）；没有豆包号时报 `号池里没有豆包号…`。
 - 时长超范围直接 `422 doubao-seedance-2.0-mini 支持 4~15 秒（收到 20 秒）`；API Key 的时长白名单只约束 5/10/15/30 这几个档位。
-- 成片无水印；免费额度用完后按 `DOUBAO_ALLOW_PAID` 决定是否走付费额度。
+- 水印按号设置：`DOUBAO_AUTO_NO_WATERMARK=1`（默认）时号池自动替号关掉「AI 生成」明水印，成片干净；
+  免费额度用完后按 `DOUBAO_ALLOW_PAID` 决定是否走付费额度。
 
 ### 2.2 尺寸 → 画幅
 

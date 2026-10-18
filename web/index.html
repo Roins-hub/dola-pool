@@ -580,8 +580,11 @@ function srcBadge(x){
   if(x.source==='login')return '<span class="badge b-green" title="Google 账号登录">账号登录</span>';
   if(x.site==='doubao'){
     const tier={member:'会员',free:'免费号'}[x.tier]||'';
+    const wm=x.no_watermark==null?'':(x.no_watermark
+      ?'<div class="tiny" title="豆包「AI 生成水印管理」已设为无水印">无水印 ✓</div>'
+      :'<div class="tiny" style="color:var(--red)" title="出片右下角会有「豆包AI生成」。DOUBAO_AUTO_NO_WATERMARK=1 时下次探测/出片会自动关；也可在豆包设置 → AI 生成水印管理 里手动关">⚠ 未关水印</div>');
     return '<span class="badge b-blue" title="doubao.com 账号（Cookie 载入），接 doubao-seedance-* 模型">豆包</span>'
-      +(tier?'<div class="tiny">'+tier+'</div>':'');
+      +(tier?'<div class="tiny">'+tier+'</div>':'')+wm;
   }
   if(x.source==='cookie')return '<span class="badge b-orange" title="Cookie 载入">Cookie 载入</span>';
   return '<span class="tiny">—</span>';

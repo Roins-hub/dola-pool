@@ -82,7 +82,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.1"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 

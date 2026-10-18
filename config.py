@@ -379,5 +379,9 @@ DOUBAO_ALLOW_PAID = os.getenv("DOUBAO_ALLOW_PAID", "1") == "1"
 # 豆包号每天最多派几条（本地记账口径，每条记 1）。豆包不报剩余条数，真实额度以上游话术为准
 # （额度用完 / 免费用完且不走付费 → 当天不再派），这个数只是兜底上限。
 DOUBAO_DAILY_LIMIT = max(1, int(os.getenv("DOUBAO_DAILY_LIMIT", "999")))
+# 豆包「AI 生成水印管理 → 图片、视频」是**按号**的设置，默认有「豆包AI生成」明水印。1 = 探测 / 出片前
+# 发现没关就用豆包官方设置接口替这个号关掉（和在网页里点「无水印」一样）；0 = 不动，只在面板上提示。
+# 注意：关掉明水印后，视频公开发布时要由发布方自行标注「AI 生成」（豆包设置页里的法规说明）。
+DOUBAO_AUTO_NO_WATERMARK = os.getenv("DOUBAO_AUTO_NO_WATERMARK", "1") == "1"
 # 豆包出片轮询间隔（秒）：确认 / 付费追问要及时回，所以比 dola 的 30 秒短
 DOUBAO_POLL_INTERVAL = max(3, int(os.getenv("DOUBAO_POLL_INTERVAL", "10")))

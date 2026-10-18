@@ -1,5 +1,16 @@
 # 更新日志
 
+## 2.3.1 — 2026-10-18
+
+- **豆包号自动关「AI 生成」明水印**：豆包的「AI 生成」明水印是按号的设置（免费号默认开着；只走下载接口不够，画面里照样有「豆包AI生成」）。
+  探测 / 出片前读 `/creativity/user_config/get`，没关且 `DOUBAO_AUTO_NO_WATERMARK=1`（默认）就照网页的两条请求
+  （`/privacy/watermark_config/set` object 150 → 1、`/creativity/user_config/set` is_on → true）替号关掉；
+  免费号关掉后实测出片干净。状态记在 `accounts_meta.no_watermark`，面板显示「无水印 ✓ / ⚠ 未关水印」。
+- 更正 2.3.0 的说法：下载接口对没关水印的号也会返回「无水印」标记，但画面右下角照样有「豆包AI生成」；
+  结果里的 `unwatermarked` 现在以号的水印设置为准。
+- 新配置 `DOUBAO_AUTO_NO_WATERMARK`（默认 1；0 = 不替号改设置，只在面板提示）。
+- 测试：`tests/test_doubao.py` +2（共 16 条）。
+
 ## 2.3.0 — 2026-10-18
 
 **号池支持豆包（doubao.com）的号。** dola.com 是豆包的海外版，网页接口同一套，所以协议层复用：
@@ -11,7 +22,7 @@
   - 「请先确认参数」→ 核对时长 / 模型一致才回「确认生成」，不一致不确认（不扣额度）；
   - 「免费额度已用完，将消耗付费额度，是否继续？」→ `DOUBAO_ALLOW_PAID=1`（默认）自动确认，`0` 则当天不再用这个号；
   - 免费号请求 2.0 / 2.5 时「当前无法使用 Seedance 2.5，是否改用 Mini？」→ **绝不确认**，记为免费号、换会员号；
-  - 出片后走豆包官方 `/creativity/resource/get_without_watermark` 下载**无水印**原片。
+  - 出片后走豆包官方 `/creativity/resource/get_without_watermark` 下载原片（水印见 2.3.1）。
 - 协议层：`protocol/doubao_site.py` 把 `dola_pure_api.py` 再加载一份**独立模块实例**并改写域名 / aid / bot_id / 上传机房，
   两个站点的号在同一进程并发互不影响；签名器 `bdms_sign_url.js` 的域名 / aid 改由环境变量决定，豆包单独一组签名进程。
   dola 的默认值与行为不变。

@@ -354,6 +354,8 @@ class BrowserPool:
             ("throttle_last", "REAL DEFAULT 0"),       # 最近一次被限流的时间
             # ---- 2.3.0：豆包号会员档（member / free / 空=未知），决定能不能接 2.0 标准版、2.5 ----
             ("tier", "TEXT DEFAULT ''"),
+            # 豆包号「AI 生成水印」设置：1 = 已关（无水印），0 = 没关，NULL = 还没读过
+            ("no_watermark", "INTEGER"),
         ):
             try:
                 self._conn.execute(f"ALTER TABLE accounts_meta ADD COLUMN {column} {definition}")
@@ -703,6 +705,7 @@ class BrowserPool:
             out.append({
                 "site": site,
                 "tier": (m["tier"] if m and "tier" in m.keys() else "") or "",
+                "no_watermark": (m["no_watermark"] if m and "no_watermark" in m.keys() else None),
                 "name": a,
                 "scheduling": bool(m["scheduling"]) if m else True,
                 "note": m["note"] if m else "",
@@ -864,6 +867,9 @@ class BrowserPool:
             # 限流类失败不进缓存：出口恢复后要能立刻重探，而不是被 5 分钟缓存挡住
             self._probe_cache[name] = (time.time(), result)
         self._ensure_meta(name)
+        if result.get("no_watermark") is not None:
+            self._conn.execute("UPDATE accounts_meta SET no_watermark=? WHERE name=?",
+                               (1 if result["no_watermark"] else 0, name))
         if result.get("ok"):
             self.clear_egress_throttle(name)
             self._clear_throttle_abnormal(name)
@@ -1963,6 +1969,9 @@ class BrowserPool:
                             self._conn.commit()
                             if member_only and a.get("tier") != "member":
                                 self.set_tier(account, "member")
+                            if result.get("no_watermark_setting") is not None:
+                                self._conn.execute("UPDATE accounts_meta SET no_watermark=? WHERE name=?",
+                                                   (1 if result["no_watermark_setting"] else 0, account))
                             self._fail_streak.pop(account, None)   # 出片成功 → 连续失败清零
                             self._reset_throttle_streak(account)   # 连续限流计数也清零
                             self.clear_egress_throttle(account)    # 出口走通 → 退避清零
