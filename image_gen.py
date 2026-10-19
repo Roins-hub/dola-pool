@@ -1,15 +1,15 @@
-"""dola / 豆包号的纯 API 生图（Seedream）。
+"""豆包号的纯 API 生图（Seedream）。
 
-两个站点同一套协议（2026-10-19 抓包）：
-- 提交：/chat/completion，消息文字「生成图片：<提示词>」，
-  chat_ability = {"ability_type": 3, "ability_param": "{\"ability_param\":{\"model\":\"Seedream 5.0 Pro\",
+协议（2026-10-19 抓包）：
+- 提交：/chat/completion，消息文字「生成图片：<提示词>，<比例>」，
+  chat_ability = {"ability_type": 3, "ability_param": "{\"ability_param\":{\"model\":\"Seedream 5.0 Flash\",
   \"ratio\":\"16:9\",\"input_box_content\":{...}},\"ability_type\":1}"}；模型名就是网页显示名。
 - 没有确认步骤：图片直接在这次请求的流式回复里回来（creation_block → creations[].image），
-  dola 一次 4 张、豆包一次 1 张，2048 级分辨率。流里没拿到再去会话里找。
-- 下载：豆包走官方 /creativity/resource/get_without_watermark（{"uri": [图片 key]}），号关了
-  「AI 生成水印」就是干净图（复用视频那套自动关水印）；dola 取回复里的正式下载原图（image_ori），
-  右下角带「Dola AI」标识（2026-10-19 实测）。预览图 / raw 版本虽然没有标识，但那不是平台给的下载版本，
-  不拿它们来绕开标识。
+  一次 1 张、2K 级分辨率。流里没拿到再去会话里找。
+- 下载：官方 /creativity/resource/get_without_watermark（{"uri": [图片 key]}）。号在豆包设置里关了
+  「AI 生成水印」就是干净图（复用视频那套自动关水印）；接口失败时退回回复里的正式下载原图（带标识）。
+
+dola 网页的生图同一套协议，但 dola 的下载图带「Dola AI」标识、且没有官方关闭开关，所以不接 dola 生图。
 """
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ from pure_api_gen import PureApiError, PureLoginExpired, _load_state
 
 log = logging.getLogger("dola.image")
 
-# 平台给的正式下载版（网页「下载」用的就是它）
-DOLA_IMAGE_VARIANTS = ("image_ori",)
+# 无水印接口失败时退回的版本：平台给的正式下载原图（带标识）
+FALLBACK_VARIANTS = ("image_ori",)
 IMAGE_TIMEOUT = 180
 
 
@@ -38,23 +38,15 @@ class ImageRefusedError(PureApiError):
 
 
 def _site_module(site: str):
-    if site == sites.DOUBAO:
-        from doubao_gen import _site
-        return _site()
-    from pure_api_gen import _dola
-    from pure_signer import install
-    module = _dola()
-    install()
-    return module
+    if site != sites.DOUBAO:
+        raise PureApiError(f"生图只支持豆包号（收到站点 {site}）")
+    from doubao_gen import _site
+    return _site()
 
 
 def _session(dp, site: str, state_file, proxy: str):
-    if site == sites.DOUBAO:
-        from protocol import doubao_site
-        region, pc_version = doubao_site.REGION, doubao_site.PC_VERSION
-    else:
-        region, pc_version = config.PURE_API_REGION, config.PURE_API_PC_VERSION
-    return dp.setup_session(region=region, pc_version=pc_version, proxy=proxy or "",
+    from protocol import doubao_site
+    return dp.setup_session(region=doubao_site.REGION, pc_version=doubao_site.PC_VERSION, proxy=proxy or "",
                             login_pure=True, login_state_file=str(state_file))
 
 
@@ -218,7 +210,7 @@ def generate_image(*, account: str, prompt: str, model: str, cookie_state_path,
             url = clean.get(img["key"]) or ""
             source = "get_without_watermark" if url else ""
             if not url:
-                for variant in DOLA_IMAGE_VARIANTS:
+                for variant in FALLBACK_VARIANTS:
                     if img["urls"].get(variant):
                         url, source = img["urls"][variant], variant
                         break
@@ -229,10 +221,7 @@ def generate_image(*, account: str, prompt: str, model: str, cookie_state_path,
                           "height": img.get("height"), "source": source})
         if not saved:
             raise PureApiError(f"{account} 出图了但拿不到下载地址")
-        if site == sites.DOUBAO:
-            unwatermarked = bool(no_watermark) and bool(clean) and without_watermark
-        else:
-            unwatermarked = False       # dola 下载原图带「Dola AI」标识
+        unwatermarked = bool(no_watermark) and bool(clean) and without_watermark
         return {"images": saved, "account": account, "conversation_id": conversation_id,
                 "model": upstream, "site": site, "ratio": ratio_value, "reply": reply[:300],
                 "unwatermarked": unwatermarked, "elapsed": round(time.time() - started, 1)}

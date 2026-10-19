@@ -173,9 +173,8 @@ Content-Type: application/json
 
 ### 2.1.2 生图（2.4.0 起）
 
-见 README「生图（Seedream）」：`POST /v1/images/generations`、`POST /v1/images/edits`，
-模型 `dola-seedream-5.0-pro / dola-seedream-4.5`（dola 号，一次 4 张，带「Dola AI」标识）、
-`doubao-seedream-5.0-flash / -5.0-pro / -4.5 / -4.0`（豆包号，一次 1 张，号关了 AI 水印即无水印）。
+见 README「生图（Seedream）」：`POST /v1/images/generations`、`POST /v1/images/edits`，只接豆包号，
+模型 `doubao-seedream-5.0-flash / -5.0-pro / -4.5 / -4.0`（一次 1 张，号关了 AI 水印即无水印）。
 
 ```bash
 curl https://your-domain/v1/images/generations -H "Authorization: Bearer sk-xxx" -H "Content-Type: application/json" \

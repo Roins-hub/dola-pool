@@ -1,4 +1,4 @@
-"""2.4.0：dola / 豆包号生图（Seedream）。请求体与回复结构取自 2026-10-19 网页抓包。"""
+"""2.4.0：豆包号生图（Seedream，只接豆包）。请求体与回复结构取自 2026-10-19 网页抓包。"""
 from __future__ import annotations
 
 import asyncio
@@ -56,15 +56,18 @@ def _creation(key, *, final=True):
 
 
 def test_image_models_and_ratio_mapping():
-    assert sites.image_spec("dola-seedream-5.0-pro") == ("dola", "Seedream 5.0 Pro", sites.DOLA_IMAGE_RATIOS)
-    assert sites.image_spec("DOUBAO_SEEDREAM_5.0_FLASH")[1] == "Seedream 5.0 Flash"
+    assert sites.image_spec("DOUBAO_SEEDREAM_5.0_FLASH") == ("doubao", "Seedream 5.0 Flash", sites.DOUBAO_IMAGE_RATIOS)
+    assert set(sites.IMAGE_MODELS) == {"doubao-seedream-5.0-flash", "doubao-seedream-5.0-pro",
+                                       "doubao-seedream-4.5", "doubao-seedream-4.0"}
+    # 不接 dola 生图
+    assert not sites.is_image_model("dola-seedream-5.0-pro")
     assert not sites.is_image_model("seedance-2.5")
-    # OpenAI size → 站点支持的最接近比例；dola 没有 3:2 和「自动」
-    assert sites.pick_image_ratio(size="1536x1024", allowed=sites.DOLA_IMAGE_RATIOS) == "4:3"
-    assert sites.pick_image_ratio(size="1536x1024", allowed=sites.DOUBAO_IMAGE_RATIOS) == "3:2"
-    assert sites.pick_image_ratio("9:16", allowed=sites.DOUBAO_IMAGE_RATIOS) == "9:16"
-    assert sites.pick_image_ratio(None, None, sites.DOLA_IMAGE_RATIOS) is None
-    assert sites.pick_image_ratio(None, "auto", sites.DOUBAO_IMAGE_RATIOS) == "auto"
+    # OpenAI size → 最接近的比例；都没给 → 自动
+    assert sites.pick_image_ratio(size="1536x1024") == "3:2"
+    assert sites.pick_image_ratio(size="1024x1792") == "9:16"
+    assert sites.pick_image_ratio("9:16") == "9:16"
+    assert sites.pick_image_ratio(None, None) == "auto"
+    assert sites.pick_image_ratio(None, "auto") == "auto"
 
 
 def test_payload_hook_matches_web_request():
@@ -167,15 +170,26 @@ def test_doubao_image_uses_official_clean_url(monkeypatch, tmp_path):
     assert res["unwatermarked"] is True and res["ratio"] == "16:9" and len(res["images"]) == 1
 
 
-def test_dola_image_takes_original_and_honours_n(monkeypatch, tmp_path):
+def test_clean_url_failure_falls_back_to_official_download(monkeypatch, tmp_path):
     import image_gen
-    dp = _FakeDP([{"content_block": [_creation(k) for k in ("a", "b", "c", "d")]}])
+    dp = _FakeDP([{"content_block": [_creation("a"), _creation("b")]}])
     state, got = _patch(monkeypatch, tmp_path, dp)
-    res = image_gen.generate_image(account="a1", prompt="猫", model="dola-seedream-4.5",
-                                   cookie_state_path=state, n=2, output_dir=tmp_path)
-    assert dp.wm_calls == []                     # dola 不走豆包的无水印接口
-    assert got == ["https://cdn/a~dld_wm", "https://cdn/b~dld_wm"]
-    assert len(res["images"]) == 2 and res["site"] == "dola" and res["unwatermarked"] is False
+
+    def broken(*a, **k):
+        raise RuntimeError("无水印接口挂了")
+
+    dp.dola_api_post_json = broken
+    res = image_gen.generate_image(account="d1", prompt="猫", model="doubao-seedream-4.5",
+                                   cookie_state_path=state, n=1, output_dir=tmp_path)
+    # 退回平台的正式下载原图（带标识），绝不拿预览图 / raw 版本
+    assert got == ["https://cdn/a~dld_wm"]
+    assert len(res["images"]) == 1 and res["unwatermarked"] is False
+
+
+def test_non_doubao_site_rejected():
+    import image_gen
+    with pytest.raises(image_gen.PureApiError):
+        image_gen._site_module("dola")
 
 
 def test_no_image_with_reply_is_refusal(monkeypatch, tmp_path):
@@ -183,11 +197,11 @@ def test_no_image_with_reply_is_refusal(monkeypatch, tmp_path):
     dp = _FakeDP([], reply="这个请求涉及真实人物，无法生成")
     state, _ = _patch(monkeypatch, tmp_path, dp)
     with pytest.raises(image_gen.ImageRefusedError):
-        image_gen.generate_image(account="a1", prompt="x", model="dola-seedream-4.5",
+        image_gen.generate_image(account="a1", prompt="x", model="doubao-seedream-4.5",
                                  cookie_state_path=state, output_dir=tmp_path, timeout=1)
 
 
-def _pool(tmp_path, monkeypatch, dola=("acc1", "acc2"), doubao=("db1",)):
+def _pool(tmp_path, monkeypatch, dola=("acc1",), doubao=("db1", "db2")):
     import browser_pool
     monkeypatch.setattr(config, "POOL_DB_PATH", str(tmp_path / "pool.db"))
     monkeypatch.setattr(config, "PURE_API_ENABLED", True)
@@ -215,16 +229,14 @@ def test_pool_routes_image_by_site_and_retries(tmp_path, monkeypatch):
 
     def fake(**k):
         calls.append(k["account"])
-        if k["account"] == "acc1":
-            raise image_gen.PureApiError("acc1 生图提交失败: 网络抖动")
+        if k["account"] == "db1":
+            raise image_gen.PureApiError("db1 生图提交失败: 网络抖动")
         return {"images": [{"local_path": "x.png"}], "account": k["account"], "model": k["model"]}
 
     monkeypatch.setattr(image_gen, "generate_image", fake)
-    res = _run(bp.generate_image("猫", "dola-seedream-4.5"))
-    assert res["account"] == "acc2" and calls == ["acc1", "acc2"]
-    calls.clear()
     res = _run(bp.generate_image("猫", "doubao-seedream-4.0"))
-    assert calls == ["db1"]
+    # 只用豆包号，dola 号 acc1 不参与
+    assert res["account"] == "db2" and calls == ["db1", "db2"]
     # 拒稿不换号
     def refuse(**k):
         calls.append(k["account"])
@@ -232,7 +244,7 @@ def test_pool_routes_image_by_site_and_retries(tmp_path, monkeypatch):
     monkeypatch.setattr(image_gen, "generate_image", refuse)
     calls.clear()
     with pytest.raises(image_gen.ImageRefusedError):
-        _run(bp.generate_image("x", "dola-seedream-4.5"))
+        _run(bp.generate_image("x", "doubao-seedream-4.5"))
     assert len(calls) == 1
 
 

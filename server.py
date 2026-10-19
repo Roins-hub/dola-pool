@@ -1464,7 +1464,7 @@ async def get_video_content(task_id: str, authorization: str | None = Header(def
 
 
 class ImageGenRequest(BaseModel):
-    model: str = "dola-seedream-4.5"
+    model: str = "doubao-seedream-5.0-flash"
     prompt: str = Field(..., min_length=1)
     n: int | None = Field(None, ge=1, le=4)
     size: str | None = None
@@ -1534,7 +1534,7 @@ async def _generate_images(client, raw: dict) -> dict:
 
 @app.post("/v1/images/generations")
 async def create_image(request: Request, authorization: str | None = Header(default=None)):
-    """OpenAI 兼容生图（同步返回）：dola-seedream-* 派给 dola 号，doubao-seedream-* 派给豆包号。"""
+    """OpenAI 兼容生图（同步返回）：doubao-seedream-* 派给豆包号（只接豆包生图）。"""
     client = _auth(authorization)
     try:
         raw = await request.json()
@@ -1570,9 +1570,8 @@ async def list_models():
             {"id": name, "object": "model", "owned_by": "dola-pool-doubao", "created": 0}
             for name in sites.DOUBAO_MODELS
         ] + [
-            {"id": name, "object": "model", "created": 0,
-             "owned_by": "dola-pool-doubao" if spec[0] == sites.DOUBAO else "dola-pool"}
-            for name, spec in sites.IMAGE_MODELS.items()
+            {"id": name, "object": "model", "owned_by": "dola-pool-doubao", "created": 0}
+            for name in sites.IMAGE_MODELS
         ],
     }
 

@@ -90,15 +90,12 @@ def site_of_state_file(path) -> str:
     return site
 
 
-# ---------------------------------------------------------------- 生图模型（2.4.0）
-# 对外模型名 → (站点, 上游模型名（网页显示名，原样下发）, 支持的比例)
-# 2026-10-19 网页配置：dola 只有 5.0 Pro / 4.5，比例 6 档、一次出 4 张；
-# 豆包多了 5.0 Flash / 4.0、「自动」和 3:2，一次出 1 张。
-DOLA_IMAGE_RATIOS = ("1:1", "2:3", "3:4", "4:3", "9:16", "16:9")
+# ---------------------------------------------------------------- 生图模型（2.4.0，只接豆包）
+# 对外模型名 → (站点, 上游模型名（网页显示名，原样下发）, 支持的比例)。2026-10-19 豆包网页配置：
+# 5.0 Flash / 5.0 Pro / 4.5 / 4.0，比例「自动」+ 7 档，一次出 1 张。
+# dola 的下载图带「Dola AI」标识且没有官方关闭开关，所以不接 dola 生图。
 DOUBAO_IMAGE_RATIOS = ("auto", "9:16", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9")
 IMAGE_MODELS: dict[str, tuple[str, str, tuple[str, ...]]] = {
-    "dola-seedream-5.0-pro": (DOLA, "Seedream 5.0 Pro", DOLA_IMAGE_RATIOS),
-    "dola-seedream-4.5": (DOLA, "Seedream 4.5", DOLA_IMAGE_RATIOS),
     "doubao-seedream-5.0-flash": (DOUBAO, "Seedream 5.0 Flash", DOUBAO_IMAGE_RATIOS),
     "doubao-seedream-5.0-pro": (DOUBAO, "Seedream 5.0 Pro", DOUBAO_IMAGE_RATIOS),
     "doubao-seedream-4.5": (DOUBAO, "Seedream 4.5", DOUBAO_IMAGE_RATIOS),
@@ -123,10 +120,8 @@ def _ratio_value(text: str) -> float | None:
         return None
 
 
-def pick_image_ratio(ratio=None, size=None, allowed: tuple[str, ...] = DOLA_IMAGE_RATIOS) -> str | None:
-    """请求里的 ratio（如 16:9）或 OpenAI 的 size（如 1536x1024）→ 站点支持的最接近比例。
-
-    都没给：豆包用「自动」，dola 不传（网页默认）。"""
+def pick_image_ratio(ratio=None, size=None, allowed: tuple[str, ...] = DOUBAO_IMAGE_RATIOS) -> str | None:
+    """请求里的 ratio（如 16:9）或 OpenAI 的 size（如 1536x1024）→ 支持的最接近比例；都没给用「自动」。"""
     raw = str(ratio or "").strip().lower()
     if raw in ("auto", "自动") and "auto" in allowed:
         return "auto"

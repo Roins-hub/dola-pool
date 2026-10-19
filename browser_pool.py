@@ -1606,7 +1606,7 @@ class BrowserPool:
                              size: str | None = None, n: int | None = None,
                              reference_image_paths: list[str] | None = None,
                              max_attempts: int = 3, deadline: float | None = None) -> dict:
-        """生图：按模型挑对应站点（dola / 豆包）的纯 API 号，失败换号（最多 max_attempts 个号）。
+        """生图（只接豆包）：挑豆包的纯 API 号，失败换号（最多 max_attempts 个号）。
 
         生图额度和视频点数是否共用还没实测清楚，所以**不记视频点数、不按点数分组挑号**：
         只跳过风控 / 待激活 / 异常 / 调度关闭 / 出口限流中 / 正在出片（同号互斥）的号。
