@@ -1,5 +1,18 @@
 # 更新日志
 
+## 2.4.1 — 2026-10-19
+
+**Docker 部署 + GitHub Actions。**
+
+- `Dockerfile`（Python 3.12-slim + Node 18 + ffmpeg，只跑纯 API、不装浏览器）、`docker-compose.yml`、`docker/entrypoint.sh`、
+  `.dockerignore`。数据全部在 `/data`：数据库 / 成片 / 参考图 / 缩略图走 `DOLA_*_PATH|DIR` 环境变量，
+  `accounts/` 和 `cred.key` / `creds.json` 用软链接指过去；带 `HEALTHCHECK`（`/health`）。
+- `.github/workflows/tests.yml`：推送 main / 提 PR 时用 Python 3.12 跑 `pytest`。
+- `.github/workflows/docker.yml`：打 `v*` 标签时构建镜像并发布到 `ghcr.io/<owner>/dola-pool`（`:2.4.1`、`:2.4`、`:latest`），
+  也可在 Actions 页面手动运行。
+- 实测：镜像 1.63 GB；容器内 `/health`、模型列表、面板、dola / 豆包两个签名器、`/data` 落盘均正常。
+- README 增加「Docker 部署」一节。
+
 ## 2.4.0 — 2026-10-19
 
 **生图（Seedream），只接豆包号。** 2026-10-19 抓了豆包网页文生图 + 参考图改图的包：

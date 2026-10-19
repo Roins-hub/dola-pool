@@ -1,0 +1,16 @@
+# docker compose up -d   启动；docker compose pull && docker compose up -d   升级
+# 配置照 deploy/dola.env.example 写一份 dola.env 放在本文件旁边；数据都在 ./data（账号、数据库、成片）。
+services:
+  dola-pool:
+    image: ghcr.io/roins-hub/dola-pool:latest
+    # 想用本地代码构建镜像就把上一行注释掉、打开下一行：
+    # build: .
+    container_name: dola-pool
+    restart: unless-stopped
+    env_file: dola.env
+    environment:
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data

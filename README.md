@@ -118,6 +118,24 @@ curl -fsSL https://github.com/Roins-hub/dola-pool/releases/latest/download/insta
 首次运行会自动建虚拟环境、装依赖、下载 Chromium，然后打开 `http://127.0.0.1:8002/`。
 需要提前装好 Python 3.10+ 和 Node.js 18+。本机不在日本 / 韩国时需要配代理（见 [`USAGE.md`](USAGE.md)）。
 
+### Docker 部署
+
+镜像发布在 `ghcr.io/roins-hub/dola-pool`（每个版本标签自动构建，`latest` 是最新版）。需要 Docker 20+ 和 Docker Compose：
+
+```bash
+mkdir dola-pool && cd dola-pool
+curl -fsSLO https://raw.githubusercontent.com/Roins-hub/dola-pool/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/Roins-hub/dola-pool/main/deploy/dola.env.example -o dola.env
+# 编辑 dola.env：至少改 DOLA_ADMIN_KEY、DOLA_PUBLIC_BASE（对外访问地址，如 http://你的IP:8000）
+docker compose up -d
+```
+
+- 面板：`http://服务器IP:8000/`；健康检查 `http://服务器IP:8000/health`。端口在 `docker-compose.yml` 的 `ports` 里改。
+- **数据都在 `./data`**（账号、数据库、成片、参考图），升级镜像不丢：`docker compose pull && docker compose up -d`。
+- 想用本地代码构建：把 `docker-compose.yml` 里的 `image:` 换成 `build: .`，再 `docker compose up -d --build`。
+- 镜像只跑**纯 API**（Cookie 导入的 dola / 豆包号），不带浏览器，Google 账号登录的号在 Docker 里用不了。
+- 镜像约 1.6 GB（Python 3.12 + Node + ffmpeg + opencv）。
+
 ## 手动部署
 
 需要 Python 3.10+。dola.com 要求日本/韩国出口，服务器在大陆时必须配置代理。
@@ -270,6 +288,8 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `media.py` | 参考图下载、成片元数据 |
 | `web/` | 管理面板前端 |
 | `extensions/dola30/` | 第三方 Chromium 扩展（30 秒时长、无水印解析） |
+| `Dockerfile` / `docker-compose.yml` / `docker/` | Docker 镜像与编排（纯 API，数据在 `/data`） |
+| `.github/workflows/` | 推送时自动跑测试（`tests.yml`）；打版本标签时构建并发布镜像（`docker.yml`） |
 | `tests/` | pytest 测试 |
 
 运行测试：
