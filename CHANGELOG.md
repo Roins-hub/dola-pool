@@ -1,5 +1,22 @@
 # 更新日志
 
+## 2.4.0 — 2026-10-19
+
+**生图（Seedream）：dola 号和豆包号都能出图。** 2026-10-19 两个站点各抓了文生图 + 参考图改图的包：
+
+- 新接口（OpenAI 兼容、同步）：`POST /v1/images/generations`、`POST /v1/images/edits`（multipart 文件或 JSON 图片 URL）。
+- 新模型：`dola-seedream-5.0-pro` / `dola-seedream-4.5`（派给 dola 号），`doubao-seedream-5.0-flash` / `-5.0-pro` / `-4.5` / `-4.0`
+  （派给豆包号）；`/v1/models` 同步列出。`size` 自动换算成站点支持的最接近比例（dola 6 档，豆包 7 档 + 自动）。
+- 协议：两站同一套 —— 「生成图片：<提示词>」+ `chat_ability {ability_type: 3, ability_param: {"ability_param":{model, ratio,
+  input_box_content}, "ability_type":1}}`，模型名就是网页显示名；没有确认步骤，图在这次请求的流式回复里直接回来
+  （`creation_block`），流里没有再去会话里找。`submit_chat_completion` 新增 `payload_hook` 参数（不传行为不变）。
+- 豆包从文字里读比例（只放参数里按 1:1 出），所以比例同时写进文字；实测 16:9 出 2720×1520。
+- 下载：豆包走官方 `/creativity/resource/get_without_watermark`（`{"uri": [...]}`），号关了 AI 水印即干净图（实测）；
+  dola 取平台的正式下载原图 `image_ori`，右下角带「Dola AI」（预览图 / raw 没有标识，但不拿来绕开标识）。
+- 号池：`BrowserPool.generate_image` —— 按站点挑纯 API 号、同号与视频互斥、失败换号（默认最多 3 个号）、拒稿不换号；
+  不记视频点数。新配置 `DOLA_IMAGE_TIMEOUT`（默认 240 秒）。
+- 测试：`tests/test_image.py` 10 条。
+
 ## 2.3.1 — 2026-10-18
 
 - **豆包号自动关「AI 生成」明水印**：豆包的「AI 生成」明水印是按号的设置（免费号默认开着；只走下载接口不够，画面里照样有「豆包AI生成」）。

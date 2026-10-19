@@ -171,6 +171,18 @@ Content-Type: application/json
 - 水印按号设置：`DOUBAO_AUTO_NO_WATERMARK=1`（默认）时号池自动替号关掉「AI 生成」明水印，成片干净；
   免费额度用完后按 `DOUBAO_ALLOW_PAID` 决定是否走付费额度。
 
+### 2.1.2 生图（2.4.0 起）
+
+见 README「生图（Seedream）」：`POST /v1/images/generations`、`POST /v1/images/edits`，
+模型 `dola-seedream-5.0-pro / dola-seedream-4.5`（dola 号，一次 4 张，带「Dola AI」标识）、
+`doubao-seedream-5.0-flash / -5.0-pro / -4.5 / -4.0`（豆包号，一次 1 张，号关了 AI 水印即无水印）。
+
+```bash
+curl https://your-domain/v1/images/generations -H "Authorization: Bearer sk-xxx" -H "Content-Type: application/json" \
+  -d '{"model":"doubao-seedream-5.0-flash","prompt":"雪地里的红色狐狸","size":"1536x1024"}'
+# → {"created":1792373000,"data":[{"url":"https://your-domain/videos/img_xxx.png"}],"model":"Seedream 5.0 Flash",...}
+```
+
 ### 2.2 尺寸 → 画幅
 
 | 传入 `size` | 归一化 `ratio` |

@@ -63,6 +63,30 @@
 - 只支持 Cookie 导入（见 [COOKIE.md](COOKIE.md) 的「豆包号」一节）。new-api Doubao 插件的官方名
   `doubao-seedance-2-0-260128` 等**不是**豆包号模型，照旧走 dola。
 
+### 生图（Seedream，2.4.0 起）
+
+OpenAI 兼容、**同步返回**：`POST /v1/images/generations`（文生图）、`POST /v1/images/edits`（图生图 / 改图）。
+模型名决定派给哪种号，规则和视频一样：
+
+| 模型 | 派给 | 网页里的名字 | 比例 | 一次出几张 | 水印（2026-10-19 实测） |
+|---|---|---|---|---|---|
+| `dola-seedream-5.0-pro` | dola 号 | Seedream 5.0 Pro（专业出图 · 4 倍消耗） | 1:1 / 2:3 / 3:4 / 4:3 / 9:16 / 16:9 | 4 | 下载原图右下角有「Dola AI」 |
+| `dola-seedream-4.5` | dola 号 | Seedream 4.5（日常生成） | 同上 | 4 | 同上 |
+| `doubao-seedream-5.0-flash` | 豆包号 | Seedream 5.0 Flash（专业快速） | 自动 / 9:16 / 2:3 / 3:4 / 1:1 / 4:3 / 3:2 / 16:9 | 1 | 号关了「AI 生成水印」就干净（号池自动关，同视频） |
+| `doubao-seedream-5.0-pro` | 豆包号 | Seedream 5.0 Pro（4 倍消耗） | 同上 | 1 | 同上 |
+| `doubao-seedream-4.5` | 豆包号 | Seedream 4.5 | 同上 | 1 | 同上 |
+| `doubao-seedream-4.0` | 豆包号 | Seedream 4.0（基础生图） | 同上 | 1 | 同上 |
+
+- 请求体：`{"model", "prompt", "n"（只取前 n 张）, "size"（如 1536x1024，自动换算成站点支持的最接近比例）或 "ratio"（如 16:9）,
+  "response_format": "url" | "b64_json", "reference_images": [图片 URL / data URL]}`；edits 也收 multipart 的 `image` / `image[]` 文件。
+- 返回：`{"created", "data": [{"url"} 或 {"b64_json"}], "model", "account", "unwatermarked"}`。分辨率 2K 档（如 16:9 是 2720×1520 / 2732×1534）。
+- 豆包和视频一样从**文字**里读比例：号池按「生成图片：<提示词>，16:9」的格式发，否则豆包按 1:1 出。
+- 耗时：豆包约 20 秒，dola 约 1 分钟（一次 4 张）。整个请求最多等 `DOLA_IMAGE_TIMEOUT`（默认 240 秒），期间失败自动换号；
+  上游拒绝出图（审核）不换号、直接返回原因。
+- 生图**不记视频点数**、不按点数挑号（只跳过风控 / 待激活 / 异常 / 出口限流中 / 正在出片的号）。生图会不会占 dola 的视频点数
+  还没测出来；即使会，下一条视频回执里的「今日剩余 N 个」也会把账号余额纠正过来。
+- dola 的预览图 / raw 版本没有「Dola AI」标识，但那不是平台给的下载版本，号池不拿它们来绕开标识。
+
 ## 调度与超时
 
 每个任务在 **总时限**内持续换号出片，超时即判定失败，不会无限等待：
@@ -201,6 +225,7 @@ curl -o out.mp4 https://your-domain/v1/videos/video_xxx/content -H "Authorizatio
 | `DOUBAO_ALLOW_PAID` | `1` | 豆包号免费额度用完后是否自动确认走付费额度；`0` = 换号 |
 | `DOUBAO_DAILY_LIMIT` | `999` | 豆包号每天最多派几条（兜底；真实额度看豆包回复） |
 | `DOUBAO_POLL_INTERVAL` | `10` | 豆包出片轮询间隔（秒） |
+| `DOLA_IMAGE_TIMEOUT` | `240` | 生图接口一次请求最多等多久（秒），期间失败换号 |
 | `DOUBAO_AUTO_NO_WATERMARK` | `1` | 豆包号没关「AI 生成」明水印时自动替它关；`0` = 只在面板提示 |
 | `DOLA_PURE_API` | `1` | 优先使用纯 HTTP 出片路径 |
 | `DOLA_PURE_FALLBACK_BROWSER` | `1` | 纯 HTTP 失败时回退浏览器路径 |

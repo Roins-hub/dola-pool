@@ -372,6 +372,10 @@ THROTTLE_ACCOUNT_STREAK_RESET_SECONDS = int(os.getenv("DOLA_THROTTLE_ACCOUNT_STR
 CAP_30S_GRACE_SECONDS = int(os.getenv("DOLA_30S_CAP_GRACE_SECONDS", "600"))
 PURE_API_POLL_INTERVAL = int(os.getenv("DOLA_PURE_POLL_INTERVAL", "30"))
 
+# ---- 生图（/v1/images/generations、/v1/images/edits）----
+# 同步接口：一次请求最多等多久（秒），期间失败会换号重试
+IMAGE_REQUEST_TIMEOUT = max(30, int(os.getenv("DOLA_IMAGE_TIMEOUT", "240")))
+
 # ---- 豆包（doubao.com）号 ----
 # 免费额度用完时，豆包问「本次将消耗付费额度，是否继续？」：1 = 自动确认走付费额度；
 # 0 = 不走付费，判这个号今天额度用完、换号。

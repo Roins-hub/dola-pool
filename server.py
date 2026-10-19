@@ -82,7 +82,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.4.0"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -1276,10 +1276,13 @@ async def _raw_from_multipart(request: Request) -> dict[str, Any]:
                 break
             except ValueError:
                 continue
-    for key in ("size", "ratio", "aspect_ratio"):
+    for key in ("size", "ratio", "aspect_ratio", "response_format"):
         value = form.get(key)
         if isinstance(value, str) and value.strip():
             raw[key] = value.strip()
+    n = form.get("n")       # 生图 edits 的张数
+    if isinstance(n, str) and n.strip().isdigit():
+        raw["n"] = int(n.strip())
     refs: list[str] = []
     for key in ("image[]", "image", "input_image", "first_frame", "last_frame"):
         for item in form.getlist(key):
@@ -1460,6 +1463,101 @@ async def get_video_content(task_id: str, authorization: str | None = Header(def
 
 
 
+class ImageGenRequest(BaseModel):
+    model: str = "dola-seedream-4.5"
+    prompt: str = Field(..., min_length=1)
+    n: int | None = Field(None, ge=1, le=4)
+    size: str | None = None
+    ratio: str | None = None
+    response_format: str = "url"           # url / b64_json
+    # 参考图（图生图 / 改图）：URL、data URL 都行；edits 的 multipart 文件也会转成这里
+    reference_images: list[str] = Field(default_factory=list)
+    image: Any = None
+    image_url: Any = None
+    images: Any = None
+
+
+def _image_response(result: dict, response_format: str) -> dict:
+    data = []
+    for item in result.get("images") or []:
+        path = Path(item["local_path"])
+        if response_format == "b64_json":
+            data.append({"b64_json": base64.b64encode(path.read_bytes()).decode()})
+        else:
+            data.append({"url": f"{config.PUBLIC_BASE}/videos/{path.name}"})
+    return {"created": int(time.time()), "data": data,
+            "model": result.get("model"), "account": result.get("account"),
+            "unwatermarked": result.get("unwatermarked")}
+
+
+async def _generate_images(client, raw: dict) -> dict:
+    try:
+        req = ImageGenRequest.model_validate(raw)
+    except Exception as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not sites.is_image_model(req.model):
+        raise HTTPException(422, f"不支持的生图模型 {req.model!r}，可用：{'、'.join(sites.IMAGE_MODELS)}")
+    refs = _normalize_image_refs(req.reference_images, req.image, req.image_url, req.images)
+    refs = list(dict.fromkeys(refs + _deep_image_urls(raw)))
+    if len(req.prompt) > config.MAX_PROMPT_CHARS:
+        raise HTTPException(422, f"提示词过长（上限 {config.MAX_PROMPT_CHARS} 字符）")
+    root = None
+    paths: list[str] = []
+    job_id = "img_" + uuid.uuid4().hex[:16]
+    try:
+        if refs:
+            try:
+                refs = await validate_reference_urls(refs)
+                refs = await asyncio.to_thread(materialize_data_urls, refs)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            root, paths = await download_reference_images(refs, job_id)
+        started = time.time()
+        try:
+            result = await asyncio.wait_for(pool.generate_image(
+                req.prompt, req.model, ratio=req.ratio, size=req.size, n=req.n,
+                reference_image_paths=paths or None,
+                deadline=time.time() + config.IMAGE_REQUEST_TIMEOUT), timeout=config.IMAGE_REQUEST_TIMEOUT + 60)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, f"生图超时（{config.IMAGE_REQUEST_TIMEOUT} 秒）")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(502, failure_text.summarize(str(exc))) from exc
+        print(f"[image] {client.get('api_key_name') or ''} {req.model} → {result.get('account')} "
+              f"{len(result.get('images') or [])} 张，{time.time() - started:.1f}s", flush=True)
+        return _image_response(result, req.response_format)
+    finally:
+        if root:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+@app.post("/v1/images/generations")
+async def create_image(request: Request, authorization: str | None = Header(default=None)):
+    """OpenAI 兼容生图（同步返回）：dola-seedream-* 派给 dola 号，doubao-seedream-* 派给豆包号。"""
+    client = _auth(authorization)
+    try:
+        raw = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid json body")
+    return await _generate_images(client, raw or {})
+
+
+@app.post("/v1/images/edits")
+async def edit_image(request: Request, authorization: str | None = Header(default=None)):
+    """OpenAI 兼容改图 / 图生图：multipart（image / image[] 文件）或 JSON（reference_images 等 URL 字段）。"""
+    client = _auth(authorization)
+    content_type = (request.headers.get("content-type") or "").lower()
+    if content_type.startswith(("multipart/form-data", "application/x-www-form-urlencoded")):
+        raw = await _raw_from_multipart(request)
+    else:
+        try:
+            raw = await request.json()
+        except Exception:
+            raise HTTPException(400, "invalid json body")
+    return await _generate_images(client, raw or {})
+
+
 @app.get("/v1/models")
 async def list_models():
     """OpenAI 风格模型列表，供 new-api 等上游获取模型用。"""
@@ -1471,6 +1569,10 @@ async def list_models():
         ] + [
             {"id": name, "object": "model", "owned_by": "dola-pool-doubao", "created": 0}
             for name in sites.DOUBAO_MODELS
+        ] + [
+            {"id": name, "object": "model", "created": 0,
+             "owned_by": "dola-pool-doubao" if spec[0] == sites.DOUBAO else "dola-pool"}
+            for name, spec in sites.IMAGE_MODELS.items()
         ],
     }
 

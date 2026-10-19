@@ -88,3 +88,52 @@ def site_of_state_file(path) -> str:
     with _CACHE_LOCK:
         _CACHE[key] = (mtime, site)
     return site
+
+
+# ---------------------------------------------------------------- 生图模型（2.4.0）
+# 对外模型名 → (站点, 上游模型名（网页显示名，原样下发）, 支持的比例)
+# 2026-10-19 网页配置：dola 只有 5.0 Pro / 4.5，比例 6 档、一次出 4 张；
+# 豆包多了 5.0 Flash / 4.0、「自动」和 3:2，一次出 1 张。
+DOLA_IMAGE_RATIOS = ("1:1", "2:3", "3:4", "4:3", "9:16", "16:9")
+DOUBAO_IMAGE_RATIOS = ("auto", "9:16", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9")
+IMAGE_MODELS: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "dola-seedream-5.0-pro": (DOLA, "Seedream 5.0 Pro", DOLA_IMAGE_RATIOS),
+    "dola-seedream-4.5": (DOLA, "Seedream 4.5", DOLA_IMAGE_RATIOS),
+    "doubao-seedream-5.0-flash": (DOUBAO, "Seedream 5.0 Flash", DOUBAO_IMAGE_RATIOS),
+    "doubao-seedream-5.0-pro": (DOUBAO, "Seedream 5.0 Pro", DOUBAO_IMAGE_RATIOS),
+    "doubao-seedream-4.5": (DOUBAO, "Seedream 4.5", DOUBAO_IMAGE_RATIOS),
+    "doubao-seedream-4.0": (DOUBAO, "Seedream 4.0", DOUBAO_IMAGE_RATIOS),
+}
+
+
+def image_spec(model) -> tuple[str, str, tuple[str, ...]] | None:
+    return IMAGE_MODELS.get(_norm_model(model))
+
+
+def is_image_model(model) -> bool:
+    return _norm_model(model) in IMAGE_MODELS
+
+
+def _ratio_value(text: str) -> float | None:
+    parts = str(text).replace("x", ":").replace("X", ":").replace("×", ":").split(":")
+    try:
+        w, h = float(parts[0]), float(parts[1])
+        return w / h if w > 0 and h > 0 else None
+    except (ValueError, IndexError):
+        return None
+
+
+def pick_image_ratio(ratio=None, size=None, allowed: tuple[str, ...] = DOLA_IMAGE_RATIOS) -> str | None:
+    """请求里的 ratio（如 16:9）或 OpenAI 的 size（如 1536x1024）→ 站点支持的最接近比例。
+
+    都没给：豆包用「自动」，dola 不传（网页默认）。"""
+    raw = str(ratio or "").strip().lower()
+    if raw in ("auto", "自动") and "auto" in allowed:
+        return "auto"
+    want = _ratio_value(raw) if raw else None
+    if want is None and size and str(size).lower() != "auto":
+        want = _ratio_value(str(size).lower())
+    if want is None:
+        return "auto" if "auto" in allowed else None
+    fixed = [r for r in allowed if r != "auto"]
+    return min(fixed, key=lambda r: abs(_ratio_value(r) - want))

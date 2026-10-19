@@ -1602,6 +1602,68 @@ class BrowserPool:
                     self._note_upstream_failure(account, str(exc))
                 return {"ok": False, "account": account, "error": str(exc)[:300]}
 
+    async def generate_image(self, prompt: str, model: str, *, ratio: str | None = None,
+                             size: str | None = None, n: int | None = None,
+                             reference_image_paths: list[str] | None = None,
+                             max_attempts: int = 3, deadline: float | None = None) -> dict:
+        """生图：按模型挑对应站点（dola / 豆包）的纯 API 号，失败换号（最多 max_attempts 个号）。
+
+        生图额度和视频点数是否共用还没实测清楚，所以**不记视频点数、不按点数分组挑号**：
+        只跳过风控 / 待激活 / 异常 / 调度关闭 / 出口限流中 / 正在出片（同号互斥）的号。
+        上游拒绝出图（审核）换号也一样，直接失败。
+        """
+        from image_gen import ImageRefusedError, generate_image as gen_image
+        spec = sites.image_spec(model)
+        if spec is None:
+            raise RuntimeError(f"不是生图模型: {model}")
+        site = spec[0]
+        blocked = (GROUP_RISK, GROUP_PENDING, GROUP_ABNORMAL)
+        async with self.semaphore:
+            tried: list[str] = []
+            last_err: Exception | None = None
+            while len(tried) < max(1, max_attempts) and (deadline is None or time.time() < deadline):
+                rows = [a for a in self._sorted_accounts()
+                        if a.get("site") == site and a["name"] not in tried
+                        and a.get("group") not in blocked and a["scheduling"] and a["login_ok"] != 0
+                        and not a["cooling"] and self.is_pure_account(a["name"])
+                        and self.egress_throttle_remaining(a["name"]) <= 0]
+                if not rows:
+                    break
+                free = [a for a in rows if not self._locks.setdefault(a["name"], asyncio.Lock()).locked()]
+                if not free:
+                    await asyncio.sleep(WAIT_FREE_ACCOUNT_STEP)      # 能接的号都在出片：等一会儿再挑
+                    continue
+                account = free[0]["name"]
+                async with self._locks[account]:
+                    tried.append(account)
+                    probe = await self.probe_hello_async(account)
+                    if not probe.get("ok"):
+                        last_err = RuntimeError(f"{account} 派单前探测没过：{probe.get('reason') or probe.get('status')}")
+                        continue
+                    try:
+                        result = await asyncio.to_thread(
+                            gen_image, account=account, prompt=prompt, model=model,
+                            cookie_state_path=self._pure_state(account), ratio=ratio, size=size, n=n,
+                            reference_image_paths=reference_image_paths,
+                            proxy=self._proxy_url_for(account), output_dir=config.DOWNLOAD_DIR)
+                    except ImageRefusedError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        message = str(exc)
+                        if classify_upstream_failure(message) == "transient":
+                            self.note_egress_throttle(account, message)
+                        print(f"[pool] {account} 生图失败，换号: {message[:200]}", flush=True)
+                        last_err = exc
+                        continue
+                    self._conn.execute("UPDATE accounts_meta SET last_used_at=? WHERE name=?",
+                                       (time.time(), account))
+                    self.clear_egress_throttle(account)
+                    return result
+            label = sites.SITE_LABELS[site]
+            if not tried:
+                raise RuntimeError(f"号池里没有能生图的{label}号（需要 Cookie 导入、已激活、未被风控/限流）")
+            raise RuntimeError(f"生图失败（依次尝试：{'、'.join(tried)}）：{str(last_err or '')[:600]}")
+
     def _meta_weight(self, name: str) -> int:
         m = self._meta(name)
         return int(m["weight"]) if m and m["weight"] else 1

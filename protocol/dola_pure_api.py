@@ -2311,8 +2311,11 @@ def submit_chat_completion(
     conversation_id: str = "",
     section_id: str = "",
     last_message_index: int | None = None,
+    payload_hook=None,
 ) -> SubmitResult:
     """提交一次 chat/completion。
+
+    payload_hook(payload)：发送前改请求体（生图用它换成 ability_type=3 的参数），不传则行为不变。
 
     - video_ability=True：视频生成请求，带 chat_ability。
     - video_ability=False：普通音频/文本消息，用于先把参考音频放进会话上下文。
@@ -2351,6 +2354,8 @@ def submit_chat_completion(
         local_conversation_id=local_conv_id,
         local_message_id=local_message_id,
     )
+    if payload_hook is not None:
+        payload_hook(payload)
     body_text = compact_json(payload)
     referer_id = conversation_id or local_ref
     mode_label = "video" if video_ability else "audio/text"
