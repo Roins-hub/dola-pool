@@ -82,7 +82,6 @@ OpenAI 兼容、**同步返回**：`POST /v1/images/generations`（文生图）�
 - 豆包从**文字**里读比例：号池按「生成图片：<提示词>，16:9」的格式发，否则豆包按 1:1 出。
 - 整个请求最多等 `DOLA_IMAGE_TIMEOUT`（默认 240 秒），期间失败自动换号；上游拒绝出图（审核）不换号、直接返回原因。
 - 生图不记视频额度、不按额度挑号（只跳过风控 / 待激活 / 异常 / 出口限流中 / 正在出片的号）。
-- **不接 dola 生图**：dola 网页生图协议相同，但下载图带「Dola AI」标识、没有官方关闭开关。
 
 ## 调度与超时
 
@@ -286,7 +285,6 @@ pytest -q tests
 - **水印**：
   - **dola 视频**：dola 网页默认给的下载地址带水印（`lr=cici_ai`），号池下载的是 dola 返回数据里同一条视频的另一个版本（`lr=unwatermarked`），不对画面做处理。第三方解析接口（`protocol/dola_pure_api.py` 中的 `NOWATERMARK_API_ENDPOINT`）**默认关闭**（`DOLA_PURE_REMOVE_WATERMARK=0`）；设为 `1` 才会启用，届时视频播放信息会经 HTTP 发给第三方。原理与风险详见 [`USAGE.md` 的「去水印说明」](USAGE.md#7-去水印说明)。
   - **豆包视频 / 生图**：「AI 生成」明水印是豆包官方的按号设置（豆包设置 → AI 生成水印管理）。`DOUBAO_AUTO_NO_WATERMARK=1`（默认）时号池用官方设置接口替号关掉，再走官方无水印下载接口；关掉明水印后，内容公开发布时需由发布方自行标注「AI 生成」。
-  - **dola 生图不接**：dola 下载图带「Dola AI」标识，又没有官方关闭开关。
 - `accounts/`、`*.db`、`dola.env`、`cookies.txt`、`downloads/` 均已忽略，切勿提交真实凭据。
 
 ## 免责声明
