@@ -244,7 +244,8 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
       <div class="toolbar">
         <h3 style="margin:0">账号列表</h3>
         <span id="resetHint" class="tiny"></span>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="search" id="search_accounts" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索账号 / 邮箱 / 备注 / 代理" oninput="setSearch('accounts',this.value)">
           <select id="srcFilter" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)" onchange="srcFilterVal=this.value;accPage=1;loadAccounts()">
             <option value="all">全部来源</option>
             <option value="login">账号登录</option>
@@ -271,6 +272,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
       <div class="toolbar">
         <h3 style="margin:0">代理列表</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="search" id="search_proxies" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索名称 / 地址 / 用户名 / 备注" oninput="setSearch('proxies',this.value)">
           <button class="btn" onclick="selAllToggle('proxies')">全选 / 取消</button>
           <button class="btn btn-danger" id="delSel_proxies" disabled onclick="delSelected('proxies')">删除选中</button>
           <button class="btn btn-p" onclick="openAddProxy()">＋ 添加代理</button>
@@ -290,8 +292,9 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
   <section id="tab-tasks" style="display:none">
     <div class="card">
       <div class="toolbar">
-        <h3 style="margin:0">任务列表（最近 50 条）</h3>
+        <h3 style="margin:0" id="tasksTitle">任务列表（最近 50 条）</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="search" id="search_tasks" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索提示词 / 账号 / ID / 客户 / 报错" oninput="setSearch('tasks',this.value)">
           <button class="btn" onclick="selAllToggle('tasks')">全选 / 取消</button>
           <button class="btn btn-danger" id="delSel_tasks" disabled onclick="delSelected('tasks')">删除选中</button>
         </div>
@@ -304,7 +307,8 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0">视频管理（已生成的视频）</h3>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="search" id="search_videos" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索提示词 / 账号 / 模型" oninput="setSearch('videos',this.value)">
           <button class="btn btn-danger" id="btnDelVideos" onclick="delSelectedVideos()" disabled>删除选中</button>
           <button class="btn" onclick="loadVideos()">刷新</button>
         </div>
@@ -319,6 +323,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
       <div class="toolbar">
         <h3 style="margin:0">API 密钥</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="search" id="search_keys" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索名称 / Key" oninput="setSearch('keys',this.value)">
           <button class="btn" onclick="selAllToggle('keys')">全选 / 取消</button>
           <button class="btn btn-danger" id="delSel_keys" disabled onclick="delSelected('keys')">删除选中</button>
           <button class="btn btn-p" onclick="openCreateKey()">＋ 创建密钥</button>
@@ -334,6 +339,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
       <div class="toolbar">
         <h3 style="margin:0">用户管理</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="search" id="search_users" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索用户名" oninput="setSearch('users',this.value)">
           <button class="btn" onclick="selAllToggle('users')">全选 / 取消</button>
           <button class="btn btn-danger" id="delSel_users" disabled onclick="delSelected('users')">删除选中</button>
           <button class="btn btn-p" onclick="openAddUser()">＋ 新增管理员</button>
@@ -490,6 +496,25 @@ let filteredNames=[];
 let allAccounts=[];
 let proxyCache=[];
 let srcFilterVal='all';
+/* ---- 各页搜索：空格分隔的每个词都要命中（不区分大小写）。自动刷新时保留搜索词。
+   账号 / 代理 / 密钥 / 用户在前端过滤（列表本来就是全量）；任务 / 视频交给服务端查整个历史。 */
+const SEARCH={accounts:'',proxies:'',tasks:'',videos:'',keys:'',users:''};
+const SEARCH_RELOAD={accounts:()=>{accPage=1;return loadAccounts();},proxies:()=>loadProxies(),
+  tasks:()=>loadTasks(),videos:()=>loadVideos(),keys:()=>loadKeys(),users:()=>loadUsers()};
+const searchTimers={};
+function setSearch(kind,v){
+  SEARCH[kind]=String(v||'').trim();
+  clearTimeout(searchTimers[kind]);
+  searchTimers[kind]=setTimeout(()=>SEARCH_RELOAD[kind]().catch(()=>{}),300);
+}
+function searchHit(kind,...fields){
+  const terms=SEARCH[kind].toLowerCase().split(/\s+/).filter(Boolean);
+  if(!terms.length)return true;
+  const hay=fields.map(f=>f==null?'':String(f)).join('\n').toLowerCase();
+  return terms.every(t=>hay.includes(t));
+}
+function searchQS(kind){return SEARCH[kind]?'&q='+encodeURIComponent(SEARCH[kind]):'';}
+function searchEmpty(kind,n){return SEARCH[kind]&&!n?'<div class="hint" style="margin:10px 0">没有匹配「'+esc(SEARCH[kind])+'」的结果</div>':'';}
 let groupFilterVal='all';   // all / valid / 满额 / 半额 / 冷却 / 生成中 / 风控 / 待激活 / 异常
 
 const GROUP_STYLE={'满额':'b-green','半额':'b-blue','冷却':'b-orange','生成中':'b-blue',
@@ -608,7 +633,9 @@ async function loadAccounts(){
   // 新增的号排最前（按创建时间倒序）；没有 created_at 的老号沉底，保持原有相对顺序
   const sorted=[...a.accounts].sort((x,y)=>(y.created_at||0)-(x.created_at||0));
   filteredAccounts=sorted.filter(x=>
-    (srcFilterVal==='all'||x.source===srcFilterVal)&&matchGroup(x));
+    (srcFilterVal==='all'||x.source===srcFilterVal)&&matchGroup(x)
+    &&searchHit('accounts',x.name,x.email,x.note,x.proxy_name,x.effective_egress,x.exit_ip,x.group,
+                x.group_reason,x.source==='cookie'?'Cookie 载入':'账号登录',x.site==='doubao'?'豆包 doubao':'dola'));
   filteredNames=filteredAccounts.map(x=>x.name);
   // 被筛掉/已删除的账号不再保留勾选，避免「删除选中」误删看不见的号
   for(const n of [...selAccounts])if(!filteredNames.includes(n))selAccounts.delete(n);
@@ -1447,10 +1474,12 @@ async function loadProxies(){
   const r=await api('/api/admin/proxies');
   proxyCache=r.proxies||[];
   const dp=q('#defaultProxyShow');if(dp)dp.textContent=r.default_proxy?'（'+r.default_proxy+'）':'（未设置）';
-  selPrune('proxies',proxyCache.map(p=>p.id));
+  const shown=proxyCache.filter(p=>searchHit('proxies',p.name,p.host,p.port,p.username,p.protocol,p.remark,
+    proxyProbeCache[p.id],p.mode==='extract'?'节点池':p.is_dynamic?'隧道 动态':'静态'));
+  selPrune('proxies',shown.map(p=>p.id));
   q('#proxiesTable').innerHTML=table(
     [selAllBox('proxies'),'名称','类型','协议','地址','端口','用户名','已绑账号','出口IP','备注','操作'],
-    proxyCache.map(p=>[
+    shown.map(p=>[
       selBox('proxies',p.id,false),
       esc(p.name),
       p.mode==='extract'?(p.extract_url?'<span class="badge b-blue">提取链接</span>'
@@ -1469,7 +1498,7 @@ async function loadProxies(){
        ${p.is_dynamic||p.mode==='extract'?`<button class="btn" style="margin-right:6px" onclick="rotateProxy('${p.id}')">换IP</button>`:''}
        <button class="btn btn-danger" onclick="delProxy('${p.id}')">删除</button>`
     ])
-  );
+  )+searchEmpty('proxies',shown.length);
   selUpdate('proxies');
 }
 async function showNodes(id){
@@ -1875,10 +1904,11 @@ async function delSelected(kind){
 async function loadUsers(){
   const r=await api('/api/admin/users');
   const me=r.current_username||'';
-  selPrune('users',r.users.filter(u=>u.role!=='owner'&&u.username!==me).map(u=>u.username));
+  const users=r.users.filter(u=>searchHit('users',u.username,u.role==='owner'?'主管理员':'管理员',u.enabled?'启用':'停用'));
+  selPrune('users',users.filter(u=>u.role!=='owner'&&u.username!==me).map(u=>u.username));
   q('#usersTable').innerHTML=table(
     [selAllBox('users'),'用户名','角色','状态','创建时间','操作'],
-    r.users.map(u=>[
+    users.map(u=>[
       selBox('users',u.username,u.role==='owner'||u.username===me,
              u.role==='owner'?'主管理员不能删除':(u.username===me?'不能删除当前登录的账号':'')),
       esc(u.username)+(u.username===me?' <span class="badge b-blue">当前</span>':''),
@@ -1888,7 +1918,7 @@ async function loadUsers(){
       `<button class="btn" style="margin-right:6px" onclick="openEditUser('${esc(u.username)}')">修改</button>`+
       `<button class="btn ${u.username===me?'btn':''}" ${u.username===me?'disabled':''} style="margin-right:6px" onclick="delUser('${esc(u.username)}')">删除</button>`
     ])
-  );
+  )+searchEmpty('users',users.length);
   selUpdate('users');
 }
 function openAddUser(){
@@ -2049,7 +2079,9 @@ function costCell(t){
     +(queue>=5?'<div class="tiny">含排队 '+fmtDur(total)+'</div>':'');
 }
 async function loadTasks(){
-  const r=await api('/api/admin/tasks?limit=50');
+  const r=await api('/api/admin/tasks?limit='+(SEARCH.tasks?200:50)+searchQS('tasks'));
+  const tt=q('#tasksTitle');
+  if(tt)tt.textContent=SEARCH.tasks?'任务列表（搜索结果 '+r.tasks.length+' 条，最多显示 200 条）':'任务列表（最近 50 条）';
   if(r.now)SERVER_SKEW=r.now-Date.now()/1000;
   TASK_MAP={};
   r.tasks.forEach(t=>{TASK_MAP[t.id]=t;});
@@ -2131,7 +2163,7 @@ function fmtDur(s){
   return m+' 分 '+sec+' 秒';
 }
 async function loadVideos(){
-  const r=await api('/api/admin/videos');
+  const r=await api('/api/admin/videos'+(SEARCH.videos?'?limit=500'+searchQS('videos'):''));
   const total=r.total||0;
   const avail=r.available||0;
   q('#videoStat').textContent=`视频总数：${total}（正常 ${avail} / 已删除 ${total-avail}）`;
@@ -2216,8 +2248,9 @@ async function loadKeys(){
   // 允许时长由后端下发（随 DOLA_NATIVE_DURATION_MAX 变化），不再前端硬编码。
   if(Array.isArray(r.supported_durations)&&r.supported_durations.length)SUPPORTED_DURATIONS=r.supported_durations;
   const mask=k=>'sk-'+k.slice(3,9)+'…'+k.slice(-4);
-  selPrune('keys',r.keys.map(k=>k.key));
-  const rows=r.keys.map(k=>[
+  const keys=r.keys.filter(k=>searchHit('keys',k.name,k.key,k.enabled?'启用':'停用'));
+  selPrune('keys',keys.map(k=>k.key));
+  const rows=keys.map(k=>[
     selBox('keys',k.key,false),
     '<span style="font-family:monospace">'+mask(k.key)+'</span>',
     k.name||'—',

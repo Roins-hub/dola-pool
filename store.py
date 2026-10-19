@@ -532,6 +532,26 @@ class TaskStore:
             self._conn.commit()
         return recovered
 
+    SEARCH_COLUMNS = ("id", "prompt", "account", "api_key_name", "status", "model", "error",
+                      "attempted_accounts", "conversation_id")
+
+    def search_tasks(self, q: str, limit: int = 50, status: str | None = None) -> list:
+        """管理面板搜索：空格分隔的每个词都要在任务的某一列里出现（不区分大小写），查整个历史。"""
+        terms = [t for t in str(q or "").split() if t][:8]
+        where, args = [], []
+        for term in terms:
+            like = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            where.append("(" + " OR ".join(f"COALESCE({c}, '') LIKE ? ESCAPE '\\'" for c in self.SEARCH_COLUMNS) + ")")
+            args.extend([like] * len(self.SEARCH_COLUMNS))
+        if status:
+            where.append("status=?")
+            args.append(status)
+        sql = "SELECT * FROM tasks" + (" WHERE " + " AND ".join(where) if where else "")
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        with _LOCK:
+            rows = self._conn.execute(sql, (*args, int(limit))).fetchall()
+        return [dict(r) for r in rows]
+
     def recent_tasks(self, limit: int = 50, api_key_hash: str | None = None) -> list:
         with _LOCK:
             if api_key_hash:

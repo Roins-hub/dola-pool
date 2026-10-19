@@ -82,7 +82,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.4.2"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -3009,9 +3009,11 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
 
 
 @app.get("/api/admin/tasks")
-async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None)):
+async def admin_tasks(limit: int = 50, q: str = "", x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    tasks = store.recent_tasks(min(max(limit, 1), 200))
+    limit = min(max(limit, 1), 200)
+    # q：面板搜索，查整个历史（不止最近 50 条）
+    tasks = store.search_tasks(q, limit) if q.strip() else store.recent_tasks(limit)
     for t in tasks:
         # 排队中 / 生成中的任务带上预计耗时（与客户接口的 progress 同一口径：
         # 同时长近 3 天已完成任务的平均生成耗时，样本不足用兜底表）
@@ -3023,10 +3025,12 @@ async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=
 
 
 @app.get("/api/admin/videos")
-async def admin_videos(limit: int = 100, x_admin_key: str | None = Header(default=None)):
-    """视频管理：已完成任务的列表 + 文件元数据（老任务按需从磁盘补大小）。"""
+async def admin_videos(limit: int = 100, q: str = "", x_admin_key: str | None = Header(default=None)):
+    """视频管理：已完成任务的列表 + 文件元数据（老任务按需从磁盘补大小）。q：搜索整个历史。"""
     _admin_auth(x_admin_key)
-    rows = store.recent_tasks(min(max(limit, 1), 500))
+    limit = min(max(limit, 1), 500)
+    rows = (store.search_tasks(q, limit, status="completed") if q.strip()
+            else store.recent_tasks(limit))
     out = []
     for r in rows:
         if r.get("status") != "completed":
