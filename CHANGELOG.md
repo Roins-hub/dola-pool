@@ -1,5 +1,21 @@
 # 更新日志
 
+## 2.5.0 — 2026-10-19
+
+**严格 Cookie 环境隔离与上游限流保护。**
+
+- 新增 `DOLA_COOKIE_RUNTIME=cloak`：Dola Cookie 账号使用 CloakBrowser 独立持久 profile，
+  每个账号固定保存 fingerprint seed；豆包 Cookie 账号继续使用原纯 API 路径。
+- Cookie 导入新增严格模式导入顺序：勾选“跳过在线验证”只落盘会话材料，不先访问 Dola；
+  绑定账号专属代理后再点击“验证”，避免首次请求经过全局默认出口。
+- 已有 Cookie 账号首次启用严格模式时，会从 `cookie_state.json` 物化到
+  `accounts/<账号>/cloak-profile/`，并恢复可用的 Web Storage。
+- 严格模式跳过纯 API「你好」探活，默认启用同出口隔离、15 秒同号提交间隔、账号/出口退避，
+  且不因 `710022002` 自动轮换 IP，避免同一 Cookie 会话出现短时间出口跳变。
+- 浏览器提交路径收到 `710022002` 时也进入出口和账号限流处理，不再只按通用浏览器风控冷却。
+- 新增可选依赖 `deploy-cloak-requirements.txt`；默认 pure API 和 Docker 镜像不安装 CloakBrowser。
+- 更新 `README.md`、`USAGE.md`、Windows/Unix 本地启动脚本和一键部署脚本。
+
 ## 2.4.2 — 2026-10-19
 
 **管理面板每一页都能搜索。**

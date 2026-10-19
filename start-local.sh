@@ -48,6 +48,13 @@ if [ ! -f dola.env ]; then
   ok "已生成配置 dola.env（API Key: $KEY）"
 fi
 
+# 严格 Cookie 隔离模式的可选依赖；默认纯 API 模式不安装。
+if grep -qE '^DOLA_COOKIE_RUNTIME=cloak([[:space:]]*|$)' dola.env 2>/dev/null && [ -f deploy-cloak-requirements.txt ]; then
+  info "安装 CloakBrowser wrapper（严格 Cookie 隔离模式）..."
+  .venv/bin/pip install -q -r deploy-cloak-requirements.txt
+  ok "CloakBrowser wrapper 就绪"
+fi
+
 # 读入 dola.env（只认 KEY=VALUE 行，跳过注释）
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in ''|\#*) continue ;; *=*) export "${line%%=*}=${line#*=}" ;; esac

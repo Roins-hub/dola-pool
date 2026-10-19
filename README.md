@@ -8,6 +8,7 @@
 - 多账号号池：自动选号、额度记账、风控冷却、失败换号、每日额度重置
 - **两个站点的号混用**：dola 号接 `seedance-2.0/2.5`，豆包号接 `doubao-seedance-*` 视频和 `doubao-seedream-*` 生图，按模型名自动分派、互不串号
 - 两种出片路径：纯 HTTP 协议（默认）与 Chromium 浏览器自动化（兜底，仅 dola）
+- 可选严格 Cookie 隔离：Dola Cookie 账号按账号绑定 CloakBrowser 持久 profile、固定 fingerprint seed 和独立出口
 - 对外接口：OpenAI 风格 `/v1/videos`、`/v1/images/generations`、`/v1/images/edits`，Ark 风格 `/api/v3/contents/generations/tasks`
 - 自带管理面板：账号、代理、客户 API Key、任务、视频、压力测试
 - 参考图生视频 / 图生图、本地转存与静态分发（水印情况见「注意事项」）
@@ -135,6 +136,27 @@ docker compose up -d
 - 想用本地代码构建：把 `docker-compose.yml` 里的 `image:` 换成 `build: .`，再 `docker compose up -d --build`。
 - 镜像只跑**纯 API**（Cookie 导入的 dola / 豆包号），不带浏览器，Google 账号登录的号在 Docker 里用不了。
 - 镜像约 1.6 GB（Python 3.12 + Node + ffmpeg + opencv）。
+
+### 严格 Cookie 浏览器隔离（2.5.0）
+
+默认 Cookie 账号仍走纯 HTTP。需要让 Dola Cookie 账号固定在独立浏览器环境时，使用 Linux
+Xvfb/systemd 部署并安装可选的 `deploy-cloak-requirements.txt`：
+
+```env
+DOLA_COOKIE_RUNTIME=cloak
+DOLA_CLOAK_HEADLESS=0
+CLOAKBROWSER_CACHE_DIR=/opt/dola-pool/.cloakbrowser
+DOLA_ISOLATE_SHARED_EGRESS=1
+DOLA_EGRESS_THROTTLE_ROTATE=0
+DOLA_EGRESS_THROTTLE_MIN_ACCOUNTS=1
+DOLA_MIN_SUBMIT_INTERVAL_SECONDS=15
+```
+
+严格模式下，每个 Dola Cookie 账号使用 `accounts/<账号>/cloak-profile/`，并绑定自己的固定代理或
+sticky session；验证、提交和轮询都走该 profile。命中 `710022002` 时按出口和账号退避，默认不
+自动换 IP。批量导入时先勾选“跳过在线验证”，导入后绑定账号专属代理，再逐个点击“验证”。
+
+该模式不适用于当前纯 API Docker 镜像；完整部署和迁移步骤见 [`USAGE.md`](USAGE.md)。
 
 ## 手动部署
 
@@ -267,6 +289,12 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `DOUBAO_AUTO_NO_WATERMARK` | `1` | 豆包号没关「AI 生成」明水印时自动替它关；`0` = 只在面板提示 |
 | `DOLA_PURE_API` | `1` | 优先使用纯 HTTP 出片路径 |
 | `DOLA_PURE_FALLBACK_BROWSER` | `1` | 纯 HTTP 失败时回退浏览器路径 |
+| `DOLA_COOKIE_RUNTIME` | `pure` | Cookie 账号运行时：`pure`=纯 HTTP；`cloak`=Dola Cookie 账号固定使用 CloakBrowser 独立持久 profile |
+| `DOLA_COOKIE_PROFILE_SUBDIR` | `cloak-profile` | 严格 Cookie 模式下每个账号的独立浏览器 profile 子目录 |
+| `DOLA_CLOAK_HEADLESS` | `0` | CloakBrowser 是否无头；生产建议配 Xvfb 使用有头模式 |
+| `DOLA_CLOAK_GEOIP` | `0` | 是否按代理出口自动解析时区/语言；固定代理时建议手动固定配置 |
+| `DOLA_ISOLATE_SHARED_EGRESS` | `0` | 同一出口是否禁止多个账号并发；严格 Cookie 模式默认自动为 `1` |
+| `DOLA_MIN_SUBMIT_INTERVAL_SECONDS` | `0` | 同一账号两次提交的最小间隔；严格 Cookie 模式默认自动为 `15` |
 | `DOLA_PURE_TIMEOUT` | `900` | 纯 HTTP 路径单次出片轮询超时（秒） |
 | `DOLA_EXTENSION_ENABLED` | `1` | 加载 `extensions/dola30`（30 秒时长与无水印解析依赖） |
 
@@ -288,6 +316,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `media.py` | 参考图下载、成片元数据 |
 | `web/` | 管理面板前端 |
 | `extensions/dola30/` | 第三方 Chromium 扩展（30 秒时长、无水印解析） |
+| `deploy-cloak-requirements.txt` | 严格 Cookie 模式的可选 CloakBrowser wrapper 依赖 |
 | `Dockerfile` / `docker-compose.yml` / `docker/` | Docker 镜像与编排（纯 API，数据在 `/data`） |
 | `.github/workflows/` | 推送时自动跑测试（`tests.yml`）；打版本标签时构建并发布镜像（`docker.yml`） |
 | `tests/` | pytest 测试 |

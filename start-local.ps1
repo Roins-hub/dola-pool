@@ -80,6 +80,13 @@ foreach ($line in [System.IO.File]::ReadAllLines($envFile)) {
   $cfg[$k.Trim()] = $v.Trim()
   [Environment]::SetEnvironmentVariable($k.Trim(), $v.Trim(), "Process")
 }
+
+if ($cfg["DOLA_COOKIE_RUNTIME"] -eq "cloak" -and (Test-Path (Join-Path $Root "deploy-cloak-requirements.txt"))) {
+  Info "安装 CloakBrowser wrapper（严格 Cookie 隔离模式）..."
+  & $venvPy -m pip install -q -r (Join-Path $Root "deploy-cloak-requirements.txt")
+  if ($LASTEXITCODE -ne 0) { Fail "CloakBrowser 依赖安装失败" }
+  Ok "CloakBrowser wrapper 就绪"
+}
 if (-not $env:PLAYWRIGHT_BROWSERS_PATH) { $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $Root ".browsers" }
 $hostAddr = if ($cfg["DOLA_HOST"]) { $cfg["DOLA_HOST"] } else { "127.0.0.1" }
 $port = if ($cfg["DOLA_PORT"]) { $cfg["DOLA_PORT"] } else { "8002" }

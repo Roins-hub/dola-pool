@@ -26,6 +26,7 @@ refs/
 !README.md
 !deploy-constraints.txt
 !deploy-extra-requirements.txt
+!deploy-cloak-requirements.txt
 
 # --- one-off debug script (contains a signed CDN url) ---
 dl_now.py

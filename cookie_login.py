@@ -27,6 +27,13 @@ from patchright.async_api import async_playwright
 import config
 from browser import EDGE_MARKER, LAUNCH_ARGS, check_login_state, proxy_kwargs_for
 
+try:
+    from browser import browser_profile_dir, is_cloak_cookie_account, launch_account_context
+except ImportError:  # test doubles / legacy embedders that stub the old browser module
+    browser_profile_dir = lambda name: Path("accounts") / name
+    is_cloak_cookie_account = lambda name: False
+    launch_account_context = None
+
 
 def normalize_cookies(data) -> list[dict]:
     """把扩展导出 JSON / cookie 数组统一成普通 dict 列表。"""
@@ -64,7 +71,7 @@ def to_playwright_cookies(cookies: list[dict]) -> list[dict]:
     """转为 playwright add_cookies 可接受的格式。"""
     out: list[dict] = []
     for c in cookies:
-        domain = str(c.get("domain") or "").strip().lstrip(".")
+        domain = str(c.get("domain") or "").strip()
         if not domain:
             raise ValueError("cookie 缺少 domain 字段")
         item = {
@@ -132,9 +139,12 @@ def _write_cookie_state(profile_dir: Path, cookies: list[dict], storage_bundle: 
         },
         "storage": storage_bundle or {},
     }
-    (profile_dir / "cookie_state.json").write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    path = profile_dir / "cookie_state.json"
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
 async def _restore_web_storage(page, bundle: dict) -> dict:
@@ -242,6 +252,13 @@ def browser_backend_available() -> tuple[bool, str]:
     这里先跑一次 --version 探明，探不通就让导入落到纯 API 路径
     （cookie 来源账号出片/验证本来就只走纯 API，不需要浏览器）。
     """
+    if config.COOKIE_RUNTIME == "cloak":
+        try:
+            import cloakbrowser  # noqa: F401
+            return True, ""
+        except Exception as exc:
+            return False, f"cloakbrowser 不可用: {type(exc).__name__}: {exc}"[:200]
+
     node = _patchright_driver_node()
     if node is None:
         return False, "patchright 驱动不存在（未安装或包被裁剪）"
@@ -261,6 +278,9 @@ async def _apply_browser_profile(name: str, profile_dir: Path, cookies: list[dic
                                  storage_bundle: dict) -> tuple[bool, dict | None, str]:
     """把 cookie 写进浏览器 persistent profile（仅当浏览器可用时走这条）。"""
     pw_cookies = to_playwright_cookies(cookies)
+    target_dir = browser_profile_dir(name)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
     use_edge = shutil.which("microsoft-edge-stable") is not None
     if use_edge:
         (profile_dir / EDGE_MARKER).write_text("edge", encoding="utf-8")
@@ -280,7 +300,7 @@ async def _apply_browser_profile(name: str, profile_dir: Path, cookies: list[dic
         if proxy_kwargs:
             kwargs["proxy"] = proxy_kwargs
         ctx = await p.chromium.launch_persistent_context(
-            str(profile_dir), **kwargs
+            str(target_dir), **kwargs
         )
         try:
             await ctx.add_cookies(pw_cookies)
@@ -338,6 +358,7 @@ async def import_cookie_account(name: str, cookie_data,
     cookies = normalize_cookies(cookie_data)
     if not cookies:
         raise ValueError("cookie 列表为空")
+    pw_cookies = to_playwright_cookies(cookies)
     storage_bundle = normalize_storage_bundle(cookie_data)
 
     profile_dir.mkdir(parents=True, exist_ok=False)
@@ -348,6 +369,11 @@ async def import_cookie_account(name: str, cookie_data,
     site = sites.site_of_cookies(cookies)
     ok, reason = browser_backend_available()
     use_browser = ok if browser is None else bool(browser)
+    if config.COOKIE_RUNTIME == "cloak" and site != sites.DOUBAO and not use_browser:
+        raise RuntimeError(
+            "DOLA_COOKIE_RUNTIME=cloak 需要 CloakBrowser 可用，未导入账号；"
+            f"{reason or '浏览器后端不可用'}"
+        )
     if site == sites.DOUBAO:
         # 豆包号只走纯 API（浏览器 profile 那套是给 dola.com 页面准备的）
         use_browser, reason = False, "豆包号只走纯 API"
@@ -360,31 +386,87 @@ async def import_cookie_account(name: str, cookie_data,
     page_error = ""
 
     if use_browser:
-        try:
-            session_cookie_present, storage_result, page_error = \
-                await _apply_browser_profile(name, profile_dir, cookies, storage_bundle)
-        except Exception as exc:
-            # 浏览器路径挂了（驱动/内核/代理）不该让整批导入失败：
-            # cookie_state.json 已落盘，账号照样能走纯 API。
-            browser_error = f"{type(exc).__name__}: {exc}"[:200]
-            engine = "pure"
-            page_error = browser_error
-            for item in list(profile_dir.iterdir()):
-                if item.name == "cookie_state.json":
-                    continue
-                if item.is_dir():
-                    shutil.rmtree(item, ignore_errors=True)
-                else:
-                    try:
-                        item.unlink()
-                    except OSError:
-                        pass
+        if is_cloak_cookie_account(name):
+            if not require_login:
+                # 严格模式的安全导入阶段不访问 Dola：先落盘 Cookie，
+                # 待管理面板给账号绑定专属代理后，再通过「验证」首次打开页面。
+                browser_profile_dir(name).mkdir(parents=True, exist_ok=True)
+                return {
+                    "ok": True,
+                    "account": name,
+                    "cookie_count": len(cookies),
+                    "cookie_state_file": str(state_file),
+                    "session_cookie_present": session_cookie_present,
+                    "storage_result": None,
+                    "profile": str(profile_dir),
+                    "engine": "browser",
+                    "browser_error": "",
+                    "verified": False,
+                    "verify_error": "已跳过在线验证；请先绑定账号专属代理，再点击验证",
+                }
+            try:
+                ctx = await launch_account_context(None, name, headless=False)
+                try:
+                    await ctx.add_cookies(pw_cookies)
+                    if storage_bundle:
+                        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+                        try:
+                            await page.goto("https://www.dola.com/chat", timeout=60000,
+                                           wait_until="domcontentloaded")
+                            await page.wait_for_timeout(1500)
+                        except Exception as exc:
+                            page_error = str(exc)[:300]
+                        await ctx.add_cookies(pw_cookies)
+                        try:
+                            storage_result = await _restore_web_storage(page, storage_bundle)
+                        except Exception as exc:
+                            storage_result = {"errors": [str(exc)[:300]]}
+                    stored = await ctx.cookies("https://www.dola.com")
+                    session_cookie_present = any(
+                        c["name"] == "sessionid" and c.get("value") for c in stored
+                    )
+                finally:
+                    await ctx.close()
+            except Exception as exc:
+                if config.COOKIE_RUNTIME == "cloak":
+                    raise RuntimeError(f"CloakBrowser profile 初始化失败: {exc}") from exc
+                browser_error = f"{type(exc).__name__}: {exc}"[:200]
+                engine = "pure"
+            # Strict branch has already materialized and populated the profile.
+            if engine == "browser":
+                pass
+            elif config.COOKIE_RUNTIME == "cloak":
+                raise RuntimeError("CloakBrowser profile 初始化失败")
+        else:
+            try:
+                session_cookie_present, storage_result, page_error = \
+                    await _apply_browser_profile(name, profile_dir, cookies, storage_bundle)
+            except Exception as exc:
+                if config.COOKIE_RUNTIME == "cloak":
+                    # 严格隔离模式禁止退回纯 API：否则账号会在导入成功后
+                    # 悄悄绕过独立浏览器环境，造成运行时环境混用。
+                    raise RuntimeError(f"CloakBrowser profile 初始化失败: {exc}") from exc
+                # 浏览器路径挂了（驱动/内核/代理）不该让整批导入失败：
+                # cookie_state.json 已落盘，账号照样能走纯 API。
+                browser_error = f"{type(exc).__name__}: {exc}"[:200]
+                engine = "pure"
+                page_error = browser_error
+                for item in list(profile_dir.iterdir()):
+                    if item.name == "cookie_state.json":
+                        continue
+                    if item.is_dir():
+                        shutil.rmtree(item, ignore_errors=True)
+                    else:
+                        try:
+                            item.unlink()
+                        except OSError:
+                            pass
 
     verify_error = ""
     verified = False
     if require_login:
-        if engine == "browser" and not config.PURE_API_ENABLED:
-            # 只有明确关掉纯 API 时才需要浏览器验证
+        if engine == "browser" and (config.COOKIE_RUNTIME == "cloak" or not config.PURE_API_ENABLED):
+            # 严格 Cloak 模式必须验证浏览器页面；纯 API 开关关闭时也走浏览器验证。
             try:
                 verified = await check_login_state(name)
             except Exception as exc:

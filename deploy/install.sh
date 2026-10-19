@@ -148,6 +148,17 @@ else
   c_ok "已生成配置：$ENV_FILE"
 fi
 
+# 严格 Cookie 模式才安装可选 CloakBrowser wrapper；默认纯 API 部署不下载它。
+if grep -qE '^DOLA_COOKIE_RUNTIME=cloak([[:space:]]*|$)' "$ENV_FILE"; then
+  if [ -f "$DOLA_DIR/deploy-cloak-requirements.txt" ]; then
+    c_info "安装 CloakBrowser Python wrapper（严格 Cookie 隔离模式）..."
+    as_user "$DOLA_DIR/.venv/bin/pip" install -q -r "$DOLA_DIR/deploy-cloak-requirements.txt"
+    c_ok "CloakBrowser wrapper 安装完成（首次启动时按官方渠道校验/下载内核）"
+  else
+    c_warn "配置启用了 DOLA_COOKIE_RUNTIME=cloak，但缺少 deploy-cloak-requirements.txt"
+  fi
+fi
+
 # ---------------------------------------------------------------- 5. systemd
 c_info "注册 systemd 服务 ${DOLA_SERVICE} ..."
 cat > /etc/systemd/system/${DOLA_SERVICE}-xvfb.service <<EOF

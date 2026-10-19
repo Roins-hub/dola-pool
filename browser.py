@@ -4,6 +4,7 @@
 见 DEVELOPMENT.md 第 5 节）。所有需要打开 dola 的脚本都走这里。
 """
 from pathlib import Path
+import json
 import re
 import time
 from urllib.parse import unquote, urlsplit
@@ -37,6 +38,80 @@ WIN_EDGE_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.2592.81"
 )
+
+
+def is_cloak_cookie_account(account: str | None) -> bool:
+    """严格 Cookie 模式下，仅将 dola Cookie profile 交给 CloakBrowser。"""
+    if config.COOKIE_RUNTIME != "cloak" or not account:
+        return False
+    state = Path("accounts") / account / "cookie_state.json"
+    if not state.is_file():
+        return False
+    try:
+        import sites
+        return sites.site_of_state_file(state) == sites.DOLA
+    except Exception:
+        return True
+
+
+def browser_profile_dir(account: str) -> Path:
+    """返回账号实际使用的浏览器 user-data-dir。"""
+    root = Path("accounts") / account
+    if is_cloak_cookie_account(account):
+        return root / config.COOKIE_PROFILE_SUBDIR
+    return root
+
+
+async def _materialize_cloak_cookie_profile(account: str, context) -> None:
+    """首次打开严格 Cookie profile 时，从账号状态恢复会话材料。
+
+    这样启用严格模式后，已经导入的账号无需立刻删除重建；新 profile 会从
+    cookie_state.json 物化 Cookie 与可恢复的 web storage。原始状态文件始终保留。
+    """
+    if not is_cloak_cookie_account(account):
+        return
+    profile = browser_profile_dir(account)
+    marker = profile / ".cookie-state-materialized"
+    if marker.exists():
+        return
+    state_path = Path("accounts") / account / "cookie_state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    raw = state.get("cookies_list") or []
+    cookies = []
+    for item in raw:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        domain = str(item.get("domain") or ".dola.com")
+        cookie = {
+            "name": str(item["name"]),
+            "value": str(item.get("value") or ""),
+            "domain": domain,
+            "path": str(item.get("path") or "/"),
+        }
+        if item.get("secure") is not None:
+            cookie["secure"] = bool(item["secure"])
+        cookies.append(cookie)
+    if cookies:
+        await context.add_cookies(cookies)
+    storage = state.get("storage") or {}
+    if storage:
+        page = context.pages[0] if context.pages else await context.new_page()
+        try:
+            await page.goto("https://www.dola.com/chat", timeout=60000,
+                            wait_until="domcontentloaded")
+            await context.add_cookies(cookies)
+            try:
+                from cookie_login import _restore_web_storage
+                await _restore_web_storage(page, storage)
+            except Exception:
+                # local/session storage is辅助材料；Cookie 本身仍是硬要求。
+                pass
+        except Exception:
+            pass
+    marker.write_text("materialized\n", encoding="ascii")
 
 
 def _kwargs_from_url(raw: str) -> dict | None:
@@ -92,11 +167,48 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     p: async_playwright() 实例
     headless: None = 用 config.HEADLESS
     """
-    profile_dir = Path("accounts") / account
-    if not profile_dir.exists():
+    account_root = Path("accounts") / account
+    profile_dir = browser_profile_dir(account)
+    if not account_root.exists():
         raise FileNotFoundError(
-            f"账号 profile 不存在: {profile_dir}（先跑 python login.py {account}）"
+            f"账号 profile 不存在: {account_root}（先跑 python login.py {account}）"
         )
+
+    if is_cloak_cookie_account(account):
+        try:
+            from cloakbrowser import launch_persistent_context_async
+        except ImportError as exc:
+            raise RuntimeError(
+                "DOLA_COOKIE_RUNTIME=cloak 但未安装 cloakbrowser；"
+                "请安装 CloakBrowser wrapper，或改回 DOLA_COOKIE_RUNTIME=pure"
+            ) from exc
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        if config.CLOAK_CACHE_DIR:
+            import os
+            os.environ.setdefault("CLOAKBROWSER_CACHE_DIR", config.CLOAK_CACHE_DIR)
+        cloak_proxy = proxy_store.proxy_url_for(account) or (config.PROXY or "")
+        extension_paths = []
+        if use_extension:
+            if not config.EXTENSION_ENABLED:
+                raise RuntimeError("Dola 扩展已禁用（DOLA_EXTENSION_ENABLED=0）")
+            extension_dir = Path(config.EXTENSION_DIR).resolve()
+            if not extension_dir.exists():
+                raise FileNotFoundError(f"Dola 扩展目录不存在: {extension_dir}")
+            extension_paths = [str(extension_dir)]
+        context = await launch_persistent_context_async(
+            str(profile_dir),
+            headless=config.CLOAK_HEADLESS if headless is None else bool(headless),
+            proxy=cloak_proxy or None,
+            locale="ja-JP",
+            timezone="Asia/Tokyo",
+            geoip=config.CLOAK_GEOIP,
+            humanize=config.CLOAK_HUMANIZE,
+            extension_paths=extension_paths or None,
+            license_key=config.CLOAK_LICENSE_KEY or None,
+        )
+        await _materialize_cloak_cookie_profile(account, context)
+        return context
+
     launch_headless = config.HEADLESS if headless is None else headless
     use_edge = (profile_dir / EDGE_MARKER).exists()
     if use_edge:

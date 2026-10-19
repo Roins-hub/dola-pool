@@ -103,6 +103,36 @@ dola.com **只允许日本 / 韩国 IP 访问**。服务器不在日韩的话，
 
 没单独配代理的账号，走环境变量 `DOLA_PROXY` 里的默认代理。
 
+#### Cookie 账号严格隔离（可选）
+
+Cookie 账号默认走纯 HTTP 协议。需要让 Dola Cookie 账号固定绑定浏览器环境时，使用非 Docker 的
+Chromium/Xvfb 部署，并安装 CloakBrowser wrapper，然后在 `dola.env` 设置：
+
+```env
+DOLA_COOKIE_RUNTIME=cloak
+DOLA_CLOAK_HEADLESS=0
+DOLA_ISOLATE_SHARED_EGRESS=1
+DOLA_EGRESS_THROTTLE_ROTATE=0
+DOLA_EGRESS_THROTTLE_MIN_ACCOUNTS=1
+DOLA_MIN_SUBMIT_INTERVAL_SECONDS=15
+CLOAKBROWSER_CACHE_DIR=/opt/dola-pool/.cloakbrowser
+```
+
+此模式下，dola.com 的每个 Cookie 账号使用 `accounts/<账号>/cloak-profile/` 独立持久 profile，
+并绑定账号自己的代理和 sticky session。浏览器不可用时不会静默回退到纯 API；豆包 Cookie 账号
+仍保持豆包纯 API 路径。已有账号首次运行时会从 `cookie_state.json` 物化 Cookie 和可恢复的
+Web Storage。不要复制 profile、`.cloakbrowser-seed` 或在账号之间复用出口。
+
+`710022002` 是上游“访问频繁”类限流信号。严格模式下同出口不并发、同号提交间隔默认 15 秒，
+命中后按出口和账号分别退避；默认不自动换 IP，避免同一个 Cookie 会话短时间发生设备/IP 跳变。
+调整前先确认代理确实是每号独立的固定或 sticky 出口。
+
+严格模式导入顺序：批量导入时勾选“跳过在线验证” → 导入完成后给每个账号绑定专属代理 →
+再逐个点击“验证”。这样首次访问 Dola 就会使用账号自己的出口，不会先经过全局默认代理。
+
+当前 Docker 镜像按设计只包含纯 API 依赖，不包含 CloakBrowser/Chromium；严格模式请使用
+`deploy/install.sh` 的 Xvfb/systemd 部署，或自行构建带浏览器依赖的镜像。
+
 ### 2.5 API Key
 
 调用方调接口时要带的“钥匙”（`Authorization: Bearer sk-xxx`）。两种来源：

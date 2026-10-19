@@ -29,6 +29,10 @@ import proxy_store
 import sites
 from doubao_gen import DoubaoModelLockedError, DoubaoQuotaError
 from pool import AccountConfig as _PoolAccountConfig, AccountPool as _PoolEngine
+try:
+    from browser import is_cloak_cookie_account
+except ImportError:  # legacy test doubles / embedders that stub the old browser module
+    is_cloak_cookie_account = lambda name: False
 
 logger = logging.getLogger("dola-pool.browser_pool")
 
@@ -816,6 +820,15 @@ class BrowserPool:
         if cached and not force and ttl > 0 and now - cached[0] < ttl:
             return {**cached[1], "cached": True, "probed": False}
 
+        # 严格 Cloak 模式下，Cookie 账号的探活也必须走浏览器；这里跳过
+        # 纯 API 的「你好」请求，避免同一账号在 requests 与浏览器之间串环境，
+        # 也避免探活本身额外触发 710022002。
+        if is_cloak_cookie_account(name):
+            return {"ok": True, "status": "skipped", "login_ok": True, "replied": True,
+                    "cached": False, "probed": False,
+                    "reason": "严格 Cloak Cookie 账号，跳过纯 API 探活",
+                    "reply": "", "elapsed": 0.0}
+
         state = self._pure_state(name)
         throttled = self.egress_throttle_remaining(name) if state is not None else 0
         if throttled > 0:
@@ -858,6 +871,9 @@ class BrowserPool:
         if result.get("throttled"):
             # 出口退避中、根本没发请求：不落库、不缓存，等出口恢复后再真探
             print(f"[pool] {name} 你好探测跳过（{remark}）", flush=True)
+            return result
+        if result.get("status") == "skipped" and "严格 Cloak" in str(result.get("reason") or ""):
+            # 严格模式没有发纯 API 请求，不能把之前的出口退避清零。
             return result
         if (result.get("status") == "error"
                 and classify_upstream_failure(remark) == "transient"):
@@ -1045,7 +1061,7 @@ class BrowserPool:
             raise RuntimeError("账号正在出片，稍后再验证")
         reason = ""
         pure_state = self._pure_state(name)
-        if pure_state is not None and self._is_cookie_source(name):
+        if pure_state is not None and self._is_cookie_source(name) and not is_cloak_cookie_account(name):
             if self.site_of(name) == sites.DOUBAO:
                 from doubao_gen import probe_login as login_probe
             else:
@@ -1439,7 +1455,11 @@ class BrowserPool:
         服务重启后 `_resume_task` 用它决定走纯 API 重新受理，而不是调浏览器 resume
         （本机没有可用的 Chromium，调了只会报 driver 错误）。
         """
-        return self._pure_state(name) is not None and self._is_cookie_source(name)
+        return (
+            self._pure_state(name) is not None
+            and self._is_cookie_source(name)
+            and not is_cloak_cookie_account(name)
+        )
 
     async def _generate_effective(self, account, prompt, ratio, duration, model, *,
                                   on_conversation_id, on_poll, on_balance,
@@ -1467,7 +1487,7 @@ class BrowserPool:
                 reference_image_paths=reference_image_paths,
             )
             return await self._web_playable(result)
-        if pure_state is not None and self._is_cookie_source(account):
+        if pure_state is not None and self._is_cookie_source(account) and not is_cloak_cookie_account(account):
             # cookie 号：纯 API 出片；失败抛真实错误，不再回退浏览器
             result = await asyncio.to_thread(
                 generate_pure_video,
@@ -2080,7 +2100,13 @@ class BrowserPool:
                             self._mark_quota_blocked(account, f"额度不足: {e}")
                             last_err = e
                         except RiskControlError as e:
-                            print(f"[pool] {account} 风控，冷却 30 分钟，换号: {e}", flush=True)
+                            message = str(e)
+                            # 浏览器提交路径也可能直接返回 710022002；它属于出口/账号
+                            # 限流，不应只按通用滑块风控处理，否则下一个任务会立即重撞。
+                            if classify_upstream_failure(message) == "transient":
+                                self.note_egress_throttle(account, message)
+                                self.note_account_throttle(account, message)
+                            print(f"[pool] {account} 风控/限流，冷却后换号: {e}", flush=True)
                             self._conn.execute(
                                 "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
                                 (time.time() + COOLDOWN_SEC, account))

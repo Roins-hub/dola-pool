@@ -1,0 +1,4 @@
+# Optional browser backend for strict Dola Cookie isolation.
+# Install only when DOLA_COOKIE_RUNTIME=cloak; the default pure API/Doubao image
+# should not pull this dependency.
+cloakbrowser>=0.6.3

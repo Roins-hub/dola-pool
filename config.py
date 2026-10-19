@@ -68,6 +68,20 @@ EXTENSION_ENABLED = os.getenv("DOLA_EXTENSION_ENABLED", "1") == "1"
 # Cookie 导入账号启动时使用 Windows 11 Edge 126 的 UA/启动参数伪装
 EDGE_FINGERPRINT_ENABLED = os.getenv("DOLA_EDGE_FINGERPRINT", "1") == "1"
 
+# Cookie 账号运行时后端：pure = 现有纯 HTTP；cloak = Dola Cookie 账号固定使用
+# CloakBrowser 持久 profile。严格模式下浏览器不可用时不会静默回退纯 API。
+COOKIE_RUNTIME = os.getenv("DOLA_COOKIE_RUNTIME", "pure").strip().lower()
+if COOKIE_RUNTIME not in {"pure", "cloak"}:
+    COOKIE_RUNTIME = "pure"
+COOKIE_PROFILE_SUBDIR = os.getenv("DOLA_COOKIE_PROFILE_SUBDIR", "cloak-profile").strip() or "cloak-profile"
+CLOAK_HEADLESS = os.getenv("DOLA_CLOAK_HEADLESS", "0") == "1"
+CLOAK_HUMANIZE = os.getenv("DOLA_CLOAK_HUMANIZE", "0") == "1"
+CLOAK_GEOIP = os.getenv("DOLA_CLOAK_GEOIP", "0") == "1"
+CLOAK_LICENSE_KEY = os.getenv("CLOAKBROWSER_LICENSE_KEY", "")
+CLOAK_CACHE_DIR = os.getenv("CLOAKBROWSER_CACHE_DIR", "")
+if CLOAK_CACHE_DIR:
+    os.environ.setdefault("CLOAKBROWSER_CACHE_DIR", CLOAK_CACHE_DIR)
+
 # 「验证」按钮对 Google 登录账号追加的聊天探活（账号声誉/风控预检）：
 # 发送一句问候，看是否正常回复，还是发送后立刻被踢成未登录。
 VERIFY_CHAT_PROBE = os.getenv("DOLA_VERIFY_CHAT_PROBE", "1") == "1"
@@ -255,7 +269,9 @@ REFERENCE_UPLOAD_DIRECT_FALLBACK = os.getenv("DOLA_REFERENCE_UPLOAD_DIRECT_FALLB
 
 # 同出口隔离：同一代理出口（host:port）同时只允许一个号提交。
 # 多个号共用同一个旋转网关时建议开 true，避免风控把同一出口并发送勤打断。
-ISOLATE_SHARED_EGRESS = os.getenv("DOLA_ISOLATE_SHARED_EGRESS", "0") == "1"
+ISOLATE_SHARED_EGRESS = os.getenv(
+    "DOLA_ISOLATE_SHARED_EGRESS", "1" if COOKIE_RUNTIME == "cloak" else "0"
+) == "1"
 
 # 连续失败分达到该值则冷却该号；0 = 不按失败分冷却。
 FAIL_SCORE_CAP = int(os.getenv("DOLA_FAIL_SCORE_CAP", "0"))
@@ -274,13 +290,17 @@ EGRESS_THROTTLE_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_SECONDS", "120"))
 # 同一出口在 EGRESS_THROTTLE_WINDOW_SECONDS 内有至少这么多个**不同的号**被限流，才判定是 IP 被限、
 # 整个出口一起退避。只有 1 个号被拒时只暂停那个号（号级暂停，见 THROTTLE_ACCOUNT_*）——
 # 2026-10-14 线上：acc4 被拒后整个 socks5 出口停了 2 分钟，同出口的 acc5 一放行就探测通过。
-EGRESS_THROTTLE_MIN_ACCOUNTS = int(os.getenv("DOLA_EGRESS_THROTTLE_MIN_ACCOUNTS", "2"))
+EGRESS_THROTTLE_MIN_ACCOUNTS = int(os.getenv(
+    "DOLA_EGRESS_THROTTLE_MIN_ACCOUNTS", "1" if COOKIE_RUNTIME == "cloak" else "2"
+))
 EGRESS_THROTTLE_WINDOW_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_WINDOW_SECONDS", "600"))
 EGRESS_THROTTLE_MAX_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_MAX_SECONDS", "900"))
 # 距上次被拒超过该秒数，递增计数清零，重新从 EGRESS_THROTTLE_SECONDS 起算。
 EGRESS_THROTTLE_RESET_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_RESET_SECONDS", "1800"))
 # 出口被限流时，动态代理/提取节点的号顺手换一个出口 IP（静态代理换不了，只能等）。
-EGRESS_THROTTLE_ROTATE = os.getenv("DOLA_EGRESS_THROTTLE_ROTATE", "1") == "1"
+EGRESS_THROTTLE_ROTATE = os.getenv(
+    "DOLA_EGRESS_THROTTLE_ROTATE", "0" if COOKIE_RUNTIME == "cloak" else "1"
+) == "1"
 # 没有任务总时限（deadline）的调用方，等出口恢复最多等多久（秒）。
 EGRESS_THROTTLE_MAX_WAIT_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_MAX_WAIT_SECONDS", "600"))
 # 面板提示：同一出口 IP 上的号超过这个数就标黄提醒（0 = 不提示）。
@@ -307,7 +327,9 @@ HELLO_PROBE_TIMEOUT = int(os.getenv("DOLA_HELLO_PROBE_TIMEOUT", "60"))
 HELLO_PROBE_SUBMIT_GAP_SECONDS = int(os.getenv("DOLA_HELLO_PROBE_SUBMIT_GAP_SECONDS", "15"))
 
 # 同一号两次向上游提交的最小间隔（秒）；0 = 不限制。
-MIN_SUBMIT_INTERVAL_SECONDS = int(os.getenv("DOLA_MIN_SUBMIT_INTERVAL_SECONDS", "0"))
+MIN_SUBMIT_INTERVAL_SECONDS = int(os.getenv(
+    "DOLA_MIN_SUBMIT_INTERVAL_SECONDS", "15" if COOKIE_RUNTIME == "cloak" else "0"
+))
 
 # seedance-2.0（每条 3 点）只能用【满额】组账号；满额暂时用完时排队等待的上限（秒）。
 # 0 = 不排队，立刻失败。
