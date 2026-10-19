@@ -3,16 +3,17 @@
 
 # dola-pool
 
-把一组 [dola.com](https://www.dola.com)（字节 Seedance 视频模型国际版）账号组成号池，对外提供 **OpenAI 兼容的视频生成 API**，并兼容火山方舟（Ark）任务式协议，可直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
+把一组 [dola.com](https://www.dola.com)（字节 Seedance 视频模型国际版）和 [豆包 doubao.com](https://www.doubao.com)（国内版）账号组成号池，对外提供 **OpenAI 兼容的视频生成 / 生图 API**，并兼容火山方舟（Ark）任务式协议，可直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
 
 - 多账号号池：自动选号、额度记账、风控冷却、失败换号、每日额度重置
-- 两种出片路径：纯 HTTP 协议（默认）与 Chromium 浏览器自动化（兜底）
-- 对外接口：OpenAI 风格 `/v1/videos`、Ark 风格 `/api/v3/contents/generations/tasks`
+- **两个站点的号混用**：dola 号接 `seedance-2.0/2.5`，豆包号接 `doubao-seedance-*` 视频和 `doubao-seedream-*` 生图，按模型名自动分派、互不串号
+- 两种出片路径：纯 HTTP 协议（默认）与 Chromium 浏览器自动化（兜底，仅 dola）
+- 对外接口：OpenAI 风格 `/v1/videos`、`/v1/images/generations`、`/v1/images/edits`，Ark 风格 `/api/v3/contents/generations/tasks`
 - 自带管理面板：账号、代理、客户 API Key、任务、视频、压力测试
-- 参考图生视频、无水印成片、本地转存与静态分发
+- 参考图生视频 / 图生图、本地转存与静态分发（水印情况见「注意事项」）
 
 > 📖 **第一次使用？先看 [`USAGE.md`](USAGE.md) 使用手册**：核心概念、管理面板每个按钮的作用、从零出第一条视频、日常运营与常见问题。
-> 🍪 **加号前先看 [`COOKIE.md`](COOKIE.md)**：怎么从浏览器导出 dola 账号的 Cookie（Cookie-Editor 插件 / 开发者工具）。
+> 🍪 **加号前先看 [`COOKIE.md`](COOKIE.md)**：怎么从浏览器导出 dola / 豆包账号的 Cookie（Cookie-Editor 插件 / 开发者工具）。
 >
 > 完整的下游对接文档（鉴权、字段、错误码、管理接口）见 [`API.md`](API.md)。
 
@@ -190,6 +191,27 @@ curl -o out.mp4 https://your-domain/v1/videos/video_xxx/content -H "Authorizatio
 
 参考图可用 `reference_images`、`image_url`、`image`、`input_image(s)` 任一字段传公网 URL；时长字段兼容 `duration` / `seconds` / `duration_seconds`。
 
+豆包号的视频把模型换成 `doubao-seedance-*` 即可（时长 4～15 秒任意整数，2.5 到 30 秒）：
+
+```bash
+curl -X POST https://your-domain/v1/videos \
+  -H "Authorization: Bearer sk-your-key" -H "Content-Type: application/json" \
+  -d '{"model":"doubao-seedance-2.0-mini","prompt":"一只橘色小猫在草地上追逐蝴蝶","duration":7,"ratio":"9:16"}'
+```
+
+生图（只接豆包号，同步返回）：
+
+```bash
+curl -X POST https://your-domain/v1/images/generations \
+  -H "Authorization: Bearer sk-your-key" -H "Content-Type: application/json" \
+  -d '{"model":"doubao-seedream-5.0-flash","prompt":"雪地里的红色狐狸","size":"1536x1024"}'
+# -> {"created":1792373000,"data":[{"url":"https://your-domain/videos/img_xxx.png"}],...}
+
+# 图生图 / 改图：multipart 上传图片（也可以 JSON 里用 reference_images 传 URL）
+curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-your-key" \
+  -F model=doubao-seedream-5.0-flash -F prompt="把猫的胡子去掉" -F image=@cat.jpg
+```
+
 ### 接入 new-api
 
 用 new-api 内置的 **Doubao 任务插件**（渠道类型「任务插件」，插件选 Doubao）：
@@ -201,6 +223,9 @@ curl -o out.mp4 https://your-domain/v1/videos/video_xxx/content -H "Authorizatio
    {"doubao-seedance-2-0-260128": "seedance-2.0", "doubao-seedance-2-5-260628": "seedance-2.5"}
    ```
 4. 在 new-api 中为这两个模型配置价格（按次或按量均可）。
+5. 豆包号的视频模型同理：渠道里加 `doubao-seedance-2.0-mini` 等名字（或对外起别名再用模型重定向映射过来）；
+   new-api 插件的官方名（`doubao-seedance-2-0-260128` 等）**不会**派给豆包号，仍按 dola 处理。
+6. 生图走 OpenAI 图片接口（`/v1/images/generations`），在 new-api 里按 OpenAI 渠道接 `doubao-seedream-*` 模型即可。
 
 插件会以 Ark 协议调用本服务的 `/api/v3/contents/generations/tasks`。new-api 渠道页的「测试」按钮不支持任务插件渠道，显示 `Task Plugin channel test is not supported` 属于正常现象，请用真实请求验证。
 
@@ -238,7 +263,10 @@ curl -o out.mp4 https://your-domain/v1/videos/video_xxx/content -H "Authorizatio
 | `browser_pool.py` | 号池调度：选号、换号重试、总时限、额度与冷却 |
 | `pool.py` / `store.py` / `user_store.py` | 账号池、任务存储（SQLite）、管理员 |
 | `proxy_store.py` | 静态 / 动态代理管理与轮换 |
-| `pure_api_gen.py` / `protocol/` | 纯 HTTP 出片协议实现 |
+| `pure_api_gen.py` / `protocol/` | 纯 HTTP 出片协议实现（dola） |
+| `protocol/doubao_site.py` / `sites.py` | 豆包站点配置（复用同一份协议代码）、账号站点与模型识别 |
+| `doubao_gen.py` | 豆包号出视频：确认 / 付费 / 会员模型话术处理、自动关 AI 水印、无水印下载 |
+| `image_gen.py` | 豆包号生图（Seedream） |
 | `browser.py` / `video_worker_ui.py` | 浏览器自动化出片路径 |
 | `media.py` | 参考图下载、成片元数据 |
 | `web/` | 管理面板前端 |
@@ -254,10 +282,13 @@ pytest -q tests
 
 ## 注意事项
 
-- 账号 cookie 约 60 天过期；登录态失效的账号会被自动标记，需重新导入。
-- **去水印**：不处理画面，而是直接下载 dola 服务器上的无水印版本（dola 自带的 `lr=unwatermarked` 直链）。第三方解析接口（`protocol/dola_pure_api.py` 中的 `NOWATERMARK_API_ENDPOINT`）**默认关闭**（`DOLA_PURE_REMOVE_WATERMARK=0`）；设为 `1` 才会启用，届时视频播放信息会经 HTTP 发给第三方。原理与风险详见 [`USAGE.md` 的「去水印说明」](USAGE.md#7-去水印说明)。
+- 账号 cookie 约 60 天过期；登录态失效的账号会被自动标记，需重新导入。导入号池的号**不要在浏览器里点退出登录**（豆包实测退出后 Cookie 立刻失效）。
+- **水印**：
+  - **dola 视频**：dola 网页默认给的下载地址带水印（`lr=cici_ai`），号池下载的是 dola 返回数据里同一条视频的另一个版本（`lr=unwatermarked`），不对画面做处理。第三方解析接口（`protocol/dola_pure_api.py` 中的 `NOWATERMARK_API_ENDPOINT`）**默认关闭**（`DOLA_PURE_REMOVE_WATERMARK=0`）；设为 `1` 才会启用，届时视频播放信息会经 HTTP 发给第三方。原理与风险详见 [`USAGE.md` 的「去水印说明」](USAGE.md#7-去水印说明)。
+  - **豆包视频 / 生图**：「AI 生成」明水印是豆包官方的按号设置（豆包设置 → AI 生成水印管理）。`DOUBAO_AUTO_NO_WATERMARK=1`（默认）时号池用官方设置接口替号关掉，再走官方无水印下载接口；关掉明水印后，内容公开发布时需由发布方自行标注「AI 生成」。
+  - **dola 生图不接**：dola 下载图带「Dola AI」标识，又没有官方关闭开关。
 - `accounts/`、`*.db`、`dola.env`、`cookies.txt`、`downloads/` 均已忽略，切勿提交真实凭据。
 
 ## 免责声明
 
-本仓库是个人学习与互操作性研究记录，包含对上游网页接口的逆向实现；代码不含任何账号、cookie、密钥或可用凭据。`extensions/dola30/` 为第三方扩展，其授权与使用权归原作者。使用者须自行遵守 dola.com 服务条款及所在地法律法规，自行评估账号与合规风险。
+本仓库是个人学习与互操作性研究记录，包含对上游网页接口的逆向实现；代码不含任何账号、cookie、密钥或可用凭据。`extensions/dola30/` 为第三方扩展，其授权与使用权归原作者。使用者须自行遵守 dola.com、doubao.com 服务条款及所在地法律法规（包括人工智能生成内容的标识要求），自行评估账号与合规风险。
