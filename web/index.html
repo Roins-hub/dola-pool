@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>dola-pool 管理面板</title>
+<script src="i18n/i18n.js"></script>
 <style>
 :root{
   --bg:#0a0f1d;--card:rgba(255,255,255,.08);
@@ -148,6 +149,9 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
 .mask input{width:100%;padding:10px 12px;margin-bottom:14px;font-size:14px}
 .mask .err{color:#ff9a9a;font-size:12px;margin-bottom:10px;display:none}
 .mask button{width:100%}
+.lang-sel{width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:10px;font-size:13px;font-family:inherit;background:rgba(255,255,255,.06);color:var(--text);cursor:pointer}
+.lang-sel option{background:#0f1526;color:var(--text)}
+.mask .lang-sel{margin-top:14px}
 .dialog{position:fixed;inset:0;background:rgba(4,8,16,.62);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   display:flex;align-items:center;justify-content:center;z-index:90}
 .dialog .box{background:var(--glass);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
@@ -205,6 +209,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
     <input id="loginPassword" type="password" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
     <div class="err" id="loginErr">用户名或密码错误</div>
     <button class="btn btn-p" onclick="submitLogin()">登录</button>
+    <select class="lang-sel" data-i18n-switcher aria-label="Language"></select>
   </div>
 </div>
 
@@ -227,6 +232,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
     <button class="btn" onclick="refresh()">刷新</button>
     <button class="btn btn-p" onclick="openStress()">压力测试</button>
     <button class="btn btn-danger" onclick="logout()" title="清除面板密码">注销</button>
+    <select class="lang-sel" data-i18n-switcher aria-label="Language"></select>
   </div>
 </aside>
 
@@ -356,7 +362,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
   <div class="box" style="width:720px">
     <h2>任务提示词</h2>
     <div class="tiny" id="promptMeta" style="margin-bottom:10px"></div>
-    <div class="prompt-body" id="promptBody"></div>
+    <div class="prompt-body" id="promptBody" translate="no"></div>
     <div class="row">
       <button class="btn" id="promptCopyBtn" onclick="copyPrompt()">复制</button>
       <button class="btn" onclick="hide('promptModal')">关闭</button>
@@ -718,7 +724,7 @@ function noteCell(x){
   const note=x.note||'';
   const open=`onclick="editNote('${x.name}')"`;
   if(!note)return `<span class="tiny" style="cursor:pointer" title="点击可填写备注" ${open}>—</span>`;
-  return `<span class="note" title="点击编辑备注" ${open}>${esc(note)}</span>`;
+  return `<span class="note" translate="no" title="点击编辑备注" ${open}>${esc(note)}</span>`;
 }
 async function editNote(name){
   const cur=(allAccounts.find(a=>a.name===name)||{}).note||'';
@@ -2091,7 +2097,7 @@ async function loadTasks(){
   const rows=r.tasks.map(t=>[
     selBox('tasks',t.id,running(t),running(t)?'还在排队/生成中，不能删除':''),
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
-    '<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>'
+    '<span class="prompt" translate="no" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>'
       +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">查看</button>',
     refCell(t),
     accChain(t),
@@ -2188,7 +2194,7 @@ async function loadVideos(){
       v.account||'-',
       v.model||'-',
       state,
-      '<span class="prompt" title="'+esc(v.prompt||'')+'">'+esc(v.prompt||'')+'</span>',
+      '<span class="prompt" translate="no" title="'+esc(v.prompt||'')+'">'+esc(v.prompt||'')+'</span>',
       ops
     ];
   });
