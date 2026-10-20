@@ -123,9 +123,18 @@ CLOAKBROWSER_CACHE_DIR=/opt/dola-pool/.cloakbrowser
 仍保持豆包纯 API 路径。已有账号首次运行时会从 `cookie_state.json` 物化 Cookie 和可恢复的
 Web Storage。不要复制 profile、`.cloakbrowser-seed` 或在账号之间复用出口。
 
-`710022002` 是上游“访问频繁”类限流信号。严格模式下同出口不并发、同号提交间隔默认 15 秒，
+`710022002` 是上游“访问频繁”类限流信号。严格模式默认按程序记录的出口身份互斥，并配置 15 秒提交间隔参数，
 命中后按出口和账号分别退避；默认不自动换 IP，避免同一个 Cookie 会话短时间发生设备/IP 跳变。
 调整前先确认代理确实是每号独立的固定或 sticky 出口。
+
+注意：15 秒参数传入选号引擎，但当前视频派发循环直接选号，不能把它当作所有请求的强制限速器。
+实际降载应同时设置 `DOLA_MAX_CONCURRENCY=1` 并观察请求日志。动态代理的 session 标识不同不代表
+实际出口 IP 不同；同出口互斥也不等于公网 IP 去重。当前模式不是容器/虚拟机隔离。
+
+主分支的会话修复在每个 `cloak-profile/` 内保存 `.cloak-session-cookies.json`（Linux `600` 权限），
+用于关闭后恢复会话 Cookie，空快照不会回填已退出的登录态。此文件包含凭据，不应分享或提交 Git。
+普通 Cookie JSON 不一定包含 localStorage/IndexedDB；导入 Cookie 不能还原原设备的完整环境，
+sessionStorage 也不能被视为已实现完整的跨重启持久化。30 秒 `pair` 和纯 API 后台取回不覆盖 Cloak 账号。
 
 严格模式导入顺序：批量导入时勾选“跳过在线验证” → 导入完成后给每个账号绑定专属代理 →
 再逐个点击“验证”。这样首次访问 Dola 就会使用账号自己的出口，不会先经过全局默认代理。
