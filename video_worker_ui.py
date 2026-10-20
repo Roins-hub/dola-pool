@@ -723,10 +723,11 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
     model_key = model.lower().replace("-", "_")
     if model_key in ("seedance_2.5", "seedance_v2.5", "seedance_25", "seedance_v25"):
         model_key = "seedance_v2.5"
-    elif model_key in ("seedance_2.0", "seedance_v2.0", "seedance_20", "seedance_v20"):
-        model_key = "seedance_v2.0"
+    elif model_key in ("seedance_2.0", "seedance_v2.0", "seedance_20", "seedance_v20",
+                       "seedance_2.0_fast", "seedance_v2.0_fast"):
+        model_key = "seedance_v2.0"         # dola 网页上叫 Seedance 2.0 Fast
     else:
-        raise ValueError(f"不支持的模型: {model}（当前支持 seedance-2.0 / seedance-2.5）")
+        raise ValueError(f"不支持的模型: {model}（当前支持 seedance-2.0-fast / seedance-2.5）")
     if duration is not None and duration not in (5, 10, 15, 30):
         raise ValueError("Dola 当前支持 5/10/15 秒和扩展注入的 30 秒")
     if duration == 30 and not use_extension:

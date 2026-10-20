@@ -1,5 +1,17 @@
 # 更新日志
 
+## 2.5.1 — 2026-10-20
+
+**dola 的 2.0 模型改名为 `seedance-2.0-fast`。** dola 网页上只有「Seedance 2.0 Fast」（上游值 `seedance_v2.0`），
+没有标准版 Seedance 2.0，原来对外叫 `seedance-2.0` 容易误会成标准版。
+
+- `/v1/models` 列出 `seedance-2.0-fast`（不再列 `seedance-2.0`）；请求的默认模型、新任务落库和返回的模型名、
+  报错提示、面板「测试生成」选项都改成新名。面板里老任务 / 视频记录的 `seedance-2.0` 也按新名显示。
+- **旧名 `seedance-2.0` 仍然可用**（兼容老客户端和 new-api 的模型重定向），按 2.0 Fast 处理；计价表等内部标识不变，
+  `DOLA_DURATION_COSTS` 的写法照旧。
+- 豆包的 `doubao-seedance-2.0`（豆包的标准版 Seedance 2.0）不受影响。
+- 更新 README、API.md、USAGE.md；测试：`tests/test_model_names.py`。
+
 ## 2.5.0 — 2026-10-19
 
 **严格 Cookie 环境隔离与上游限流保护。**

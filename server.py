@@ -82,7 +82,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.5.1"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -341,7 +341,7 @@ def _normalize_allowed_durations(values) -> list[int]:
 
 
 class VideoGenRequest(BaseModel):
-    model: str = "seedance-2.0"
+    model: str = "seedance-2.0-fast"
     prompt: str = Field(..., min_length=1)
     size: str | None = None
     ratio: str | None = None
@@ -362,7 +362,7 @@ class VideoGenRequest(BaseModel):
 class TestGenRequest(BaseModel):
     """账号级「测试生成」：用指定账号跑一条真实出片，看该号能否成功。"""
     prompt: str = Field(..., min_length=1)
-    model: str = "seedance-2.0"
+    model: str = "seedance-2.0-fast"
     duration: int = Field(10, ge=4, le=30)
     ratio: str | None = None
     # 号处于风控/限流暂停/没绑代理等状态时，先返回提醒；确认后带 force=true 再发
@@ -434,6 +434,17 @@ def _resolve_ratio(size, ratio):
     if size and size in SIZE_TO_RATIO:
         return SIZE_TO_RATIO[size]
     return ratio
+
+
+# dola 网页上 2.0 只有「Seedance 2.0 Fast」（上游值 seedance_v2.0），对外就叫 seedance-2.0-fast；
+# 旧名 seedance-2.0 仍然收（兼容老接法 / new-api 的模型重定向），按 2.0 Fast 处理，但不再列出。
+# 内部的版本标识（计价表 MODEL_COSTS / DURATION_COSTS 的键）保持 "seedance-2.0" 不变。
+DOLA_V20_PUBLIC = "seedance-2.0-fast"
+
+
+def _public_model(version: str) -> str:
+    """内部版本标识 → 对外模型名（落库、返回给调用方、面板显示）。"""
+    return DOLA_V20_PUBLIC if version == "seedance-2.0" else version
 
 
 def _model_version(model) -> str | None:
@@ -1332,7 +1343,7 @@ def _reject_unaffordable(model: str, duration) -> None:
             422,
             f"{model} 生成 {duration} 秒视频，dola 要扣 {cost} 个额度，超过每个号每日上限 "
             f"{config.DAILY_LIMIT} 个，号池无法生成；请改用更短时长"
-            + ("或 seedance-2.0" if "2.5" in model else ""))
+            + ("或 seedance-2.0-fast" if "2.5" in model else ""))
 
 
 def _check_doubao_model(model, duration) -> str:
@@ -1363,7 +1374,7 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images)
             supported = _supported_durations_for(version)
             raise HTTPException(
                 422,
-                f"{version} 仅支持 {'/'.join(map(str, supported))} 秒视频"
+                f"{_public_model(version)} 仅支持 {'/'.join(map(str, supported))} 秒视频"
                 f"（收到 {duration} 秒）",
             )
         raise HTTPException(
@@ -1371,9 +1382,9 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images)
             "不支持的模型/时长组合："
             f"模型={model!r}，时长={duration}秒"
             f"（seedance-2.5 支持 {_supported_durations_for('seedance-2.5')} 秒，"
-            f"seedance-2.0 仅支持 {list(config.V20_DURATIONS)} 秒）",
+            f"seedance-2.0-fast 仅支持 {list(config.V20_DURATIONS)} 秒）",
         )
-    model = resolved
+    model = _public_model(resolved)
     # Key 的时长白名单只管 dola 的档位；豆包的任意秒数只受上面的模型范围约束
     if duration not in client["allowed_durations"] and not (
             sites.is_doubao_model(model) and duration not in SUPPORTED_DURATIONS):
@@ -1564,7 +1575,7 @@ async def list_models():
     return {
         "object": "list",
         "data": [
-            {"id": "seedance-2.0", "object": "model", "owned_by": "dola-pool", "created": 0},
+            {"id": DOLA_V20_PUBLIC, "object": "model", "owned_by": "dola-pool", "created": 0},
             {"id": "seedance-2.5", "object": "model", "owned_by": "dola-pool", "created": 0},
         ] + [
             {"id": name, "object": "model", "owned_by": "dola-pool-doubao", "created": 0}
@@ -1648,7 +1659,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
             "不支持的模型/时长组合："
             f"模型={requested_model!r}，时长={duration}秒"
             f"（seedance-2.5 支持 {_supported_durations_for('seedance-2.5')} 秒，"
-            f"seedance-2.0 仅支持 {list(config.V20_DURATIONS)} 秒）",
+            f"seedance-2.0-fast 仅支持 {list(config.V20_DURATIONS)} 秒）",
         )
     resp = await _submit_task(client, model, prompt, ratio, duration, reference_images)
     return {"id": resp.id, "status": resp.status}

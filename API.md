@@ -28,8 +28,8 @@ KEY=<你的 API Key>            # 在管理面板「API 密钥」里创建；环
 # 1) 提交一条 15 秒视频
 curl -s -X POST "$BASE/v1/videos/generations" \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"model":"seedance-2.0","prompt":"一只猫在窗台上看雨","size":"720x1280","duration":15}'
-# -> {"id":"video_xxx","status":"queued","model":"seedance-2.0","prompt":"..."}
+  -d '{"model":"seedance-2.0-fast","prompt":"一只猫在窗台上看雨","size":"720x1280","duration":15}'
+# -> {"id":"video_xxx","status":"queued","model":"seedance-2.0-fast","prompt":"..."}
 
 # 2) 轮询（建议 3~5 秒一次）
 curl -s "$BASE/v1/videos/video_xxx" -H "Authorization: Bearer $KEY"
@@ -145,7 +145,9 @@ Content-Type: application/json
 | 模型 | 支持时长 | 每次出片扣点 | 一个号一天（默认 4 点）能出 |
 |---|---|---|---|
 | `seedance-2.5` | 5 / 10 / 30 秒（15 秒报价 12 点出不了；30 秒需 `DOLA_30S_MODE=pair`，见下） | 5 秒 2 点、10 秒 4 点、15 秒 12 点、30 秒 2 点（补后半段时共 4 点） | 5 秒 2 条 / 10 秒 1 条 / 30 秒 2 条 |
-| `seedance-2.0` | 5 / 10 / 15 秒 | 5 秒 1 点、10 秒 2 点、15 秒 ≈ 3 点（推算，未实测） | 5 秒 4 条 / 10 秒 2 条 / 15 秒 1 条 |
+| `seedance-2.0-fast` | 5 / 10 / 15 秒 | 5 秒 1 点、10 秒 2 点、15 秒 ≈ 3 点（推算，未实测） | 5 秒 4 条 / 10 秒 2 条 / 15 秒 1 条 |
+
+> `seedance-2.0-fast` 即 dola 网页上的「Seedance 2.0 Fast」。旧名 `seedance-2.0` 仍然收（按 2.0 Fast 处理，返回和落库的模型名是 `seedance-2.0-fast`），但 `/v1/models` 不再列出。
 
 > 2.1.9 起扣点按「模型 + 时长」（dola 实际报价）。报价超过一个号每日额度的组合在提交时返回
 > `422 seedance-2.5 生成 15 秒视频，dola 要扣 12 个额度，超过每个号每日上限 4 个，号池无法生成…`。
@@ -225,7 +227,7 @@ Content-Type: application/json
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | string | ✅ | 提示词，长度 ≥ 1 |
-| `model` | string | | 默认 `seedance-2.0` |
+| `model` | string | | 默认 `seedance-2.0-fast` |
 | `duration` | int | | 5～30；实际合法性由模型决定 |
 | `seconds` | int | | `duration` 的别名（new-api 插件用） |
 | `duration_seconds` | int | | 同上 |
@@ -239,7 +241,7 @@ Content-Type: application/json
 响应 `200`：
 
 ```json
-{"id":"video_5f3c…","status":"queued","model":"seedance-2.0","prompt":"一只猫在窗台上看雨"}
+{"id":"video_5f3c…","status":"queued","model":"seedance-2.0-fast","prompt":"一只猫在窗台上看雨"}
 ```
 
 示例：
@@ -310,7 +312,7 @@ GET /v1/models        # 无需鉴权
 
 ```json
 {"object":"list","data":[
-  {"id":"seedance-2.0","object":"model","owned_by":"dola-pool","created":0},
+  {"id":"seedance-2.0-fast","object":"model","owned_by":"dola-pool","created":0},
   {"id":"seedance-2.5","object":"model","owned_by":"dola-pool","created":0},
   {"id":"doubao-seedance-2.0-mini","object":"model","owned_by":"dola-pool-doubao","created":0},
   {"id":"doubao-seedance-2.0-fast","object":"model","owned_by":"dola-pool-doubao","created":0},
@@ -434,8 +436,8 @@ GET /videos/<文件名>.mp4      # 无需鉴权
 | `401` | `invalid api key` | Key 不对/被禁用/过期 |
 | `404` | `task not found` | 任务不存在，或不属于该 Key |
 | `409` | `video not ready` | 视频还没出完（仅内容端点） |
-| `422` | `seedance-2.0 仅支持 5/10/15 秒视频（收到 30 秒）` | 模型与时长不匹配 |
-| `422` | `不支持的模型/时长组合：模型='x'，时长=7秒（seedance-2.5 仅支持 5/10/30 秒，seedance-2.0 仅支持 5/10/15 秒）` | 同上，模型名无法识别时 |
+| `422` | `seedance-2.0-fast 仅支持 5/10/15 秒视频（收到 30 秒）` | 模型与时长不匹配 |
+| `422` | `不支持的模型/时长组合：模型='x'，时长=7秒（seedance-2.5 仅支持 5/10/30 秒，seedance-2.0-fast 仅支持 5/10/15 秒）` | 同上，模型名无法识别时 |
 | `422` | `当前 API Key 不允许生成 30 秒视频` | Key 的 `allowed_durations` 限制 |
 | `422` | `dola 自 2026-10-12 起单条视频最长 15 秒，30 秒无法直接生成…` | `DOLA_30S_MODE=reject`（默认）时请求 30 秒 |
 | `422` | `参考图片最多 30 张` / `参考文件不是有效图片` / `参考图片只支持 http/https 公网 URL` / `参考图片 URL 指向内网或保留地址` / `参考图片超过单文件大小限制` | 参考图校验失败 |
@@ -471,7 +473,7 @@ KEY=sk-your-key
 
 TASK=$(curl -s -X POST "$BASE/v1/videos/generations" \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"model":"seedance-2.0","prompt":"赛博朋克城市夜景","size":"1280x720","duration":10}' \
+  -d '{"model":"seedance-2.0-fast","prompt":"赛博朋克城市夜景","size":"1280x720","duration":10}' \
   | python -c 'import sys,json;print(json.load(sys.stdin)["id"])')
 
 while :; do
@@ -494,7 +496,7 @@ BASE = "https://your-domain"
 KEY  = "sk-your-key"
 H    = {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}
 
-def create(prompt, duration=10, model="seedance-2.0", size="720x1280", refs=None, retries=3):
+def create(prompt, duration=10, model="seedance-2.0-fast", size="720x1280", refs=None, retries=3):
     body = {"model": model, "prompt": prompt, "duration": duration, "size": size}
     if refs:
         body["reference_images"] = refs
@@ -531,7 +533,7 @@ open("out.mp4", "wb").write(requests.get(url, timeout=120).content)
 |---|---|
 | 渠道类型 | OpenAI 兼容 / Sora 任务型插件 |
 | Base URL | `https://your-domain` |
-| 模型 | `seedance-2.0`、`seedance-2.5`（`GET /v1/models` 会自动返回） |
+| 模型 | `seedance-2.0-fast`、`seedance-2.5`（`GET /v1/models` 会自动返回） |
 | 提交路径 | `POST /v1/videos/generations`（或插件要求的 `POST /v1/videos`） |
 | 查询路径 | `GET /v1/videos/{id}`，取文件 `GET /v1/videos/{id}/content` |
 | 时长字段 | 插件若把时长写成 `seconds`，本服务同样识别（不会掉回默认 10 秒） |
