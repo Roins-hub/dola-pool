@@ -1556,7 +1556,7 @@ class BrowserPool:
         return out
 
     async def test_generate(self, account: str, prompt: str, ratio: str | None = None,
-                            duration: int = 10, model: str = "seedance-2.0",
+                            duration: int = 10, model: str = "seedance-2.0-fast",
                             on_poll=None) -> dict:
         """账号级测试出片：强制用指定账号生成一条，返回成功/失败与成品 URL。
 
@@ -2155,7 +2155,7 @@ class BrowserPool:
                         f"号池里没有号付得起这一单：{model} {duration} 秒上游要扣 {cost} 点"
                         f"（需要剩余 ≥ {cost} 点的号），"
                         f"可用账号今日最多只剩 {best} 点（每日 {DAILY_LIMIT} 点，"
-                        f"{config.LIMIT_RESET_TZ} 0 点重置）；可改用更短时长或 seedance-2.0")
+                        f"{config.LIMIT_RESET_TZ} 0 点重置）；可改用更短时长或 seedance-2.0-fast")
                 if non_pure and not non_pure_announced:
                     non_pure_announced = True
                     print(f"[pool] 30 秒两段拼接只走纯 API（Cookie 导入的号），跳过浏览器登录号："

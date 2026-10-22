@@ -1,6 +1,15 @@
 # 更新日志
 
-## 未发布
+## 未发布 — 2026-10-20
+
+**修复 CloakBrowser 会话在第二次启动时丢失。**
+
+- 为每个 profile 原子保存 `.cloak-session-cookies.json`，仅恢复缺失的会话 Cookie；保留原有过期语义，不覆盖浏览器中更新后的 Cookie。
+- 空会话快照表示已退出登录，不重新导入旧 Cookie。修复旧的“已迁移”标记导致空 profile 无法恢复的问题。
+- 快照限制为 Dola 域，在 Linux 上权限为 `600`；保存失败仍关闭浏览器，初始化失败释放已启动的 context。
+- Cloak 启动前要求账号绑定启用的代理，代理 URL 为空时停止启动。
+- 单账号部署验证：同一账号两次启动均保留会话，真实页面登录检查通过；尚未验证视频出片或长期限流改善。
+- 新增无需网络的会话持久化回归测试，补充 README/USAGE 的隔离边界。
 
 **管理面板多语言：中文 / Tiếng Việt / 中越双语。**
 
@@ -8,7 +17,21 @@
   提示属性和 alert / confirm / prompt，动态渲染的内容同样翻译；面板代码无需改字符串。
 - 侧栏底部和登录框加语言下拉框，选择记在浏览器；双语模式在越南语后附中文原文。
 - 新增 `i18n_tool.py`（抽取 / 同步 / 检查翻译）与 `tests/test_i18n.py`；新增语言的步骤见 `I18N.md`。
-- 新增越南语文档 `README.vi.md`、`USAGE.vi.md`、`COOKIE.vi.md`。
+- 账号名、代理名、备注、提示词等用户 / 上游数据加 `translate="no"`，不会被词典改写（例如名为「代理(默认)」的代理）；
+  `tests/test_i18n.py` 检查面板里这些动态插入点都带了保护。
+- 新增越南语文档 `README.vi.md`、`USAGE.vi.md`、`COOKIE.vi.md`（模型名按 2.5.1 写 `seedance-2.0-fast`，注明旧名兼容）。
+
+## 2.5.1 — 2026-10-20
+
+**dola 的 2.0 模型改名为 `seedance-2.0-fast`。** dola 网页上只有「Seedance 2.0 Fast」（上游值 `seedance_v2.0`），
+没有标准版 Seedance 2.0，原来对外叫 `seedance-2.0` 容易误会成标准版。
+
+- `/v1/models` 列出 `seedance-2.0-fast`（不再列 `seedance-2.0`）；请求的默认模型、新任务落库和返回的模型名、
+  报错提示、面板「测试生成」选项都改成新名。面板里老任务 / 视频记录的 `seedance-2.0` 也按新名显示。
+- **旧名 `seedance-2.0` 仍然可用**（兼容老客户端和 new-api 的模型重定向），按 2.0 Fast 处理；计价表等内部标识不变，
+  `DOLA_DURATION_COSTS` 的写法照旧。
+- 豆包的 `doubao-seedance-2.0`（豆包的标准版 Seedance 2.0）不受影响。
+- 更新 README、API.md、USAGE.md；测试：`tests/test_model_names.py`。
 
 ## 2.5.0 — 2026-10-19
 

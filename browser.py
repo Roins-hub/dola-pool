@@ -62,56 +62,75 @@ def browser_profile_dir(account: str) -> Path:
     return root
 
 
-async def _materialize_cloak_cookie_profile(account: str, context) -> None:
-    """首次打开严格 Cookie profile 时，从账号状态恢复会话材料。
+def _dola_cookie(c):
+    host = str(c.get("domain") or "").lower().lstrip(".")
+    return host == "dola.com" or host.endswith(".dola.com")
 
-    这样启用严格模式后，已经导入的账号无需立刻删除重建；新 profile 会从
-    cookie_state.json 物化 Cookie 与可恢复的 web storage。原始状态文件始终保留。
-    """
-    if not is_cloak_cookie_account(account):
-        return
+
+def _save_cloak_cookies(path, cookies):
+    import os
+    import tempfile
+    fd, temp = tempfile.mkstemp(prefix=".cookies-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(cookies, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+async def _materialize_cloak_cookie_profile(account: str, context) -> None:
+    """Keep session cookies without manufacturing an expiry or replaying logged-out state."""
     profile = browser_profile_dir(account)
     marker = profile / ".cookie-state-materialized"
-    if marker.exists():
-        return
-    state_path = Path("accounts") / account / "cookie_state.json"
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    raw = state.get("cookies_list") or []
-    cookies = []
-    for item in raw:
-        if not isinstance(item, dict) or not item.get("name"):
-            continue
-        domain = str(item.get("domain") or ".dola.com")
-        cookie = {
-            "name": str(item["name"]),
-            "value": str(item.get("value") or ""),
-            "domain": domain,
-            "path": str(item.get("path") or "/"),
-        }
-        if item.get("secure") is not None:
-            cookie["secure"] = bool(item["secure"])
-        cookies.append(cookie)
-    if cookies:
+    snapshot = profile / ".cloak-session-cookies.json"
+    live = await context.cookies("https://www.dola.com")
+    if snapshot.exists():
+        saved = json.loads(snapshot.read_text(encoding="utf-8"))
+        if not isinstance(saved, list):
+            raise RuntimeError("Invalid CloakBrowser session snapshot")
+        existing = {(c["name"], c["domain"], c["path"]) for c in live}
+        # Persistent cookies are owned by Chromium. Restore missing session cookies only.
+        restore = [c for c in saved if _dola_cookie(c)
+                   and c.get("expires", -1) == -1
+                   and (c["name"], c["domain"], c["path"]) not in existing]
+        if restore:
+            await context.add_cookies(restore)
+    elif not live:
+        state = json.loads((Path("accounts") / account / "cookie_state.json").read_text(encoding="utf-8"))
+        raw = state.get("cookies_list") or []
+        cookies = []
+        for c in raw:
+            if not isinstance(c, dict) or not c.get("name") or not _dola_cookie(c):
+                continue
+            item = {k: c[k] for k in ("name", "value", "domain", "path", "expires", "secure", "httpOnly", "sameSite") if k in c}
+            item.setdefault("path", "/")
+            cookies.append(item)
+        if not cookies:
+            raise RuntimeError("No Dola cookies available for profile initialization")
         await context.add_cookies(cookies)
-    storage = state.get("storage") or {}
-    if storage:
-        page = context.pages[0] if context.pages else await context.new_page()
+        storage = state.get("storage") or {}
+        if storage:
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
+            from cookie_login import _restore_web_storage
+            result = await _restore_web_storage(page, storage)
+            if result.get("errors"):
+                raise RuntimeError("CloakBrowser storage restoration failed")
+    # An empty saved snapshot is meaningful (logout). Never refill from the original import.
+    _save_cloak_cookies(snapshot, [c for c in await context.cookies() if _dola_cookie(c)])
+    marker.write_text("materialized-v2\n", encoding="ascii")
+    original_close = context.close
+    async def close_with_session_save(*args, **kwargs):
         try:
-            await page.goto("https://www.dola.com/chat", timeout=60000,
-                            wait_until="domcontentloaded")
-            await context.add_cookies(cookies)
-            try:
-                from cookie_login import _restore_web_storage
-                await _restore_web_storage(page, storage)
-            except Exception:
-                # local/session storage is辅助材料；Cookie 本身仍是硬要求。
-                pass
-        except Exception:
-            pass
-    marker.write_text("materialized\n", encoding="ascii")
+            _save_cloak_cookies(snapshot, [c for c in await context.cookies() if _dola_cookie(c)])
+        finally:
+            await original_close(*args, **kwargs)
+    context.close = close_with_session_save
 
 
 def _kwargs_from_url(raw: str) -> dict | None:
@@ -186,7 +205,11 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
         if config.CLOAK_CACHE_DIR:
             import os
             os.environ.setdefault("CLOAKBROWSER_CACHE_DIR", config.CLOAK_CACHE_DIR)
-        cloak_proxy = proxy_store.proxy_url_for(account) or (config.PROXY or "")
+        if not proxy_store.get_account_proxy(account):
+            raise RuntimeError("CloakBrowser requires an enabled account proxy; bind it before verification")
+        cloak_proxy = proxy_store.proxy_url_for(account)
+        if not cloak_proxy:
+            raise RuntimeError("Account proxy unavailable; direct fallback is disabled")
         extension_paths = []
         if use_extension:
             if not config.EXTENSION_ENABLED:
@@ -206,7 +229,11 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
             extension_paths=extension_paths or None,
             license_key=config.CLOAK_LICENSE_KEY or None,
         )
-        await _materialize_cloak_cookie_profile(account, context)
+        try:
+            await _materialize_cloak_cookie_profile(account, context)
+        except BaseException:
+            await context.close()
+            raise
         return context
 
     launch_headless = config.HEADLESS if headless is None else headless

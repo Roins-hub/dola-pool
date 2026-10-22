@@ -501,6 +501,8 @@ let filteredAccounts=[];
 let filteredNames=[];
 let allAccounts=[];
 let proxyCache=[];
+/** 模型显示名：dola 的 2.0 在网页上叫 Seedance 2.0 Fast，老记录里存的 seedance-2.0 也按新名显示 */
+function pubModel(m){return m==='seedance-2.0'?'seedance-2.0-fast':(m||'-');}
 let srcFilterVal='all';
 /* ---- 各页搜索：空格分隔的每个词都要命中（不区分大小写）。自动刷新时保留搜索词。
    账号 / 代理 / 密钥 / 用户在前端过滤（列表本来就是全量）；任务 / 视频交给服务端查整个历史。 */
@@ -544,7 +546,7 @@ function renderGroupBar(d,container,jump){
   q(container||'#groupBar').innerHTML=
     btn('all','全部',d.all_count||0,'显示全部账号（含风控/待激活）')+
     btn('valid','有效',d.valid_count||0,'正常组：满额+半额+冷却+生成中')+sep+
-    btn('满额','满额',n('满额'),'剩余 4 点：seedance-2.0 专用，seedance-2.5 兜底')+
+    btn('满额','满额',n('满额'),'剩余 4 点：seedance-2.0-fast 专用，seedance-2.5 兜底')+
     btn('半额','半额',n('半额'),'剩余 2 点：seedance-2.5 优先使用')+
     btn('冷却','冷却',n('冷却'),'剩余 0/1 点：不派发，每日 23:00 重置回满额')+
     btn('生成中','生成中',n('生成中'),'正在出片')+sep+
@@ -552,7 +554,7 @@ function renderGroupBar(d,container,jump){
     btn('待激活','待激活',n('待激活'),'新号，尚未完成首次激活探测')+
     btn('异常','异常',n('异常'),'派发后 5 分钟无回执，到期自动恢复')+sep+
     '<span class="gbtn points" title="正常组（满额+半额+冷却+生成中）的剩余总额度；'
-      +'seedance-2.5 每条 2 点、seedance-2.0 每条 3 点">剩余额度 <b>'+pts+'</b> 点'
+      +'seedance-2.5 每条 2 点、seedance-2.0-fast 每条 3 点">剩余额度 <b>'+pts+'</b> 点'
       +'<span class="n">≈2.5 可出 '+Math.floor(pts/2)+' 条</span></span>';
 }
 /** 出口显示名：直连 / 绑定的代理名 + host:port（egress 本身已去掉代理凭据）。 */
@@ -810,7 +812,7 @@ function openTestGen(name){
       <option value="doubao-seedance-2.0-fast">doubao-seedance-2.0-fast（免费号可用）</option>
       <option value="doubao-seedance-2.0">doubao-seedance-2.0（会员，2 倍消耗）</option>
       <option value="doubao-seedance-2.5">doubao-seedance-2.5（会员，5 倍消耗，最长 30 秒）</option>`
-    :`<option value="seedance-2.0" selected>seedance-2.0</option>
+    :`<option value="seedance-2.0-fast" selected>seedance-2.0-fast</option>
       <option value="seedance-2.5">seedance-2.5</option>`;
   showDlg(`<h2>测试生成：${esc(name)}</h2>
     <p class="tiny" style="line-height:1.6;margin-bottom:10px">用<strong>该账号</strong>跑一条真实视频生成，验证此号能否成功出片（消耗该账号真实额度）。</p>
@@ -2135,7 +2137,7 @@ function showThumb(url){q('#thumbImg').src=url;show('thumbModal');}
 
 function openPrompt(id){
   const t=TASK_MAP[id]||{};
-  q('#promptMeta').textContent=id+' · '+(t.model||'-')+' · '+(t.duration||10)+'秒 · '
+  q('#promptMeta').textContent=id+' · '+pubModel(t.model)+' · '+(t.duration||10)+'秒 · '
     +(t.api_key_name?('客户 '+t.api_key_name):'');
   q('#promptBody').textContent=(t.prompt&&String(t.prompt).length)?t.prompt:'（空提示词）';
   q('#promptCopyBtn').textContent='复制';
@@ -2192,7 +2194,7 @@ async function loadVideos(){
       dim,
       size,
       v.account||'-',
-      v.model||'-',
+      pubModel(v.model),
       state,
       '<span class="prompt" translate="no" title="'+esc(v.prompt||'')+'">'+esc(v.prompt||'')+'</span>',
       ops

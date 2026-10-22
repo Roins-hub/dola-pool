@@ -8,7 +8,7 @@
 把一组 [dola.com](https://www.dola.com)（字节 Seedance 视频模型国际版）和 [豆包 doubao.com](https://www.doubao.com)（国内版）账号组成号池，对外提供 **OpenAI 兼容的视频生成 / 生图 API**，并兼容火山方舟（Ark）任务式协议，可直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
 
 - 多账号号池：自动选号、额度记账、风控冷却、失败换号、每日额度重置
-- **两个站点的号混用**：dola 号接 `seedance-2.0/2.5`，豆包号接 `doubao-seedance-*` 视频和 `doubao-seedream-*` 生图，按模型名自动分派、互不串号
+- **两个站点的号混用**：dola 号接 `seedance-2.0-fast` / `seedance-2.5`，豆包号接 `doubao-seedance-*` 视频和 `doubao-seedream-*` 生图，按模型名自动分派、互不串号
 - 两种出片路径：纯 HTTP 协议（默认）与 Chromium 浏览器自动化（兜底，仅 dola）
 - 可选严格 Cookie 隔离：Dola Cookie 账号按账号绑定 CloakBrowser 持久 profile、固定 fingerprint seed 和独立出口
 - 对外接口：OpenAI 风格 `/v1/videos`、`/v1/images/generations`、`/v1/images/edits`，Ark 风格 `/api/v3/contents/generations/tasks`
@@ -25,21 +25,21 @@
 | 模型 | 分辨率 | 时长 | 参考素材 | 每次扣点（账号每日默认 4 点） |
 |---|---|---|---|---|
 | `seedance-2.5` | 720p | 5 / 10 / 30 秒（15 秒出不了，30 秒需开 `pair`，见下） | 图片最多 10 张；不支持参考音频、视频 | 5 秒 = 2、10 秒 = 4、15 秒 = 12（超过每日额度）、**30 秒 = 2**（只出半截、补后半段时共 4） |
-| `seedance-2.0` | 720p | 5 / 10 / 15 秒 | 图片最多 10 张；不支持参考音频、视频 | 5 秒 = 1、10 秒 = 2、15 秒 ≈ 3（推算，未实测） |
+| `seedance-2.0-fast` | 720p | 5 / 10 / 15 秒 | 图片最多 10 张；不支持参考音频、视频 | 5 秒 = 1、10 秒 = 2、15 秒 ≈ 3（推算，未实测） |
 
 - 扣点按 dola 回执里的**报价**，随「模型 + 时长」变化（2026-10-14 实测，见 `config.DURATION_COSTS`，可用 `DOLA_DURATION_COSTS` 覆盖）。
-  报价超过一个号一天的额度（默认 4 点）的组合受理时直接 422：**seedance-2.5 的 15 秒要 12 点，免费号出不了**，请用 10 秒、30 秒或 seedance-2.0。
+  报价超过一个号一天的额度（默认 4 点）的组合受理时直接 422：**seedance-2.5 的 15 秒要 12 点，免费号出不了**，请用 10 秒、30 秒或 seedance-2.0-fast。
 - 一个号一天（4 点）能出：2.5 —— 5 秒 2 条 / 10 秒 1 条 / 30 秒 2 条；2.0 —— 5 秒 4 条 / 10 秒 2 条 / 15 秒 1 条。
 
 - **30 秒**：dola 自 2026-10-12 起对 30 秒请求回「只支持 4～15 秒，按 15 秒生成」，但**实际仍按 30 秒出片**（[issue #4](https://github.com/Roins-hub/dola-pool/issues/4)）。由 `DOLA_30S_MODE` 决定：
   `reject`（默认，受理时直接 422 说明原因）/ `pair`（**推荐**）：**先原样请求一次 30 秒**——dola 嘴上回「按最接近的支持时长 15 秒生成，将消耗 2 个」，**实际多数出满 30 秒**（2026-10-14 实测 4 单都是 30.08 秒），只扣 **2 点**；只出了半截（～15 秒）才补一次「后半段」并本地拼接（再扣 2 点）。回执里的秒数不作数，只认落地时长；dola 反问「是否按 15 秒生成」时自动回「确认生成」；只能派给 Cookie 导入的号；补了后半段时两段之间画面可能不完全连贯 / `native`（按 30 秒原样提交的旧逻辑，dola 说「只支持 4～15 秒」后最多再等 10 分钟，不推荐）。
 - 其它时长直接拒绝；显式写了 2.0 / 2.5 的请求只按该版本校验，不会悄悄换型号。
 - 成片为 1280×720、24fps、H.265，码率约 1.5～4 Mbps（由上游决定，画面越简单文件越小）。
-- `seedance-2.0` 在 Dola 端实际使用 Seedance 2.0 Fast 生成。
+- `seedance-2.0-fast` 就是 dola 网页上的「Seedance 2.0 Fast」（dola 没有标准版 Seedance 2.0）。旧名 `seedance-2.0` 仍然可以用，自动按 2.0 Fast 处理，但不再出现在 `/v1/models` 里。
 
 ### 豆包（doubao.com）号的模型（2.3.0 起）
 
-号池可以同时放 dola 号和豆包号：**豆包号只接下面这 4 个模型，dola 号只接 `seedance-2.0/2.5`**，互不串。
+号池可以同时放 dola 号和豆包号：**豆包号只接下面这 4 个模型，dola 号只接 `seedance-2.0-fast` / `seedance-2.5`**，互不串。
 
 | 模型 | 豆包里的名字 | 时长 | 谁能用 | 豆包页面的消耗标注 | 实测（2026-10-18） |
 |---|---|---|---|---|---|
@@ -160,6 +160,14 @@ sticky session；验证、提交和轮询都走该 profile。命中 `710022002` 
 
 该模式不适用于当前纯 API Docker 镜像；完整部署和迁移步骤见 [`USAGE.md`](USAGE.md)。
 
+主分支已修复 v2.5.0 的会话 Cookie 在第二次启动时丢失问题：关闭时保存账号独立的会话快照，
+下次只恢复缺失的会话 Cookie；退出登录后不重放原始导入。此修复不在原 v2.5.0 发布包内。
+
+这是浏览器资料隔离，不是每账号独立虚拟机。账号仍共享服务器、应用进程和调度数据库；视频下载
+仍使用独立 HTTP 客户端。不同代理记录或 sticky session 不保证不同公网 IP，应通过实际出口探测确认。
+`710022002` 表示上游拒绝/限流，不能单凭错误码认定是指纹或 IP 原因，也不能保证换浏览器后消失。
+30 秒 `pair` 和纯 API 超时后台取回仍只适用于纯 API 账号。CloakBrowser 内核另有许可证与版本/并发限制。
+
 ## 手动部署
 
 需要 Python 3.10+。dola.com 要求日本/韩国出口，服务器在大陆时必须配置代理。
@@ -261,7 +269,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 2. 渠道模型填插件认识的官方名 `doubao-seedance-2-0-260128`、`doubao-seedance-2-5-260628`；
 3. 模型重定向：
    ```json
-   {"doubao-seedance-2-0-260128": "seedance-2.0", "doubao-seedance-2-5-260628": "seedance-2.5"}
+   {"doubao-seedance-2-0-260128": "seedance-2.0-fast", "doubao-seedance-2-5-260628": "seedance-2.5"}
    ```
 4. 在 new-api 中为这两个模型配置价格（按次或按量均可）。
 5. 豆包号的视频模型同理：渠道里加 `doubao-seedance-2.0-mini` 等名字（或对外起别名再用模型重定向映射过来）；
