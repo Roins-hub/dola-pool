@@ -37,6 +37,15 @@ def test_renumber_per_segment():
     assert "剩余 {0} 点，共 {1} 条" in i18n_tool.extract(html)
 
 
+def test_notr_splits_like_runtime_text_nodes():
+    # ${noTr(x)} 渲染成 <span translate="no">，运行时前后是两个文本节点，抽取也要切开
+    html = "<script>x=`<h2>测试生成：${noTr(name)}</h2><i>共 ${n} 条，最近 ${noTr(a)} 使用</i>`;</script>"
+    keys = i18n_tool.extract(html)
+    assert "测试生成：" in keys
+    assert "测试生成：{0}" not in keys
+    assert "共 {0} 条，最近" in keys and "使用" in keys
+
+
 def test_panel_catalog_covers_main_ui():
     keys = set(i18n_tool.catalog())
     for k in ("仪表盘", "账号管理", "代理管理", "任务列表", "登录"):

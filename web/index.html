@@ -393,6 +393,8 @@ function q(s){return document.querySelector(s);}
 function show(id){document.getElementById(id).style.display='flex';}
 function hide(id){document.getElementById(id).style.display='none';}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+/** 用户 / 上游数据（账号名、代理名、备注、dola 原话…）：转义并标 translate="no"，面板多语言不会把它当文案改写 */
+function noTr(s){return '<span translate="no">'+esc(s)+'</span>';}
 function fmt(ts){if(!ts)return '-';const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function fmtHM(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}`;}
 
@@ -472,7 +474,7 @@ async function loadDash(){
   );
 }
 
-function accLabel(x){return x.email?`<div>${esc(x.email)}</div>`:'<span class="tiny">未录入邮箱</span>';}
+function accLabel(x){return x.email?`<div translate="no">${esc(x.email)}</div>`:'<span class="tiny">未录入邮箱</span>';}
 /** 运行态（与分组正交的瞬时信息）：出片中 / 加号任务 / 动态代理出口 IP。
     风控、冷却、待激活、异常这些「状态」已经由分组列表达，不在这里重复；
     「限流」「失败(待全池重置)」两个概念已于 2.1.0 P3 删除。 */
@@ -522,7 +524,7 @@ function searchHit(kind,...fields){
   return terms.every(t=>hay.includes(t));
 }
 function searchQS(kind){return SEARCH[kind]?'&q='+encodeURIComponent(SEARCH[kind]):'';}
-function searchEmpty(kind,n){return SEARCH[kind]&&!n?'<div class="hint" style="margin:10px 0">没有匹配「'+esc(SEARCH[kind])+'」的结果</div>':'';}
+function searchEmpty(kind,n){return SEARCH[kind]&&!n?'<div class="hint" style="margin:10px 0">没有匹配「'+noTr(SEARCH[kind])+'」的结果</div>':'';}
 let groupFilterVal='all';   // all / valid / 满额 / 半额 / 冷却 / 生成中 / 风控 / 待激活 / 异常
 
 const GROUP_STYLE={'满额':'b-green','半额':'b-blue','冷却':'b-orange','生成中':'b-blue',
@@ -557,19 +559,19 @@ function renderGroupBar(d,container,jump){
       +'seedance-2.5 每条 2 点、seedance-2.0-fast 每条 3 点">剩余额度 <b>'+pts+'</b> 点'
       +'<span class="n">≈2.5 可出 '+Math.floor(pts/2)+' 条</span></span>';
 }
-/** 出口显示名：直连 / 绑定的代理名 + host:port（egress 本身已去掉代理凭据）。 */
+/** 出口显示名（HTML）：直连 / 绑定的代理名 + host:port（egress 本身已去掉代理凭据）。 */
 function egressLabel(e,accs){
   if(!e||e==='direct')return '服务器直连（未配代理）';
   const names=[...new Set(accs.filter(x=>x.effective_egress===e&&x.proxy_name).map(x=>x.proxy_name))];
   const host=e.replace(/^[a-z0-9]+:\/\//i,'').replace(/#.*$/,'');
-  return (names.length?names.join(' / ')+' · ':'')+host;
+  return noTr((names.length?names.join(' / ')+' · ':'')+host);
 }
 /** 账号页提示：哪些出口正被上游限流（710022002）、哪些出口挂的号太多。 */
 function renderEgressWarn(a){
   const box=q('#egressWarn');if(!box)return;
   const accs=a.accounts||[];
   const lines=(a.egress_throttle||[]).map(t=>
-    '<div class="ew ew-red">⏳ 出口 <b>'+esc(egressLabel(t.egress,accs))+'</b> 被上游限流（710022002 访问频繁），'
+    '<div class="ew ew-red">⏳ 出口 <b>'+egressLabel(t.egress,accs)+'</b> 被上游限流（710022002 访问频繁），'
     +t.accounts.length+' 个号暂停派发和探测，约 '+fmtDur(t.remaining)+' 后自动恢复'
     +(t.streak>1?'（连续第 '+t.streak+' 次，退避时间已加倍）':'')+'</div>');
   const warn=a.egress_share_warn||0;
@@ -590,7 +592,7 @@ function renderEgressWarn(a){
       +' 个）。同一出口的号越多越容易被上游判「访问频繁」(710022002)，请给账号绑定更多不同 IP 的代理。'
       +'<span class="tiny">（点击'+(open?'收起':'展开明细')+'）</span></summary>'
       +'<div style="margin-top:6px;line-height:1.8">'
-      +shared.map(x=>'· '+x.n+' 个号共用出口 <b>'+esc(egressLabel(x.e,accs))+'</b>'
+      +shared.map(x=>'· '+x.n+' 个号共用出口 <b>'+egressLabel(x.e,accs)+'</b>'
         +(x.e==='direct'?'（服务器直连，不在日本/韩国时必须配代理）':'')).join('<br>')
       +'</div></details>');
   }
@@ -664,7 +666,7 @@ async function loadAccounts(){
     const warn=(jb&&jb.status==='failed')?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
     return [
       `<input type="checkbox" data-name="${esc(x.name)}" ${selAccounts.has(x.name)?'checked':''} onchange="toggleSel('${x.name}',this.checked)">`,
-      `<span class="account-id">${esc(x.name)}</span>`,
+      `<span class="account-id" translate="no">${esc(x.name)}</span>`,
       accLabel(x)+warn,
       groupBadge(x),
       badge+ipInfo,
@@ -677,7 +679,7 @@ async function loadAccounts(){
       `<button class="btn" style="margin-right:6px" onclick="openRenameAccount('${x.name}')">改名</button>`+
       `<button class="btn" style="margin-right:6px" onclick="verify('${x.name}',this)">验证</button>`+
       `<button class="btn" style="margin-right:6px" onclick="openTestGen('${x.name}')">测试生成</button>`+
-      `<button class="btn" style="margin-right:6px" onclick="openSetAccountProxy('${x.name}','${x.proxy_id||''}')">${x.proxy_name?esc(x.proxy_name):'代理(默认)'}</button>`+
+      `<button class="btn" style="margin-right:6px" onclick="openSetAccountProxy('${x.name}','${x.proxy_id||''}')">${x.proxy_name?noTr(x.proxy_name):'代理(默认)'}</button>`+
       ((x.group==='风控'||x.group==='待激活')
         ?`<button class="btn" style="margin-right:6px" title="发一句「你好」：被登出或没回复即判风控" onclick="probeHello('${x.name}')">你好探测</button>`:'')+
       ((x.group==='风控'||x.group==='异常')
@@ -709,7 +711,7 @@ function pendingAddRows(jobs,inPool){
         :`<span class="badge b-red" title="${esc(j.error)}">加号失败</span><div class="tiny">${esc((j.error||'').slice(0,80))}</div>`;
       const src=j.source==='cookie'?'<span class="badge b-orange">Cookie 载入</span>'
         :j.source==='login'?'<span class="badge b-green">账号登录</span>':'<span class="tiny">—</span>';
-      return ['',`<span class="account-id">${esc(n)}</span>`,accLabel(j),state,'',src,'','','',fmt(j.started_at),'',
+      return ['',`<span class="account-id" translate="no">${esc(n)}</span>`,accLabel(j),state,'',src,'','','',fmt(j.started_at),'',
         '<span class="tiny">完成后自动出现在列表</span>'];
     });
 }
@@ -726,7 +728,7 @@ function noteCell(x){
   const note=x.note||'';
   const open=`onclick="editNote('${x.name}')"`;
   if(!note)return `<span class="tiny" style="cursor:pointer" title="点击可填写备注" ${open}>—</span>`;
-  return `<span class="note" translate="no" title="点击编辑备注" ${open}>${esc(note)}</span>`;
+  return `<span class="note" title="点击编辑备注" ${open}>${noTr(note)}</span>`;
 }
 async function editNote(name){
   const cur=(allAccounts.find(a=>a.name===name)||{}).note||'';
@@ -814,7 +816,7 @@ function openTestGen(name){
       <option value="doubao-seedance-2.5">doubao-seedance-2.5（会员，5 倍消耗，最长 30 秒）</option>`
     :`<option value="seedance-2.0-fast" selected>seedance-2.0-fast</option>
       <option value="seedance-2.5">seedance-2.5</option>`;
-  showDlg(`<h2>测试生成：${esc(name)}</h2>
+  showDlg(`<h2>测试生成：${noTr(name)}</h2>
     <p class="tiny" style="line-height:1.6;margin-bottom:10px">用<strong>该账号</strong>跑一条真实视频生成，验证此号能否成功出片（消耗该账号真实额度）。</p>
     <label>模型</label>
     <select id="tg_model" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
@@ -905,7 +907,7 @@ async function pollTestGen(taskId,name){
 }
 
 function openRenameAccount(name){
-  showDlg(`<h2>重命名账号：${esc(name)}</h2>
+  showDlg(`<h2>重命名账号：${noTr(name)}</h2>
     <p class="tiny" style="line-height:1.6">会一起搬走该账号的浏览器 profile、代理绑定、今日额度与登录凭据；账号正在出片时不能改名。</p>
     <label>新账号名</label>
     <input id="f_newName" value="${esc(name)}" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;margin-top:4px">
@@ -1048,11 +1050,11 @@ async function openBatchProxy(){
   if(!list.length)return alert('请先勾选账号');
   try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
   const opts='<option value="">默认代理（DOLA_PROXY）</option>'+proxyCache.map(p=>
-    `<option value="${esc(p.id)}">${esc(p.name)}（${esc(p.protocol)}://${esc(p.host)}:${p.port}）</option>`).join('');
+    `<option translate="no" value="${esc(p.id)}">${esc(p.name)}（${esc(p.protocol)}://${esc(p.host)}:${p.port}）</option>`).join('');
   showDlg(`<h2>批量更改代理（${list.length} 个账号）</h2>
     <p class="tiny">把勾选的账号统一绑定到指定代理；选“默认代理”则解除绑定、回落到环境变量默认代理。验证/出片/下载都按账号代理走。</p>
     <select id="f_bproxy" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${opts}</select>
-    <div class="tiny" style="margin-top:8px;max-height:150px;overflow:auto">${list.map(esc).join('、')}</div>
+    <div class="tiny" style="margin-top:8px;max-height:150px;overflow:auto">${list.map(noTr).join('、')}</div>
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
       <button class="btn btn-p" onclick="submitBatchProxy()">应用</button></div>`);
 }
@@ -1094,8 +1096,8 @@ async function delSelected(){
 async function openSetAccountProxy(name,currentId){
   try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
   const opts='<option value="">默认代理（DOLA_PROXY）</option>'+proxyCache.map(p=>
-    `<option value="${esc(p.id)}" ${p.id===currentId?'selected':''}>${esc(p.name)}</option>`).join('');
-  showDlg(`<h2>设置账号代理：${esc(name)}</h2>
+    `<option translate="no" value="${esc(p.id)}" ${p.id===currentId?'selected':''}>${esc(p.name)}</option>`).join('');
+  showDlg(`<h2>设置账号代理：${noTr(name)}</h2>
     <p class="tiny">选择该账号验证/出片时使用的代理；留空则使用环境变量默认代理。</p>
     <select id="f_proxy" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${opts}</select>
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
@@ -1489,18 +1491,18 @@ async function loadProxies(){
     [selAllBox('proxies'),'名称','类型','协议','地址','端口','用户名','已绑账号','出口IP','备注','操作'],
     shown.map(p=>[
       selBox('proxies',p.id,false),
-      esc(p.name),
+      noTr(p.name),
       p.mode==='extract'?(p.extract_url?'<span class="badge b-blue">提取链接</span>'
                                         :'<span class="badge b-blue">粘贴节点</span>')
         :p.is_dynamic?'<span class="badge b-blue">隧道</span>':'<span class="tiny">静态</span>',
       esc(p.protocol),
       p.host?esc(p.host):'<span class="tiny">（节点池）</span>',
       p.port?p.port:'<span class="tiny">—</span>',
-      p.username?esc(p.username):'<span class="tiny">—</span>',
+      p.username?noTr(p.username):'<span class="tiny">—</span>',
       p.account_count||0,
       (proxyProbeCache[p.id]?esc(proxyProbeCache[p.id]):'<span class="tiny">—</span>')+
         ` <button class="btn" onclick="probeProxy('${p.id}',this)">探测</button>`,
-      esc(p.remark||'')||'<span class="tiny">—</span>',
+      p.remark?noTr(p.remark):'<span class="tiny">—</span>',
       `<button class="btn" style="margin-right:6px" onclick="openEditProxy('${p.id}')">编辑</button>
        ${p.mode==='extract'?`<button class="btn" style="margin-right:6px" onclick="showNodes('${p.id}')">节点池</button>`:''}
        ${p.is_dynamic||p.mode==='extract'?`<button class="btn" style="margin-right:6px" onclick="rotateProxy('${p.id}')">换IP</button>`:''}
@@ -1518,7 +1520,7 @@ async function showNodes(id){
   const rows=(r.nodes||[]).map(n=>[
     n.id,
     esc(n.host+':'+n.port),
-    esc(n.username||'')||'<span class="tiny">—</span>',
+    n.username?noTr(n.username):'<span class="tiny">—</span>',
     n.dead?'<span class="badge b-red">已废弃</span>'
       :(n.expires_at&&n.expires_at<=now)?'<span class="tiny">已过期</span>'
       :'<span class="badge b-green">可用</span>',
@@ -1526,7 +1528,7 @@ async function showNodes(id){
     esc(n.last_exit_ip||'')||'<span class="tiny">—</span>',
     n.fail_count||0
   ]);
-  showDlg('<h2>节点池 — '+esc(p?p.name:id)+'</h2>'+
+  showDlg('<h2>节点池 — '+noTr(p?p.name:id)+'</h2>'+
     '<div class="tiny" style="margin-bottom:8px">共 '+r.total+' 个，可用 '+r.alive+' 个，废弃 '+r.dead+' 个</div>'+
     '<div style="max-height:45vh;overflow:auto">'+table(['#','地址','用户名','状态','过期时间','出口IP','失败次数'],rows)+'</div>'+
     '<div class="row">'+(p&&p.extract_url?'<button class="btn" onclick="refreshNodes(\''+id+'\')">补一批节点（提取）</button>':'')+
@@ -1536,7 +1538,7 @@ async function showNodes(id){
 }
 function pasteNodes(id){
   const p=proxyCache.find(x=>x.id===id);
-  showDlg('<h2>粘贴节点 — '+esc(p?p.name:id)+'</h2>'+
+  showDlg('<h2>粘贴节点 — '+noTr(p?p.name:id)+'</h2>'+
     '<div class="tiny" style="margin-bottom:6px">一行一个 <code>host:port:user:pass</code>，可批量粘贴'+
     '（也认 <code>user:pass@host:port</code>、<code>host:port</code>）；已存在的节点会自动跳过。</div>'+
     '<textarea id="f_pnodes2" rows="8" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:monospace"></textarea>'+
@@ -1919,7 +1921,7 @@ async function loadUsers(){
     users.map(u=>[
       selBox('users',u.username,u.role==='owner'||u.username===me,
              u.role==='owner'?'主管理员不能删除':(u.username===me?'不能删除当前登录的账号':'')),
-      esc(u.username)+(u.username===me?' <span class="badge b-blue">当前</span>':''),
+      noTr(u.username)+(u.username===me?' <span class="badge b-blue">当前</span>':''),
       u.role==='owner'?'<span class="badge b-green">主管理员</span>':'<span class="badge b-blue">管理员</span>',
       u.enabled?'<span class="badge b-green">启用</span>':'<span class="badge b-red">停用</span>',
       fmt(u.created_at),
@@ -1942,7 +1944,7 @@ function openEditUser(username){
     const u=r.users.find(x=>x.username===username);
     if(!u)return alert('用户不存在');
     const owner=u.role==='owner';
-    showDlg(`<h2>修改账号：${esc(u.username)}</h2>
+    showDlg(`<h2>修改账号：${noTr(u.username)}</h2>
       <label>用户名</label><input id="f_uname" value="${esc(u.username)}" ${owner?'disabled':''} ${owner?'title="主管理员不允许改名"':''}>
       <label>新密码（留空保持不变）</label><input id="f_upass" type="password" placeholder="留空则不修改">
       ${owner?'':'<label style="margin-top:8px;display:flex;align-items:center;gap:6px;color:var(--sub)"><input type="checkbox" id="f_uenabled" style="width:auto" '+(u.enabled?'checked':'')+'>启用该账号</label>'}
@@ -1983,8 +1985,8 @@ function accChain(t){
   if(!arr.length)return '-';
   const txt=arr.join(' → ');
   return arr.length>1
-    ?'<span class="tiny" title="换号顺序：'+esc(txt)+'">'+arr.map(esc).join('<span style="color:var(--gray)"> → </span>')+'</span>'
-    :esc(arr[0]);
+    ?'<span class="tiny" title="换号顺序：'+esc(txt)+'">'+arr.map(noTr).join('<span style="color:var(--gray)"> → </span>')+'</span>'
+    :noTr(arr[0]);
 }
 let TASK_MAP={};
 /** 任务耗时：主显示生成耗时（开始生成→结束），有明显排队时下方补一行含排队的总耗时。 */
@@ -2019,9 +2021,9 @@ const OPEN_NOTES=new Set();
 function noteToggle(el){if(el.open)OPEN_NOTES.add(el.dataset.k);else OPEN_NOTES.delete(el.dataset.k);}
 function foldText(k,label,text,limit){
   text=String(text||'').replace(/\*\*/g,'');   // dola 回执带 Markdown 粗体标记
-  if(text.length<=limit)return '<div class="tiny note-line">'+label+esc(text)+'</div>';
+  if(text.length<=limit)return '<div class="tiny note-line">'+label+noTr(text)+'</div>';
   return '<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
-    +'<summary>'+label+esc(text.slice(0,limit))+'<span class="ell">…</span></summary>'+esc(text.slice(limit))+'</details>';
+    +'<summary>'+label+noTr(text.slice(0,limit))+'<span class="ell">…</span></summary>'+noTr(text.slice(limit))+'</details>';
 }
 /** dola 回执原话：当前号的在前（长了折叠），前面换过的号收进「前面 N 个号的回复」。
     失败时报错里已经带了同一句原话就不重复。 */
@@ -2033,12 +2035,12 @@ function upstreamNote(t){
   const cur=notes[notes.length-1],prev=notes.slice(0,-1);
   let html='';
   const dup=t.status==='failed'&&t.error&&t.error.indexOf(String(cur.note).slice(0,12))>=0;
-  if(!dup)html+=foldText(t.id+':cur',(cur.account?esc(cur.account)+' · ':'')+'dola：',cur.note,60);
+  if(!dup)html+=foldText(t.id+':cur',(cur.account?noTr(cur.account)+' · ':'')+'dola：',cur.note,60);
   if(prev.length){
     const k=t.id+':prev';
     html+='<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
       +'<summary>前面 '+prev.length+' 个号的回复</summary>'
-      +prev.map(n=>'<div>'+esc(n.account||'?')+'：'+esc(String(n.note||'').replace(/\*\*/g,''))+'</div>').join('')+'</details>';
+      +prev.map(n=>'<div>'+noTr(n.account||'?')+'：'+noTr(String(n.note||'').replace(/\*\*/g,''))+'</div>').join('')+'</details>';
   }
   return html;
 }
@@ -2077,7 +2079,7 @@ function costCell(t){
     // 生成中：实时已用时 + 预计总时长与剩余倒计时（超出预计会提示已超出）
     return liveSpan('run',s,0,'color:#2f6fde')
       +(typ?'<div class="tiny">'+liveSpan('eta',s2,typ,'',lab)+'</div>':'')
-      +(s2>s+1&&t.account?'<div class="tiny">当前 '+esc(t.account)+' '+liveSpan('run',s2,0,'')+'</div>':'');
+      +(s2>s+1&&t.account?'<div class="tiny">当前 '+noTr(t.account)+' '+liveSpan('run',s2,0,'')+'</div>':'');
   }
   if(!f)return '—';
   const total=c?f-c:0,gen=s?f-s:0,queue=(s&&c)?s-c:0;
@@ -2103,7 +2105,7 @@ async function loadTasks(){
       +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">查看</button>',
     refCell(t),
     accChain(t),
-    t.api_key_name||'—',
+    t.api_key_name?noTr(t.api_key_name):'—',
     (t.duration||10)+'秒',
     sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
     costCell(t),
@@ -2137,8 +2139,8 @@ function showThumb(url){q('#thumbImg').src=url;show('thumbModal');}
 
 function openPrompt(id){
   const t=TASK_MAP[id]||{};
-  q('#promptMeta').textContent=id+' · '+pubModel(t.model)+' · '+(t.duration||10)+'秒 · '
-    +(t.api_key_name?('客户 '+t.api_key_name):'');
+  q('#promptMeta').innerHTML=esc(id)+' · '+esc(pubModel(t.model))+' · '+(t.duration||10)+'秒 · '
+    +(t.api_key_name?('客户 '+noTr(t.api_key_name)):'');
   q('#promptBody').textContent=(t.prompt&&String(t.prompt).length)?t.prompt:'（空提示词）';
   q('#promptCopyBtn').textContent='复制';
   show('promptModal');
@@ -2193,7 +2195,7 @@ async function loadVideos(){
       dur,
       dim,
       size,
-      v.account||'-',
+      v.account?noTr(v.account):'-',
       pubModel(v.model),
       state,
       '<span class="prompt" translate="no" title="'+esc(v.prompt||'')+'">'+esc(v.prompt||'')+'</span>',
@@ -2261,7 +2263,7 @@ async function loadKeys(){
   const rows=keys.map(k=>[
     selBox('keys',k.key,false),
     '<span style="font-family:monospace">'+mask(k.key)+'</span>',
-    k.name||'—',
+    k.name?noTr(k.name):'—',
     (k.allowed_durations||[]).join(' / ')+' 秒',
     (k.daily_limit?`${k.today_total} / ${k.daily_limit}`:`${k.today_total} / 不限`),
     (k.concurrency_limit?`${k.today_active} / ${k.concurrency_limit}`:`${k.today_active} / 不限`)+(k.today_queued?` <span class=\"tiny\">排队 ${k.today_queued}</span>`:''),
@@ -2319,7 +2321,7 @@ async function submitCreateKey(){
 async function openEditKey(key){
   const r=await api('/api/admin/keys');const k=r.keys.find(x=>x.key===key);if(!k)return;
   showDlg(`<h2>设置 API 密钥</h2>
-    <div class="tiny" style="margin-bottom:8px">${esc(k.name||key)}</div>
+    <div class="tiny" style="margin-bottom:8px">${noTr(k.name||key)}</div>
     <label>每日任务上限（0 = 不限）</label><input id="f_daily" type="number" min="0" value="${k.daily_limit}">
     <label>同时生成上限（0 = 不限）</label><input id="f_conc" type="number" min="0" value="${k.concurrency_limit}">
     <label>允许的视频时长</label><div style="padding:8px 0">${durationChecks(k.allowed_durations)}</div>

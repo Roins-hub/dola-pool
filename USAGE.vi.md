@@ -73,10 +73,11 @@ Mỗi tài khoản mỗi ngày có **4 điểm** hạn mức (`DOLA_DAILY_LIMIT`
 | Mô hình | Thời lượng → điểm trừ mỗi video | Một tài khoản một ngày (4 điểm) tạo được |
 |---|---|---|
 | `seedance-2.5` | 5 giây = 2 điểm, 10 giây = 4 điểm, **15 giây = 12 điểm (không tạo được)**, **30 giây = 2 điểm** (cần bật `pair`; nếu chỉ ra nửa đầu và phải bù nửa sau thì tổng cộng 4 điểm) | 2 video 5 giây, 1 video 10 giây, hoặc 2 video 30 giây |
-| `seedance-2.0` | 5 giây = 1 điểm, 10 giây = 2 điểm, 15 giây ≈ 3 điểm (ước tính, chưa đo thực tế) | 4 video 5 giây, 2 video 10 giây, hoặc 1 video 15 giây |
+| `seedance-2.0-fast` | 5 giây = 1 điểm, 10 giây = 2 điểm, 15 giây ≈ 3 điểm (ước tính, chưa đo thực tế) | 4 video 5 giây, 2 video 10 giây, hoặc 1 video 15 giây |
 
 - Điểm bị trừ **theo «mô hình + thời lượng»**, khớp với mức giá trong câu trả lời của dola «将消耗 N 个视频生成额度» (sẽ tiêu tốn N hạn mức tạo video) (đo thực tế 2026-10-14).
-- Tổ hợp có giá vượt quá hạn mức một ngày của một tài khoản (ví dụ 15 giây của 2.5) sẽ bị từ chối ngay khi gửi, kèm lý do; muốn 15 giây hãy dùng seedance-2.0.
+- Tổ hợp có giá vượt quá hạn mức một ngày của một tài khoản (ví dụ 15 giây của 2.5) sẽ bị từ chối ngay khi gửi, kèm lý do; muốn 15 giây hãy dùng seedance-2.0-fast.
+- `seedance-2.0-fast` chính là «Seedance 2.0 Fast» trên web dola (từ 2.5.1 đổi tên từ `seedance-2.0`). Tên cũ `seedance-2.0` vẫn dùng được (tương thích client cũ và chuyển hướng mô hình của new-api), tự động xử lý như 2.0 Fast, nhưng không còn xuất hiện trong `/v1/models`.
 - Khi dola trả lời «需要消耗 N 个，今日剩余 M 个，无法生成» (cần N, hôm nay còn M, không thể tạo), dola **không trừ điểm**: hệ thống chỉ điều chỉnh số dư của tài khoản này về M, tài khoản vẫn nhận được các đơn rẻ hơn, không bị khóa cả ngày.
 - **30 giây**: từ 2026-10-12, với yêu cầu 30 giây dola ngoài miệng trả lời «chỉ hỗ trợ 4～15 giây, sẽ tạo 15 giây», nhưng thực tế vẫn tạo video 30 giây. Mặc định hệ thống từ chối thẳng yêu cầu 30 giây (báo lý do cho bên gọi, không chiếm hạn mức); quản trị viên có thể đặt `DOLA_30S_MODE=pair` trong `dola.env` (khuyến nghị): hệ thống **trước tiên gửi nguyên yêu cầu 30 giây**. dola sẽ nói «tạo 15 giây, trừ 2 điểm», nhưng thực tế đa số ra đủ 30 giây (ngày 10-14 đo 4 đơn đều 30.08 giây), **chỉ trừ 2 điểm**; nếu lỡ chỉ ra 15 giây, hệ thống sẽ bù thêm một lần nửa sau rồi ghép thành 30 giây (tổng 4 điểm). Khi dola hỏi lại «có muốn tạo 15 giây không», hệ thống sẽ tự trả lời «xác nhận tạo». Lưu ý: chỉ tài khoản nhập Cookie mới làm được 30 giây; video thành phẩm dưới 13 giây thì tác vụ thất bại luôn (không đổi tài khoản đốt thêm hạn mức); khi có bù nửa sau, hình ảnh giữa hai đoạn có thể không hoàn toàn liền mạch; dola thường phải xếp hàng hàng chục phút (hay báo «预计等待 1 小时», dự kiến chờ 1 giờ).
 - Tạo thất bại thì **không trừ** điểm của tài khoản.
@@ -88,7 +89,7 @@ Hệ thống tự động xếp mỗi tài khoản vào một “nhóm” dựa 
 
 | Nhóm | Ý nghĩa | Có được giao tác vụ không | Thoát khỏi nhóm thế nào |
 |---|---|---|---|
-| 🟢 **Đủ hạn mức (满额)** | Còn 4 điểm | ✅ `seedance-2.0` chỉ dùng nhóm này; 2.5 cũng dùng sau khi nhóm Nửa hạn mức đã hết | Tự thay đổi sau khi dùng hạn mức |
+| 🟢 **Đủ hạn mức (满额)** | Còn 4 điểm | ✅ `seedance-2.0-fast` chỉ dùng nhóm này; 2.5 cũng dùng sau khi nhóm Nửa hạn mức đã hết | Tự thay đổi sau khi dùng hạn mức |
 | 🔵 **Nửa hạn mức (半额)** | Còn 2～3 điểm | ✅ `seedance-2.5` ưu tiên dùng nhóm này | Như trên |
 | 🟠 **Làm nguội (冷却)** | Còn 0～1 điểm (không đủ tạo một video) | ❌ | Sau lần đặt lại lúc 23:00 hằng ngày tự về Đủ hạn mức |
 | 🔵 **Đang tạo (生成中)** | Đang tạo video | ❌ (đang bận) | Tạo xong tự quay về |
@@ -127,9 +128,18 @@ và gắn với proxy cùng sticky session của chính tài khoản đó. Khi t
 vẫn giữ đường API thuần của Doubao. Tài khoản đã có, ở lần chạy đầu tiên, sẽ được dựng lại Cookie và Web Storage có thể khôi phục từ `cookie_state.json`.
 Không sao chép profile, `.cloakbrowser-seed`, và không dùng lại IP đầu ra giữa các tài khoản.
 
-`710022002` là tín hiệu giới hạn tần suất loại “truy cập quá thường xuyên” từ upstream. Ở chế độ nghiêm ngặt, cùng một IP đầu ra không chạy đồng thời, khoảng cách giữa hai lần gửi của cùng một tài khoản mặc định là 15 giây;
+`710022002` là tín hiệu giới hạn tần suất loại “truy cập quá thường xuyên” từ upstream. Ở chế độ nghiêm ngặt, mặc định loại trừ lẫn nhau theo danh tính đầu ra mà chương trình ghi nhận, và cấu hình tham số khoảng cách gửi 15 giây;
 khi bị dính sẽ lùi lại (backoff) riêng theo IP đầu ra và theo tài khoản; mặc định không tự đổi IP, để tránh cùng một phiên Cookie bị nhảy thiết bị/IP trong thời gian ngắn.
 Trước khi điều chỉnh, hãy xác nhận proxy thực sự là IP đầu ra cố định hoặc sticky riêng cho từng tài khoản.
+
+Lưu ý: tham số 15 giây được truyền vào bộ chọn tài khoản, nhưng vòng phân phát video hiện tại chọn tài khoản trực tiếp, nên không thể coi nó là bộ giới hạn tốc độ bắt buộc cho mọi yêu cầu.
+Muốn giảm tải thực sự thì đặt thêm `DOLA_MAX_CONCURRENCY=1` và theo dõi log yêu cầu. Session ID của proxy động khác nhau không có nghĩa là
+IP đầu ra thực tế khác nhau; loại trừ lẫn nhau theo cùng đầu ra cũng không bằng loại trùng IP công khai. Chế độ hiện tại không phải cách ly bằng container / máy ảo.
+
+Bản sửa phiên ở nhánh chính lưu `.cloak-session-cookies.json` trong mỗi `cloak-profile/` (trên Linux quyền `600`),
+dùng để khôi phục Cookie phiên sau khi đóng; ảnh chụp rỗng sẽ không điền lại trạng thái đăng nhập đã đăng xuất. File này chứa thông tin đăng nhập, không được chia sẻ hay commit lên Git.
+File Cookie JSON thông thường không nhất thiết chứa localStorage / IndexedDB; nhập Cookie không thể khôi phục toàn bộ môi trường của thiết bị gốc,
+và cũng không thể coi sessionStorage là đã được lưu bền hoàn chỉnh qua các lần khởi động lại. Chế độ 30 giây `pair` và lấy lại kết quả ở nền của API thuần không áp dụng cho tài khoản Cloak.
 
 Thứ tự nhập ở chế độ nghiêm ngặt: khi nhập hàng loạt, đánh dấu «Bỏ qua xác minh trực tuyến (跳过在线验证)» → nhập xong thì gán proxy riêng cho từng tài khoản →
 rồi bấm «Xác thực (验证)» lần lượt từng tài khoản. Như vậy lần đầu truy cập Dola sẽ dùng IP đầu ra của chính tài khoản, không đi qua proxy mặc định toàn cục trước.
@@ -502,7 +512,7 @@ Sau khi dịch vụ khởi động lại thì mọi người đều phải đăn
 Nghĩa là tạm thời không có tài khoản khả dụng nào rảnh, các nguyên nhân thường gặp:
 
 - Tài khoản trong các nhóm bình thường đều đang “Đang tạo (生成中)” → đợi một lát là xong.
-- **seedance-2.0 chỉ dùng được tài khoản nhóm 【Đủ hạn mức (满额)】**, tài khoản Đủ hạn mức dùng hết thì sẽ phải xếp hàng (chờ tối đa 10 phút), có thể đổi sang seedance-2.5, hoặc đợi lần đặt lại lúc 23:00.
+- **seedance-2.0-fast chỉ dùng được tài khoản nhóm 【Đủ hạn mức (满额)】**, tài khoản Đủ hạn mức dùng hết thì sẽ phải xếp hàng (chờ tối đa 10 phút), có thể đổi sang seedance-2.5, hoặc đợi lần đặt lại lúc 23:00.
 - Quá ít tài khoản hợp lệ → vào Quản lý tài khoản (账号管理) xem có phải nhiều tài khoản rơi vào Rủi ro (风控) / Chờ kích hoạt (待激活) không.
 
 Xếp hàng quá 30 phút mà vẫn không có tài khoản, tác vụ sẽ tự bị tính là thất bại và ghi rõ lý do.

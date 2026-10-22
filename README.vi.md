@@ -5,7 +5,7 @@
 Gom một nhóm tài khoản [dola.com](https://www.dola.com) (bản quốc tế của mô hình video Seedance của ByteDance) và [Doubao doubao.com](https://www.doubao.com) (bản Trung Quốc) thành một pool tài khoản, cung cấp ra ngoài **API tạo video / tạo ảnh tương thích OpenAI**, đồng thời tương thích giao thức dạng tác vụ của Volcano Ark (Ark), có thể kết nối trực tiếp vào các gateway như [new-api](https://github.com/QuantumNous/new-api).
 
 - Pool nhiều tài khoản: tự chọn tài khoản, ghi sổ hạn mức, làm nguội khi dính Rủi ro, đổi tài khoản khi thất bại, reset hạn mức mỗi ngày
-- **Dùng lẫn tài khoản của hai trang**: tài khoản dola nhận `seedance-2.0/2.5`, tài khoản Doubao nhận video `doubao-seedance-*` và tạo ảnh `doubao-seedream-*`, tự phân phối theo tên mô hình, không lẫn tài khoản
+- **Dùng lẫn tài khoản của hai trang**: tài khoản dola nhận `seedance-2.0-fast` / `seedance-2.5`, tài khoản Doubao nhận video `doubao-seedance-*` và tạo ảnh `doubao-seedream-*`, tự phân phối theo tên mô hình, không lẫn tài khoản
 - Hai đường tạo video: giao thức HTTP thuần (mặc định) và tự động hóa trình duyệt Chromium (dự phòng, chỉ dola)
 - Tùy chọn cách ly Cookie nghiêm ngặt: mỗi tài khoản Cookie của Dola được gắn với một profile CloakBrowser cố định, fingerprint seed cố định và đường ra riêng
 - Giao diện ra ngoài: kiểu OpenAI `/v1/videos`, `/v1/images/generations`, `/v1/images/edits`; kiểu Ark `/api/v3/contents/generations/tasks`
@@ -22,21 +22,21 @@ Gom một nhóm tài khoản [dola.com](https://www.dola.com) (bản quốc tế
 | Mô hình | Độ phân giải | Thời lượng | Tư liệu tham chiếu | Số điểm trừ mỗi lần (mặc định mỗi tài khoản 4 điểm/ngày) |
 |---|---|---|---|---|
 | `seedance-2.5` | 720p | 5 / 10 / 30 giây (15 giây không tạo được, 30 giây cần bật `pair`, xem bên dưới) | Tối đa 10 ảnh; không hỗ trợ âm thanh, video tham chiếu | 5 giây = 2, 10 giây = 4, 15 giây = 12 (vượt hạn mức ngày), **30 giây = 2** (khi chỉ ra được nửa đầu và phải bù nửa sau thì tổng là 4) |
-| `seedance-2.0` | 720p | 5 / 10 / 15 giây | Tối đa 10 ảnh; không hỗ trợ âm thanh, video tham chiếu | 5 giây = 1, 10 giây = 2, 15 giây ≈ 3 (suy ra, chưa đo thực tế) |
+| `seedance-2.0-fast` | 720p | 5 / 10 / 15 giây | Tối đa 10 ảnh; không hỗ trợ âm thanh, video tham chiếu | 5 giây = 1, 10 giây = 2, 15 giây ≈ 3 (suy ra, chưa đo thực tế) |
 
 - Số điểm trừ dựa theo **báo giá** trong phản hồi của dola, thay đổi theo «mô hình + thời lượng» (đo thực tế ngày 2026-10-14, xem `config.DURATION_COSTS`, có thể ghi đè bằng `DOLA_DURATION_COSTS`).
-  Những tổ hợp có báo giá vượt hạn mức một ngày của một tài khoản (mặc định 4 điểm) sẽ bị trả về 422 ngay khi tiếp nhận: **15 giây của seedance-2.5 cần 12 điểm, tài khoản miễn phí không tạo được**, hãy dùng 10 giây, 30 giây hoặc seedance-2.0.
+  Những tổ hợp có báo giá vượt hạn mức một ngày của một tài khoản (mặc định 4 điểm) sẽ bị trả về 422 ngay khi tiếp nhận: **15 giây của seedance-2.5 cần 12 điểm, tài khoản miễn phí không tạo được**, hãy dùng 10 giây, 30 giây hoặc seedance-2.0-fast.
 - Một tài khoản mỗi ngày (4 điểm) tạo được: 2.5 —— 5 giây 2 video / 10 giây 1 video / 30 giây 2 video; 2.0 —— 5 giây 4 video / 10 giây 2 video / 15 giây 1 video.
 
 - **30 giây**: từ 2026-10-12, dola trả lời các yêu cầu 30 giây là «chỉ hỗ trợ 4～15 giây, sẽ tạo theo 15 giây», nhưng **thực tế vẫn tạo video 30 giây** ([issue #4](https://github.com/Roins-hub/dola-pool/issues/4)). Hành vi do `DOLA_30S_MODE` quyết định:
   `reject` (mặc định, trả về 422 ngay khi tiếp nhận kèm lý do) / `pair` (**khuyến nghị**): **trước tiên gửi nguyên yêu cầu 30 giây một lần** —— dola ngoài miệng trả lời «sẽ tạo theo thời lượng hỗ trợ gần nhất là 15 giây, tiêu tốn 2», nhưng **thực tế đa số ra đủ 30 giây** (đo ngày 2026-10-14, cả 4 đơn đều 30.08 giây), chỉ trừ **2 điểm**; chỉ khi ra được nửa đầu (～15 giây) mới bù thêm một lần «nửa sau» rồi ghép cục bộ (trừ thêm 2 điểm). Số giây trong phản hồi không được tính, chỉ căn cứ vào thời lượng thực tế của file nhận về; khi dola hỏi lại «có tạo theo 15 giây không» thì tự động trả lời «xác nhận tạo»; chỉ phân cho tài khoản nhập bằng Cookie; khi có bù nửa sau thì hình ảnh giữa hai đoạn có thể không hoàn toàn liền mạch / `native` (logic cũ, gửi nguyên 30 giây; sau khi dola nói «chỉ hỗ trợ 4～15 giây» sẽ chờ thêm tối đa 10 phút, không khuyến nghị).
 - Các thời lượng khác bị từ chối thẳng; yêu cầu đã ghi rõ 2.0 / 2.5 chỉ được kiểm tra theo đúng phiên bản đó, không lặng lẽ đổi mô hình.
 - Video thành phẩm là 1280×720, 24fps, H.265, bitrate khoảng 1.5～4 Mbps (do upstream quyết định, hình ảnh càng đơn giản thì file càng nhỏ).
-- `seedance-2.0` phía Dola thực tế dùng Seedance 2.0 Fast để tạo.
+- `seedance-2.0-fast` chính là «Seedance 2.0 Fast» trên trang web dola (dola không có bản Seedance 2.0 tiêu chuẩn). Tên cũ `seedance-2.0` vẫn dùng được (tương thích client cũ và chuyển hướng mô hình của new-api), tự động xử lý như 2.0 Fast, nhưng không còn xuất hiện trong `/v1/models`.
 
 ### Mô hình cho tài khoản Doubao (doubao.com) (từ 2.3.0)
 
-Pool tài khoản có thể chứa đồng thời tài khoản dola và tài khoản Doubao: **tài khoản Doubao chỉ nhận 4 mô hình bên dưới, tài khoản dola chỉ nhận `seedance-2.0/2.5`**, không lẫn nhau.
+Pool tài khoản có thể chứa đồng thời tài khoản dola và tài khoản Doubao: **tài khoản Doubao chỉ nhận 4 mô hình bên dưới, tài khoản dola chỉ nhận `seedance-2.0-fast` / `seedance-2.5`**, không lẫn nhau.
 
 | Mô hình | Tên trong Doubao | Thời lượng | Ai dùng được | Ghi chú tiêu hao trên trang Doubao | Đo thực tế (2026-10-18) |
 |---|---|---|---|---|---|
@@ -157,6 +157,14 @@ tự đổi IP. Khi nhập hàng loạt, hãy tích chọn «Bỏ qua xác thự
 
 Chế độ này không áp dụng cho image Docker API thuần hiện tại; các bước triển khai và di chuyển đầy đủ xem [`USAGE.vi.md`](USAGE.vi.md).
 
+Nhánh chính đã sửa lỗi của v2.5.0: Cookie phiên bị mất ở lần khởi động thứ hai. Khi đóng trình duyệt, hệ thống lưu ảnh chụp phiên (session snapshot) riêng cho từng tài khoản,
+lần sau chỉ khôi phục những Cookie phiên còn thiếu; sau khi đã đăng xuất thì không phát lại bản nhập ban đầu. Bản sửa này không có trong gói phát hành v2.5.0 gốc.
+
+Đây là cách ly dữ liệu trình duyệt, không phải mỗi tài khoản một máy ảo riêng. Các tài khoản vẫn dùng chung máy chủ, tiến trình ứng dụng và cơ sở dữ liệu điều phối; tải video
+vẫn dùng HTTP client riêng. Bản ghi proxy khác nhau hoặc sticky session khác nhau không đảm bảo IP công khai khác nhau, cần xác nhận bằng cách dò IP đầu ra thực tế.
+`710022002` nghĩa là upstream từ chối / giới hạn tần suất, không thể chỉ dựa vào mã lỗi mà kết luận là do fingerprint hay IP, cũng không đảm bảo đổi trình duyệt là hết.
+Chế độ 30 giây `pair` và tính năng lấy lại kết quả ở nền khi API thuần bị quá thời gian vẫn chỉ áp dụng cho tài khoản API thuần. Nhân CloakBrowser còn có giấy phép và giới hạn phiên bản / số phiên đồng thời riêng.
+
 ## Triển khai thủ công
 
 Cần Python 3.10+. dola.com yêu cầu IP đầu ra Nhật Bản/Hàn Quốc, nếu máy chủ ở Trung Quốc đại lục thì bắt buộc phải cấu hình proxy.
@@ -258,7 +266,7 @@ Dùng **plugin tác vụ Doubao** có sẵn trong new-api (loại kênh «Task P
 2. Mô hình của kênh điền các tên chính thức mà plugin nhận biết: `doubao-seedance-2-0-260128`, `doubao-seedance-2-5-260628`;
 3. Chuyển hướng mô hình:
    ```json
-   {"doubao-seedance-2-0-260128": "seedance-2.0", "doubao-seedance-2-5-260628": "seedance-2.5"}
+   {"doubao-seedance-2-0-260128": "seedance-2.0-fast", "doubao-seedance-2-5-260628": "seedance-2.5"}
    ```
 4. Cấu hình giá cho hai mô hình này trong new-api (theo lượt hoặc theo lượng đều được).
 5. Mô hình video của tài khoản Doubao làm tương tự: thêm các tên như `doubao-seedance-2.0-mini` vào kênh (hoặc đặt bí danh ra ngoài rồi dùng chuyển hướng mô hình để ánh xạ về);

@@ -105,10 +105,15 @@ def js_literals(code: str):
                     elif ch == "}":
                         depth -= 1
                     m += 1
-                nested.append(code[start:m - 1])
+                expr = code[start:m - 1]
+                nested.append(expr)
+                k = m
+                # ${noTr(...)} 渲染成 <span translate="no">：运行时前后文字是两个文本节点，这里也按标签切开
+                if expr.strip().startswith("noTr("):
+                    parts.append("<noTr>")
+                    continue
                 parts.append("{%d}" % idx)
                 idx += 1
-                k = m
                 continue
             parts.append(code[k])
             k += 1
