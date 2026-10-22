@@ -282,7 +282,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 |---|---|---|
 | `DOLA_API_KEYS` | 空 | 对外 API Key（逗号分隔）；也可在面板中创建带额度的 Key |
 | `DOLA_ADMIN_KEY` | 空 | 管理接口 / 面板密钥 |
-| `DOLA_PROXY` | `http://127.0.0.1:7890` | 访问 dola.com 的出口代理 |
+| `DOLA_PROXY` | `http://127.0.0.1:7890` | 访问 dola.com 的出口代理；`dola.env` 里写 `DOLA_PROXY=`（留空）= 不走代理直连 |
 | `DOLA_PUBLIC_BASE` | `http://127.0.0.1:8000` | 生成 `video_url` 的对外地址 |
 | `DOLA_TASK_DEADLINE` | `600` | 单个任务总时限（秒），期间持续换号，超时判失败 |
 | `DOLA_VIDEO_MAX_ATTEMPTS` | `0` | 单任务最多尝试次数，`0` 表示不限、只受总时限约束 |

@@ -11,6 +11,13 @@
 - 单账号部署验证：同一账号两次启动均保留会话，真实页面登录检查通过；尚未验证视频出片或长期限流改善。
 - 新增无需网络的会话持久化回归测试，补充 README/USAGE 的隔离边界。
 
+**Windows 本地启动：`dola.env` 里留空的配置不再退回默认值。**
+
+- `start-local.ps1` 用 `SetEnvironmentVariable` 设空值等于删除变量，`DOLA_PROXY=`（模板默认就是留空）会退回
+  `http://127.0.0.1:7890`，本机没开 Clash 时没绑代理的账号全都连不上。现在脚本把 `dola.env` 路径交给 `DOLA_ENV_FILE`，
+  `config.py` 按 `.env.local` 的规则再读一遍（已有的环境变量优先），把空串补回来；测试：`tests/test_config_env_file.py`。
+- `.gitignore` 加上本地启动脚本放在项目目录里的 `.browsers/`、`.cache/`。
+
 ## 2.5.1 — 2026-10-20
 
 **dola 的 2.0 模型改名为 `seedance-2.0-fast`。** dola 网页上只有「Seedance 2.0 Fast」（上游值 `seedance_v2.0`），
