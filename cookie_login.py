@@ -334,7 +334,8 @@ async def _apply_browser_profile(name: str, profile_dir: Path, cookies: list[dic
 
 async def import_cookie_account(name: str, cookie_data,
                                 require_login: bool = True,
-                                browser: bool | None = None) -> dict:
+                                browser: bool | None = None,
+                                proxy_id: str | None = None) -> dict:
     """把 cookie 导入 accounts/<name>/ 并验证登录态。
 
     两条路：
@@ -360,6 +361,10 @@ async def import_cookie_account(name: str, cookie_data,
         raise ValueError("cookie 列表为空")
     pw_cookies = to_playwright_cookies(cookies)
     storage_bundle = normalize_storage_bundle(cookie_data)
+
+    if proxy_id:
+        from account_proxy_selection import bind_selected_proxy
+        await asyncio.to_thread(bind_selected_proxy, name, proxy_id)
 
     profile_dir.mkdir(parents=True, exist_ok=False)
     _write_cookie_state(profile_dir, cookies, storage_bundle)
@@ -480,7 +485,12 @@ async def import_cookie_account(name: str, cookie_data,
             else:
                 from pure_api_gen import probe_login
 
-            valid, detail = await asyncio.to_thread(probe_login, state_file)
+            if proxy_id:
+                import proxy_store
+                proxy = await asyncio.to_thread(proxy_store.requests_proxy_url, name)
+                valid, detail = await asyncio.to_thread(probe_login, state_file, proxy=proxy)
+            else:
+                valid, detail = await asyncio.to_thread(probe_login, state_file)
             verified = bool(valid)
             if not verified:
                 verify_error = detail or "纯 API 探活未通过"
@@ -503,7 +513,8 @@ async def import_cookie_account(name: str, cookie_data,
 async def import_cookie_accounts_from_text(pool, raw_text: str,
                                            name_prefix: str = "acc",
                                            require_login: bool = True,
-                                           site: str = "dola") -> dict:
+                                           site: str = "dola",
+                                           proxy_ids: list[str] | None = None) -> dict:
     """Cookie 头文本 / Cookie JSON 批量导入（对齐 api-pool 的 import-cookies）。
 
     - 按 sessionid 去重：已存在则记入 updated（不重复建号）；
@@ -512,7 +523,10 @@ async def import_cookie_accounts_from_text(pool, raw_text: str,
       require_login=False 时只写 cookie 不验证（供无 JP/KR 代理时先导入、之后面板验证）。
     """
     from cookie_import import parse_cookie_header_text, sessionid_from_state
+    from account_proxy_selection import validate_proxy_ids
 
+    proxy_ids = validate_proxy_ids(proxy_ids)
+    assigned = 0
     states = parse_cookie_header_text(raw_text, site)
     existing = set(pool.accounts)
     created: list[str] = []
@@ -535,7 +549,11 @@ async def import_cookie_accounts_from_text(pool, raw_text: str,
         existing.add(name)
         bundle = {"cookies": state["cookies_list"]}
         try:
-            result = await import_cookie_account(name, bundle, require_login=require_login)
+            proxy_kwargs = {}
+            if proxy_ids:
+                proxy_kwargs["proxy_id"] = proxy_ids[assigned % len(proxy_ids)]
+                assigned += 1
+            result = await import_cookie_account(name, bundle, require_login=require_login, **proxy_kwargs)
             pool.ensure_account(name)
             pool.set_sessionid(name, sid)
             pool.set_source(name, "cookie")

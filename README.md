@@ -13,6 +13,7 @@
 - 可选严格 Cookie 隔离：Dola Cookie 账号按账号绑定 CloakBrowser 持久 profile、固定 fingerprint seed 和独立出口
 - 对外接口：OpenAI 风格 `/v1/videos`、`/v1/images/generations`、`/v1/images/edits`，Ark 风格 `/api/v3/contents/generations/tasks`
 - 自带管理面板：账号、代理、客户 API Key、任务、视频、压力测试；界面支持中文 / 越南语 / 中越双语（见 [`I18N.md`](I18N.md)）
+- 账号 Cookie 单个 JSON / 批量 ZIP 导出；添加账号时可绑定代理，批量添加支持多选代理轮流分配（登录/验证前生效）
 - 参考图生视频 / 图生图、本地转存与静态分发（水印情况见「注意事项」）
 
 > 📖 **第一次使用？先看 [`USAGE.md`](USAGE.md) 使用手册**：核心概念、管理面板每个按钮的作用、从零出第一条视频、日常运营与常见问题。

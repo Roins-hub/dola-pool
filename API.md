@@ -779,3 +779,10 @@ vi /www/wwwroot/stable-dola-pool/cookies.txt   # 一行一个
 | 运行环境 | Python 3.12 venv | Python 3.11.6 venv + **Node.js 20（新增依赖，纯 API 签名用）** |
 | 日志 | `/var/log/dola-pool*.log` | `/www/wwwlogs/python/stable-dola-pool/error.log` |
 | 版本 | `2.0.5` | 见 `CHANGELOG.md`（画布直连/参考图落盘/签名器加固/30 秒本地拼接/存储防线） |
+
+
+### 账号 Cookie 导出与初始代理选择
+
+`POST /api/admin/accounts/export-cookies`，请求头 `X-Admin-Key` 使用管理面板登录 token；客户 API Key 不可代替。请求体 `{"names":["acc1","acc2"]}`（1～500 项，去重后导出）。单账号返回 JSON 附件，多账号返回 ZIP，每账号一个 `<name>.json`，另含 `_export/manifest.json` 成功/失败清单。响应带 `Cache-Control: no-store, private`、`X-Exported-Accounts`、`X-Failed-Accounts`。账号不存在返回 404，全部不可导出返回 409；超过 32 MB 返回 409。Cookie 仅来自已保存快照，不是实时有效性检测，不含完整浏览器存储。
+
+`POST /api/admin/accounts` 新增可选 `proxy_id`，选择已有启用代理，在 Google 登录或 Cookie 验证前绑定。`POST /api/admin/accounts/import-cookies` 和 `/api/admin/accounts/import-accounts` 新增可选 `proxy_ids` 数组，去重后轮流分配给非重复的新账号。无选择时保持原行为；不存在/停用的代理在受理时拒绝，执行前也会复核。

@@ -612,3 +612,12 @@ Nếu đã gán nhiều IP Nhật Bản khác nhau, đợi vài giờ mà mọi 
 | Triển khai / chuyển máy chủ | [`README.vi.md`](README.vi.md), [`deploy/README.md`](deploy/README.md) |
 | Xem mỗi phiên bản đã thay đổi gì | [`CHANGELOG.md`](CHANGELOG.md) |
 | Sửa code | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
+
+
+### Xuất Cookie và chọn proxy khi thêm tài khoản
+
+Trong mỗi hàng, nhấn “Xuất Cookie” để tải JSON. Chọn nhiều tài khoản rồi nhấn “Xuất Cookie đã chọn” để tải ZIP: mỗi tài khoản một JSON, kèm `_export/manifest.json` liệt kê kết quả và lỗi. Giải nén rồi nhập các JSON tài khoản bằng chế độ tệp Cookie JSON; không chọn tệp manifest. Tệp chứa thông tin đăng nhập, hãy bảo quản an toàn.
+
+Chỉ xuất Cookie đã lưu; không mở trình duyệt hay kiểm tra phiên trực tuyến, không xuất mật khẩu, TOTP, mật khẩu proxy hoặc toàn bộ bộ nhớ trình duyệt. Ưu tiên bản lưu Cloak; bản rỗng không khôi phục Cookie cũ. Tài khoản chỉ có profile mà không có bản lưu Cookie chưa được hỗ trợ. Tối đa 500 tài khoản / 32 MB mỗi lần.
+
+Khi thêm tài khoản Google hoặc Cookie, có thể chọn một proxy đang bật. Cả ba chế độ thêm hàng loạt đều cho chọn nhiều proxy, phân lần lượt theo thứ tự danh sách trước lần đăng nhập/xác thực đầu tiên. Không chọn thì dùng proxy mặc định. Tài khoản trùng bị bỏ qua, không đổi liên kết hiện có.

@@ -36,6 +36,8 @@ import proxy_store
 import sites
 from add_account import add_account_flow
 from cookie_login import import_cookie_account, import_cookie_accounts_from_text
+from cookie_export import CookieExportError, build_export
+from account_proxy_selection import bind_selected_proxy, validate_proxy_ids
 from credential_import import allocate_credentials, parse_account_text
 from browser_pool import (
     ACTIVE_GROUPS,
@@ -1847,6 +1849,10 @@ class BatchAccountsBody(BaseModel):
     names: list[str] = Field(default_factory=list)
 
 
+class CookieExportBody(BaseModel):
+    names: list[str] = Field(min_length=1, max_length=500)
+
+
 class BatchProxyBody(BaseModel):
     names: list[str] = Field(default_factory=list)
     proxy_id: str | None = None
@@ -1857,6 +1863,7 @@ class ImportTextBody(BaseModel):
     skip_verify: bool = False
     # Cookie 头格式不带域名：dola（默认）/ doubao。JSON 格式自带域名，自动识别。
     site: str = "dola"
+    proxy_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
 class AccountAdd(BaseModel):
@@ -1866,6 +1873,7 @@ class AccountAdd(BaseModel):
     totp: str = ""
     cookies: str = ""
     cookie_skip_verify: bool = False
+    proxy_id: str | None = None
 
 
 class KeyCreate(BaseModel):
@@ -2584,6 +2592,29 @@ async def admin_bind_proxies(body: BindProxiesBody,
         raise HTTPException(400, f"{code}: {exc}") from exc
 
 
+@app.post("/api/admin/accounts/export-cookies")
+async def admin_export_cookies(body: CookieExportBody,
+                               x_admin_key: str | None = Header(default=None)):
+    """Download saved cookies; never store an export in the public static directories."""
+    _admin_auth(x_admin_key)
+    names = list(dict.fromkeys(body.names))
+    if any(not NAME_RE.fullmatch(name) for name in names):
+        raise HTTPException(400, "账号名不合法")
+    if any(name not in pool.accounts for name in names):
+        raise HTTPException(404, "所选账号不存在，请刷新列表")
+    try:
+        content, media_type, filename, exported, failed = await asyncio.to_thread(
+            build_export, pool.accounts_dir, names, config.COOKIE_PROFILE_SUBDIR)
+    except CookieExportError as exc:
+        raise HTTPException(409, str(exc)) from None
+    return Response(content=content, media_type=media_type, headers={
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Cache-Control": "no-store, private", "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "X-Exported-Accounts": str(exported), "X-Failed-Accounts": str(failed),
+    })
+
+
 @app.post("/api/admin/accounts/import-cookies")
 async def admin_import_cookies(body: ImportTextBody,
                                x_admin_key: str | None = Header(default=None)):
@@ -2598,6 +2629,7 @@ async def admin_import_cookies(body: ImportTextBody,
         result = await import_cookie_accounts_from_text(
             pool, body.text, require_login=not body.skip_verify,
             site="doubao" if (body.site or "").lower() == "doubao" else "dola",
+            proxy_ids=body.proxy_ids,
         )
     except Exception as exc:
         raise HTTPException(400, str(exc)[:300]) from exc
@@ -2616,6 +2648,10 @@ async def admin_import_accounts(body: ImportTextBody,
     if not (body.text or "").strip():
         raise HTTPException(400, "text 不能为空")
     records = parse_account_text(body.text)
+    try:
+        selected_proxies = validate_proxy_ids(body.proxy_ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
     if not records:
         raise HTTPException(400, "未解析到有效账号（需 email----password 或 JSON 数组）")
     pairs = allocate_credentials(records, pool.accounts, name_prefix="acc")
@@ -2624,6 +2660,7 @@ async def admin_import_accounts(body: ImportTextBody,
     errors: list[str] = []
     try:
         async with ADD_ACCOUNT_SEM:
+            assigned = 0
             for name, cred in pairs:
                 dups = pool.find_accounts_by_email(cred.email)
                 if dups:
@@ -2631,6 +2668,10 @@ async def admin_import_accounts(body: ImportTextBody,
                     errors.append(f"{name}: 邮箱已存在于 {','.join(dups)}")
                     continue
                 try:
+                    if selected_proxies:
+                        proxy_id = selected_proxies[assigned % len(selected_proxies)]
+                        assigned += 1
+                        await asyncio.to_thread(bind_selected_proxy, name, proxy_id)
                     ADD_SEM_HOLDER["what"] = f"批量登录（{name}）"
                     await add_account_flow(name, cred.email, cred.password, cred.totp)
                     pool.ensure_account(name)
@@ -2893,7 +2934,8 @@ def _add_job_stage(name: str, stage: str) -> None:
 
 
 async def _run_add_job(name: str, email: str, password: str, totp: str,
-                       cookies: str = "", cookie_skip_verify: bool = False) -> None:
+                       cookies: str = "", cookie_skip_verify: bool = False,
+                       proxy_id: str | None = None) -> None:
     JOBS[name] = {"kind": "add", "status": "running", "email": email,
                   "source": "cookie" if cookies else "login",
                   "error": "", "started_at": time.time(), "stage": "排队中"}
@@ -2907,12 +2949,15 @@ async def _run_add_job(name: str, email: str, password: str, totp: str,
                 result = await import_cookie_account(
                     name, json.loads(cookies),
                     require_login=not cookie_skip_verify,
+                    **({"proxy_id": proxy_id} if proxy_id else {}),
                 )
                 pool.ensure_account(name)
                 pool.set_email(name, email)
                 pool.set_source(name, "cookie")
                 pool.set_login_status(name, bool(result.get("verified")))
             else:
+                if proxy_id:
+                    await asyncio.to_thread(bind_selected_proxy, name, proxy_id)
                 _add_job_stage(name, "Google 登录中（打开浏览器走 OAuth，通常 1~3 分钟）")
                 await add_account_flow(name, email, password, totp)
                 pool.ensure_account(name)
@@ -2978,6 +3023,10 @@ async def _cred_refresher_loop() -> None:
 @app.post("/api/admin/accounts", status_code=202)
 async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    try:
+        validate_proxy_ids([body.proxy_id] if body.proxy_id else [])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
     if not NAME_RE.match(body.name):
         raise HTTPException(400, "invalid account name")
     if body.name in pool.accounts:
@@ -3009,6 +3058,7 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
     asyncio.create_task(_run_add_job(
         body.name, email, body.password, body.totp,
         cookies=cookies, cookie_skip_verify=body.cookie_skip_verify,
+        proxy_id=body.proxy_id,
     ))
     return {"ok": True, "job": "running"}
 

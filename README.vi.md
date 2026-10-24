@@ -348,3 +348,5 @@ pytest -q tests
 ## Miễn trừ trách nhiệm
 
 Kho mã này là ghi chép cá nhân phục vụ học tập và nghiên cứu khả năng tương tác, có chứa phần hiện thực dịch ngược các giao diện web của upstream; mã nguồn không chứa bất kỳ tài khoản, cookie, khóa hay thông tin xác thực nào có thể sử dụng. `extensions/dola30/` là tiện ích mở rộng của bên thứ ba, quyền cấp phép và quyền sử dụng thuộc về tác giả gốc. Người sử dụng phải tự tuân thủ điều khoản dịch vụ của dola.com, doubao.com và pháp luật nơi mình sinh sống (bao gồm các yêu cầu về ghi nhãn nội dung do trí tuệ nhân tạo tạo ra), tự đánh giá rủi ro về tài khoản và tuân thủ.
+
+Trang quản trị hỗ trợ xuất Cookie dưới dạng JSON / ZIP và chọn proxy trước khi thêm tài khoản; thêm hàng loạt có thể chọn nhiều proxy để phân lần lượt. Xem USAGE.vi.md.

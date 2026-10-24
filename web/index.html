@@ -262,6 +262,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
           <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="发一句「你好」判风控：被登出或没回复 → 进【风控】组；不勾选就对当前筛选出来的号批量探测">你好探测</button>
           <button class="btn" id="btnBatchRecover" onclick="batchRecover()" title="批量把选中的号从【风控】/【异常】组放出来（风控恢复后回到【待激活】，建议接着探测一次）">批量恢复</button>
           <button class="btn" id="btnProxySel" onclick="openBatchProxy()" disabled>更改代理</button>
+          <button class="btn" id="btnExportCookies" onclick="exportAccountCookies()" disabled>导出选中 Cookie</button>
           <button class="btn" onclick="resetAllQuotas()" title="立即恢复全池额度（每天按设定时点自动执行一次）">重置额度</button>
           <button class="btn" onclick="openBatchAdd()">＋ 批量添加</button>
           <button class="btn btn-p" onclick="openAddAccount()">＋ 添加账号</button>
@@ -685,6 +686,7 @@ async function loadAccounts(){
       `<button class="btn" style="margin-right:6px" onclick="openRenameAccount('${x.name}')">改名</button>`+
       `<button class="btn" style="margin-right:6px" onclick="verify('${x.name}',this)">验证</button>`+
       `<button class="btn" style="margin-right:6px" onclick="openTestGen('${x.name}')">测试生成</button>`+
+      `<button class="btn" style="margin-right:6px" onclick="exportAccountCookies('${x.name}')">导出 Cookie</button>`+
       `<button class="btn" style="margin-right:6px" onclick="openSetAccountProxy('${x.name}','${x.proxy_id||''}')">${x.proxy_name?noTr(x.proxy_name):'代理(默认)'}</button>`+
       ((x.group==='风控'||x.group==='待激活')
         ?`<button class="btn" style="margin-right:6px" title="发一句「你好」：被登出或没回复即判风控" onclick="probeHello('${x.name}')">你好探测</button>`:'')+
@@ -935,6 +937,30 @@ function toggleSel(name,on){
   updateSelButtons();
 }
 
+let cookieExportRunning=false;
+async function exportAccountCookies(name){
+  if(cookieExportRunning)return;
+  const names=name?[name]:[...selAccounts];
+  if(!names.length)return alert('请先勾选账号');
+  if(!confirm(dialogText`导出 ${names.length} 个账号的 Cookie？文件包含登录凭据，请妥善保管。导出的是已保存快照，不代表当前登录有效；批量 ZIP 内含导出结果清单。`))return;
+  cookieExportRunning=true;updateSelButtons();
+  try{
+    const r=await fetch('/api/admin/accounts/export-cookies',{
+      method:'POST',cache:'no-store',headers:{'Content-Type':'application/json','X-Admin-Key':adminKey},
+      body:JSON.stringify({names})
+    });
+    if(r.status===401){showLogin();return;}
+    if(!r.ok){const data=await r.json().catch(()=>({}));throw new Error(data.detail||'Cookie 导出失败');}
+    const blob=await r.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=names.length===1?names[0]+'.json':'dola-account-cookies.zip';
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const failed=Number(r.headers.get('X-Failed-Accounts')||0);
+    if(failed)alert(dialogText`已导出 ${r.headers.get('X-Exported-Accounts')} 个账号，${failed} 个未导出。请查看 ZIP 中的 _export/manifest.json。`);
+  }catch(e){alert(dialogText`${e.message}`);}
+  finally{cookieExportRunning=false;updateSelButtons();}
+}
+
 // 勾选状态 -> 工具条按钮：删除选中 / 一键验证 / 更改代理
 function updateSelButtons(){
   const n=selAccounts.size;
@@ -944,6 +970,8 @@ function updateSelButtons(){
   if(verifyBtn){verifyBtn.disabled=n===0;verifyBtn.textContent=n?`一键验证（${n}）`:'一键验证';}
   const proxyBtn=q('#btnProxySel');
   if(proxyBtn){proxyBtn.disabled=n===0;proxyBtn.textContent=n?`更改代理（${n}）`:'更改代理';}
+  const exportBtn=q('#btnExportCookies');
+  if(exportBtn){exportBtn.disabled=n===0||cookieExportRunning;exportBtn.textContent=cookieExportRunning?'正在导出…':(n?`导出选中 Cookie（${n}）`:'导出选中 Cookie');}
   const selAll=q('#selAll');
   if(selAll){
     const scope=filteredNames.length;
@@ -1123,16 +1151,35 @@ function cookieHowto(){
       导出后<b>不要点退出登录</b>（Cookie 会当场作废），直接关窗口。导入后绑定代理 → 点「你好探测」激活。
     </div></details>`;
 }
+let addProxyChoices=[],singleAddProxy='',batchAddProxyIds=[];
+async function loadAddProxyChoices(){
+  const r=await api('/api/admin/proxies');
+  addProxyChoices=(r.proxies||[]).filter(p=>p.enabled);
+}
+function addProxyPicker(multiple){
+  if(multiple)return `<label style="margin-top:12px">添加时绑定代理（可多选）</label>
+    <div style="max-height:150px;overflow:auto;margin:6px 0">${addProxyChoices.map(p=>
+      `<label style="display:flex;align-items:center;gap:8px;margin:6px 0"><input type="checkbox" class="add-proxy-choice" style="width:auto;margin:0" value="${esc(p.id)}" ${batchAddProxyIds.includes(p.id)?'checked':''} onchange="batchAddProxyIds=Array.from(document.querySelectorAll('.add-proxy-choice:checked')).map(x=>x.value)">${noTr(p.name)}</label>`).join('')||'<span class="tiny">暂无已启用代理，请先到代理管理添加</span>'}</div>
+    <div class="hint">按代理列表顺序轮流分配给新账号；不选则使用默认代理。登录或在线验证前完成绑定。</div>`;
+  return `<label style="margin-top:12px">添加时绑定代理</label>
+    <select id="f_addProxy" style="width:100%;padding:8px 12px;margin:6px 0" onchange="singleAddProxy=this.value">
+      <option value="">默认代理（DOLA_PROXY）</option>${addProxyChoices.map(p=>
+        `<option translate="no" value="${esc(p.id)}" ${singleAddProxy===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
+    </select><div class="hint">登录或在线验证前完成绑定；未选择时使用默认代理。</div>`;
+}
 let batchAddMode='text';
 let batchCookieFiles=[];
 function batchAddModeSwitch(){
-  return `<div style="display:flex;gap:8px;margin-bottom:14px">
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
     <button class="btn ${batchAddMode==='text'?'btn-p':''}" onclick="setBatchAddMode('text')">文本批量添加</button>
     <button class="btn ${batchAddMode==='cookie'?'btn-p':''}" onclick="setBatchAddMode('cookie')">Cookie JSON 文件</button>
     <button class="btn ${batchAddMode==='cookieHeader'?'btn-p':''}" onclick="setBatchAddMode('cookieHeader')">Cookie 头文本</button>
   </div>`;
 }
-function openBatchAdd(){batchAddMode='text';renderBatchAddForm();}
+async function openBatchAdd(){
+  try{await loadAddProxyChoices();}catch(e){return alert(dialogText`${e.message}`);}
+  batchAddMode='text';batchAddProxyIds=[];renderBatchAddForm();
+}
 function setBatchAddMode(mode){batchAddMode=mode;renderBatchAddForm();}
 function renderBatchAddForm(){
   const sw=batchAddModeSwitch();
@@ -1146,6 +1193,7 @@ function renderBatchAddForm(){
         <span>跳过在线验证（先导入，之后可在账号列表点“验证”复核）</span>
       </label>
       <div id="batchCookieInfo" class="tiny" style="margin:6px 0;white-space:pre-wrap"></div>
+      ${addProxyPicker(true)}
       <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
       <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitBatchCookieAdd()">开始批量导入</button></div>`);
     return;
@@ -1168,6 +1216,7 @@ passport_csrf_token=bbb; sessionid=sid-two"></textarea>
         <input type="checkbox" id="f_cookieHeaderSkip" style="margin-top:2px;width:auto" checked>
         <span>跳过在线验证（先导入、保留 profile，之后在列表点“验证”复核）</span>
       </label>
+      ${addProxyPicker(true)}
       <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
       <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitBatchCookieHeader()">开始导入</button></div>`);
     return;
@@ -1184,7 +1233,8 @@ acc2 user2@xx.com pass456
 4) 邮箱|密码 / 邮箱---密码（自动命名 accN，可选 TOTP）
 账号名可省略（自动 accN），TOTP 可省略"></textarea>
     <div class="hint" style="margin-top:6px">字段分隔支持 空格 / | / ---；多个账号会排队逐个登录（内存限制，避免同时开多个浏览器），请耐心等待</div>
-    <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
+    ${addProxyPicker(true)}
+      <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitBatchAdd()">开始批量添加</button></div>`);
 }
 function fileBaseName(fileName){
@@ -1216,9 +1266,10 @@ async function previewCookieBatchFiles(){
   info.textContent=lines.join('\n')||'未选择可导入的文件';
 }
 async function submitBatchCookieAdd(){
-  const btn=q('#dlg .btn-p');const res=q('#batchResult');const info=q('#batchCookieInfo');
+  const btn=q('#dlg .row .btn-p');const res=q('#batchResult');const info=q('#batchCookieInfo');
   if(!batchCookieFiles.length)return alert('请先选择 Cookie JSON 文件');
   const skip=q('#f_cookieSkip').checked;
+  const proxies=[...batchAddProxyIds];let proxyIndex=0;
   btn.disabled=true;res.textContent='';
   let existing=[];
   try{const r=await api('/api/admin/accounts');existing=r.accounts||[];}catch(e){}
@@ -1231,7 +1282,7 @@ async function submitBatchCookieAdd(){
     }
     taken.add(item.name);
     try{
-      await api('/api/admin/accounts',{method:'POST',body:{name:item.name,email:'',password:'',totp:'',cookies:item.raw,cookie_skip_verify:skip}});
+      await api('/api/admin/accounts',{method:'POST',body:{name:item.name,email:'',password:'',totp:'',cookies:item.raw,cookie_skip_verify:skip,proxy_id:proxies.length?proxies[proxyIndex++%proxies.length]:null}});
       lines.push('✓ '+item.name+' 已提交导入');
       submitted++;
     }catch(e){
@@ -1249,14 +1300,14 @@ async function submitBatchCookieAdd(){
 }
 
 async function submitBatchCookieHeader(){
-  const btn=q('#dlg .btn-p');const res=q('#batchResult');
+  const btn=q('#dlg .row .btn-p');const res=q('#batchResult');
   const text=q('#f_cookieHeader').value.trim();
   if(!text)return alert('请粘贴 Cookie 头文本或 Cookie JSON（一个账号一份）');
   btn.disabled=true;res.textContent='导入中…';
   try{
     const r=await api('/api/admin/accounts/import-cookies',{method:'POST',body:{
       text, skip_verify:q('#f_cookieHeaderSkip').checked,
-      site:(q('#f_cookieSite')||{}).value||'dola'
+      site:(q('#f_cookieSite')||{}).value||'dola',proxy_ids:[...batchAddProxyIds]
     }});
     const lines=[];
     if(r.created&&r.created.length)lines.push('✓ 已创建：'+r.created.join('、'));
@@ -1326,8 +1377,9 @@ function parseBatchInput(text){
 
 async function submitBatchAdd(){
   const accounts=parseBatchInput(q('#f_batch').value);
+  const proxies=[...batchAddProxyIds];
   if(!accounts.length)return alert('未解析到任何账号，请检查格式（账号名 邮箱 密码 [TOTP]）');
-  const btn=q('#dlg .btn-p');const res=q('#batchResult');
+  const btn=q('#dlg .row .btn-p');const res=q('#batchResult');
   btn.disabled=true;res.textContent='';
   const lines=[];
   const normEmail=e=>String(e||'').trim().toLowerCase();
@@ -1366,7 +1418,7 @@ async function submitBatchAdd(){
     res.textContent=lines.join('\n');
   }
   for(let i=0;i<todo.length;i++){
-    const a=todo[i];
+    const a={...todo[i],proxy_id:proxies.length?proxies[i%proxies.length]:null};
     try{
       await api('/api/admin/accounts',{method:'POST',body:a});
       lines.push('✓ '+a.name+' '+a.email+' 已提交');
@@ -1389,19 +1441,23 @@ function nextAccName(){
   return def;
 }
 function addModeSwitch(){
-  return `<div style="display:flex;gap:8px;margin-bottom:14px">
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
     <button class="btn ${addMode==='google'?'btn-p':''}" onclick="setAddMode('google')">Google 登录</button>
     <button class="btn ${addMode==='cookie'?'btn-p':''}" onclick="setAddMode('cookie')">Cookie 导入</button>
   </div>`;
 }
 function setAddMode(m){addMode=m;renderAddAccountForm();}
-function openAddAccount(){addMode='google';renderAddAccountForm();}
+async function openAddAccount(){
+  try{await loadAddProxyChoices();}catch(e){return alert(dialogText`${e.message}`);}
+  addMode='google';singleAddProxy='';renderAddAccountForm();
+}
 function renderAddAccountForm(){
   const def=nextAccName();
   const sw=addModeSwitch();
   if(addMode==='cookie'){
     showDlg(`<h2>添加账号</h2>${sw}
       <label>账号名</label><input id="f_name" value="${def}">
+      ${addProxyPicker(false)}
       <label>Cookie JSON</label>
       <textarea id="f_cookies" rows="13" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-top:4px" placeholder='{"format":"...","cookies":[{"name":"sessionid",...}]}'></textarea>
       <div class="hint" style="margin-top:6px">粘贴 Cookie-Editor / EditThisCookie 等扩展导出的完整 JSON。</div>
@@ -1414,19 +1470,20 @@ function renderAddAccountForm(){
   }
   showDlg(`<h2>添加账号</h2>${sw}
     <label>账号名</label><input id="f_name" value="${def}">
+      ${addProxyPicker(false)}
     <label>Google 邮箱</label><input id="f_email" placeholder="xxx@yy.asia">
     <label>密码</label><input id="f_pass" type="password">
     <label>TOTP 密钥</label><input id="f_totp" placeholder="2FA secret">
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitAddAccount()">开始登录</button></div>`);
 }
 async function submitAddAccount(){
-  const body={name:q('#f_name').value.trim(),email:q('#f_email').value.trim(),password:q('#f_pass').value,totp:q('#f_totp').value.trim()};
+  const body={name:q('#f_name').value.trim(),email:q('#f_email').value.trim(),password:q('#f_pass').value,totp:q('#f_totp').value.trim(),proxy_id:singleAddProxy||null};
   if(!body.name||!body.email||!body.password)return alert('请填写账号名/邮箱/密码');
   try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');refresh();
 }
 async function submitAddCookie(){
-  const body={name:q('#f_name').value.trim(),email:'',password:'',totp:'',cookies:q('#f_cookies').value.trim(),cookie_skip_verify:q('#f_skip').checked};
+  const body={name:q('#f_name').value.trim(),email:'',password:'',totp:'',cookies:q('#f_cookies').value.trim(),cookie_skip_verify:q('#f_skip').checked,proxy_id:singleAddProxy||null};
   if(!body.name)return alert('请填写账号名');
   if(!body.cookies)return alert('请粘贴 Cookie JSON');
   try{JSON.parse(body.cookies);}catch(e){return alert('Cookie JSON 解析失败：'+e.message);}

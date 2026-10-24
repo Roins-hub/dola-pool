@@ -607,3 +607,12 @@ DOLA_PURE_REMOVE_WATERMARK=0
 | 部署 / 迁移服务器 | [`README.md`](README.md)、[`deploy/README.md`](deploy/README.md) |
 | 看每个版本改了什么 | [`CHANGELOG.md`](CHANGELOG.md) |
 | 改代码 | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
+
+
+### 账号 Cookie 导出与添加时选择代理
+
+- 账号行点击「导出 Cookie」下载 `<账号名>.json`。勾选多个账号后点击「导出选中 Cookie」，下载 ZIP；每账号一个 JSON，`_export/manifest.json` 列出成功与失败项。
+- ZIP 解压后，用「批量添加 → Cookie JSON 文件」选择账号 JSON 重新导入（不要选择清单）。支持 Dola 与豆包 Cookie，保留同名不同域/路径的条目。文件包含登录凭据，请妥善保存。
+- 导出的是服务器已保存的 Cookie 快照，不执行在线验证、不打开浏览器，不保证 Cookie 仍有效。若有 Cloak 会话快照则优先使用；空快照视为退出登录，不回填旧数据。仅有浏览器 profile、没有 Cookie 快照的账号暂不支持导出。此功能不导出密码、TOTP、代理密码或浏览器完整存储。单次最多 500 账号、32 MB。
+- 添加账号的 Google 登录与 Cookie 导入表单均可选择一个已启用代理。批量添加的三种方式均支持勾选多个代理，按代理列表顺序轮流分配；重复账号跳过，不改动原绑定。不选保持默认代理行为。
+- 所选代理在首次登录/在线验证前绑定。队列执行时再次检查代理；已删除、已停用或没有可用节点的代理会报告失败。可在代理管理修复后重试。
