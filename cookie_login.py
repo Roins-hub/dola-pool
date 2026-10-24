@@ -485,12 +485,9 @@ async def import_cookie_account(name: str, cookie_data,
             else:
                 from pure_api_gen import probe_login
 
-            if proxy_id:
-                import proxy_store
-                proxy = await asyncio.to_thread(proxy_store.requests_proxy_url, name)
-                valid, detail = await asyncio.to_thread(probe_login, state_file, proxy=proxy)
-            else:
-                valid, detail = await asyncio.to_thread(probe_login, state_file)
+            import proxy_store
+            proxy = await asyncio.to_thread(proxy_store.requests_proxy_url, name)
+            valid, detail = await asyncio.to_thread(probe_login, state_file, proxy=proxy)
             verified = bool(valid)
             if not verified:
                 verify_error = detail or "纯 API 探活未通过"

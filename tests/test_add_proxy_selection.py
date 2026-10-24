@@ -36,7 +36,8 @@ def test_empty_node_pool_cannot_fall_back_to_default(monkeypatch):
         selection.bind_selected_proxy("acc1", "p1")
 
 
-def test_cookie_first_probe_uses_selected_proxy(tmp_path, monkeypatch):
+@pytest.mark.parametrize("proxy_id", ["p1", None])
+def test_cookie_first_probe_uses_selected_proxy(tmp_path, monkeypatch, proxy_id):
     import config
     import cookie_login
     monkeypatch.chdir(tmp_path)
@@ -44,16 +45,17 @@ def test_cookie_first_probe_uses_selected_proxy(tmp_path, monkeypatch):
     monkeypatch.setattr(cookie_login, "browser_backend_available", lambda: (False, "test"))
     events = []
     monkeypatch.setattr(selection, "bind_selected_proxy", lambda n, p: events.append(("bind", n, p)))
-    monkeypatch.setattr(selection.proxy_store, "requests_proxy_url", lambda n: "http://chosen:8080")
+    expected_proxy = "http://chosen:8080" if proxy_id else "http://default:8080"
+    monkeypatch.setattr(selection.proxy_store, "requests_proxy_url", lambda n: expected_proxy)
     def probe(state, proxy=""):
-        assert events == [("bind", "acc1", "p1")]
+        assert events == ([("bind", "acc1", "p1")] if proxy_id else [])
         assert Path(state).exists()
         events.append(("probe", proxy))
         return True, ""
     monkeypatch.setitem(sys.modules, "doubao_gen", SimpleNamespace(probe_login=probe))
     bundle = {"cookies": [{"name": "sessionid", "value": "test-only", "domain": ".doubao.com"}]}
-    result = run(cookie_login.import_cookie_account("acc1", bundle, proxy_id="p1"))
-    assert result["verified"] and events[-1] == ("probe", "http://chosen:8080")
+    result = run(cookie_login.import_cookie_account("acc1", bundle, proxy_id=proxy_id))
+    assert result["verified"] and events[-1] == ("probe", expected_proxy)
 
 
 def test_batch_round_robin_skips_existing_cookie(monkeypatch):
