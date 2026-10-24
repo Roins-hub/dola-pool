@@ -34,6 +34,9 @@ dl_now.py
 # --- python ---
 __pycache__/
 .venv/
+# start-local.ps1 / start-local.sh 放在项目目录里的浏览器内核和 pip 缓存
+/.browsers/
+/.cache/
 *.pyc
 
 # --- deployment secrets / local backups (added locally) ---
