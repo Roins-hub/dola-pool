@@ -132,21 +132,35 @@ global.document = {
 global.window = global;
 global.NodeFilter = { SHOW_TEXT: 4, SHOW_ELEMENT: 1 };
 global.MutationObserver = MutationObserver;
-global.localStorage = { getItem: () => 'vi', setItem() {} };
+global.localStorage = { getItem: () => process.argv[3] || 'vi', setItem() {} };
 global.location = { reload() {} };
 const dialogs = [];
-global.alert = m => { dialogs.push(m); };
-global.confirm = m => { dialogs.push(m); return true; };
-global.prompt = m => { dialogs.push(m); return null; };
+global.alert = m => { dialogs.push(String(m)); };
+global.confirm = m => { dialogs.push(String(m)); return false; };
+global.prompt = m => { dialogs.push(String(m)); return null; };
 global.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve(DICT) });
 
 /** 从 index.html 里按名字取出一个顶层 function 的源码（括号配平）。 */
 function panelFn(name) {
-  const start = PANEL.indexOf('\nfunction ' + name + '(');
+  const match = new RegExp('\\n(?:async )?function ' + name + '\\(').exec(PANEL);
+  const start = match ? match.index : -1;
   if (start < 0) throw new Error('index.html 里找不到 function ' + name);
   let i = PANEL.indexOf('{', start), depth = 0;
   for (; i < PANEL.length; i++) {
     const c = PANEL[i];
+    if (c === '/' && PANEL[i + 1] === '/') {
+      i = PANEL.indexOf('\n', i); if (i < 0) throw new Error('unterminated function');
+      continue;
+    }
+    if (c === '/' && PANEL[i + 1] === '*') {
+      i = PANEL.indexOf('*/', i + 2) + 1;
+      continue;
+    }
+    // esc() contains quotes inside a regular expression character class.
+    if (c === '/' && PANEL[i + 1] === '[') {
+      for (i++; i < PANEL.length && PANEL[i] !== '/'; i++) if (PANEL[i] === '\\') i++;
+      continue;
+    }
     if (c === "'" || c === '"' || c === '`') {
       for (i++; i < PANEL.length && PANEL[i] !== c; i++) if (PANEL[i] === '\\') i++;
       continue;
@@ -162,8 +176,8 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 (async () => {
   // 面板真实的渲染函数
   const OPEN_NOTES = new Set();
-  const fns = ['esc', 'noTr', 'egressLabel', 'noteCell', 'foldText'].map(panelFn).join('\n');
-  const P = new Function('OPEN_NOTES', fns + '\nreturn {esc, noTr, egressLabel, noteCell, foldText};')(OPEN_NOTES);
+  const fns = ['esc', 'noTr', 'dialogText', 'egressLabel', 'noteCell', 'foldText', 'delAccount', 'delProxy', 'delUser', 'recoverAccount', 'rotateProxy'].map(panelFn).join('\n');
+  const P = new Function('OPEN_NOTES', 'proxyCache', fns + '\nreturn {esc, noTr, dialogText, egressLabel, noteCell, foldText, delAccount, delProxy, delUser, recoverAccount, rotateProxy};')(OPEN_NOTES, [{id:'p1',name:'代理(默认)'}]);
 
   new Function(I18N_JS)();
   await tick(); await tick();
@@ -214,5 +228,22 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   await tick(); await tick();
   out.rerender = box.childNodes[0].textContent;
 
+  // Run the actual destructive-action entry points. The dialog stub cancels before any API call.
+  await P.delAccount('风控账号');
+  out.delete_account_confirm = dialogs.at(-1);
+  await P.delProxy('p1');
+  out.delete_proxy_confirm = dialogs.at(-1);
+  await P.delUser('风控账号');
+  out.delete_user_confirm = dialogs.at(-1);
+  await P.recoverAccount('风控账号','risk');
+  out.recover_confirm = dialogs.at(-1);
+  await P.rotateProxy('p1');
+  out.rotate_confirm = dialogs.at(-1);
+  const unusual = '  代理(默认)\n<script>风控</script> {0} $&  ';
+  alert(P.dialogText`原因：${unusual}`);
+  out.opaque_value = unusual;
+  out.opaque_alert = dialogs.at(-1);
+  prompt(P.dialogText`原因：${unusual}`, unusual);
+  out.opaque_prompt = dialogs.at(-1);
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

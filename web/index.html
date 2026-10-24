@@ -395,6 +395,12 @@ function hide(id){document.getElementById(id).style.display='none';}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 /** 用户 / 上游数据（账号名、代理名、备注、dola 原话…）：转义并标 translate="no"，面板多语言不会把它当文案改写 */
 function noTr(s){return '<span translate="no">'+esc(s)+'</span>';}
+/** 原生弹窗的模板与动态值分开传递；动态值始终保留原文，不能用 noTr() 的 HTML。 */
+function dialogText(strings,...values){
+  return {i18nParts:strings,i18nValues:values,toString(){
+    return strings.reduce((out,part,i)=>out+part+(i<values.length?String(values[i]):''),'');
+  }};
+}
 function fmt(ts){if(!ts)return '-';const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function fmtHM(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}`;}
 
@@ -490,7 +496,7 @@ function table(heads,rows){
 }
 
 async function setSched(name,on){
-  try{await api('/api/admin/accounts/'+name,{method:'PATCH',body:{scheduling:on}});}catch(e){alert(e.message);}refresh();
+  try{await api('/api/admin/accounts/'+name,{method:'PATCH',body:{scheduling:on}});}catch(e){alert(dialogText`${e.message}`);}refresh();
 }
 
 /* ---- 账号管理 ---- */
@@ -735,7 +741,7 @@ async function editNote(name){
   const v=prompt('账号备注（上游拒稿原文会自动追加在此，可手动修改）：',cur);
   if(v===null||v===cur)return;
   try{await api('/api/admin/accounts/'+encodeURIComponent(name),{method:'PATCH',body:{note:v}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   refresh();
 }
 
@@ -776,31 +782,25 @@ async function probeHello(name){
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/probe-hello',{method:'POST'});
     const p=r.probe||{};
-    alert(`${name} 你好探测：${p.ok?'通过 ✓':'未通过 ✗'}\n`
-      +`登录标记：${p.login_ok?'有效':'已被登出'}\n`
-      +`是否回复：${p.replied?'有回复':'无回复'}\n`
-      +`耗时：${p.elapsed||0}s${p.cached?'（缓存）':''}\n`
-      +`原因：${p.reason||'-'}\n`
-      +`回复：${(p.reply||'').slice(0,80)}`);
-  }catch(e){return alert(e.message);}
+    alert(dialogText`${name} 你好探测：${p.ok?'通过 ✓':'未通过 ✗'}\n登录标记：${p.login_ok?'有效':'已被登出'}\n是否回复：${p.replied?'有回复':'无回复'}\n耗时：${p.elapsed||0}s${p.cached?'（缓存）':''}\n原因：${p.reason||'-'}\n回复：${(p.reply||'').slice(0,80)}`);
+  }catch(e){return alert(dialogText`${e.message}`);}
   refresh();
 }
 async function recoverAccount(name,kind){
-  if(!confirm(`确定把 ${name} 从【${kind==='abnormal'?'异常':'风控'}】组恢复出来？\n`
-    +(kind==='risk'?'（风控恢复后回到【待激活】，要再做一次「你好探测」确认登录）':'')))return;
+  if(!confirm(dialogText`确定把 ${name} 从【${kind==='abnormal'?'异常':'风控'}】组恢复出来？\n${kind==='risk'?'（风控恢复后回到【待激活】，要再做一次「你好探测」确认登录）':''}`))return;
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/recover',
       {method:'POST',body:{kind:kind}});
-    alert(`${name} 已恢复，当前分组：${(r.account&&r.account.group)||'-'}`);
-  }catch(e){return alert(e.message);}
+    alert(dialogText`${name} 已恢复，当前分组：${(r.account&&r.account.group)||'-'}`);
+  }catch(e){return alert(dialogText`${e.message}`);}
   refresh();
 }
 
 async function verify(name,btn){
   btn.disabled=true;const old=btn.textContent;btn.textContent='验证中…';
   try{const r=await api('/api/admin/accounts/'+name+'/verify',{method:'POST'});
-    alert(name+' 登录态：'+(r.ok?'有效✓':('失效✗'+(r.reason?'\n原因：'+r.reason:''))));
-  }catch(e){alert(e.message);}
+    alert(dialogText`${name} 登录态：${r.ok?'有效✓':('失效✗'+(r.reason?'\n原因：'+r.reason:''))}`);
+  }catch(e){alert(dialogText`${e.message}`);}
   btn.disabled=false;btn.textContent=old;refresh();
 }
 
@@ -858,8 +858,7 @@ async function submitTestGen(name,force){
     // 服务端判定这个号现在测试大概率白撞（风控/限流暂停/出口被限流/没绑代理/额度不够）：确认后再强制发
     if(String(e.message).startsWith('TEST_GEN_WARN:')){
       const reasons=String(e.message).slice('TEST_GEN_WARN:'.length).split('\n').filter(Boolean);
-      const msg=`测试生成会用 ${name} 真实出片、消耗真实额度。这个号现在：\n\n`
-        +reasons.map(r=>'• '+r).join('\n')+'\n\n仍然要测试吗？';
+      const msg=dialogText`测试生成会用 ${name} 真实出片、消耗真实额度。这个号现在：\n\n${reasons.map(r=>'• '+r).join('\n')}\n\n仍然要测试吗？`;
       if(confirm(msg))return submitTestGen(name,true);
       q('#tg_status').textContent='已取消：'+reasons.join('；');q('#tg_status').style.color='var(--sub)';
       return;
@@ -920,15 +919,15 @@ async function submitRenameAccount(name){
   if(!newName)return alert('请填新账号名');
   if(newName===name)return hide('dlg');
   try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/rename',{method:'POST',body:{new_name:newName}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');
   selAccounts.delete(name);
   refresh();
 }
 
 async function delAccount(name){
-  if(!confirm('确定删除账号 '+name+'？将同时删除其 profile。'))return;
-  try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(e.message);}refresh();
+  if(!confirm(dialogText`确定删除账号 ${name}？将同时删除其 profile。`))return;
+  try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(dialogText`${e.message}`);}refresh();
 }
 
 function toggleSel(name,on){
@@ -962,7 +961,7 @@ async function batchVerifySelected(){
   if(!confirm(`对选中的 ${list.length} 个账号逐个验证登录态？\n验证会真实打开账号会话，耗时较长（每号约 10-40 秒）。`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-verify',{method:'POST',body:{names:list}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   stopBatchPoll();
   showDlg(`<h2>批量验证（${list.length} 个账号）</h2>
     <div id="batchProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
@@ -996,7 +995,7 @@ async function batchProbeHello(){
     +`· 不限并发全部一起发，通常十几秒内跑完；被限流的那批会显示为「未完成」`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-probe-hello',{method:'POST',body:{names:list}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   stopProbePoll();
   showDlg(`<h2>批量你好探测（${list.length} 个账号）</h2>
     <div id="probeProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
@@ -1035,7 +1034,7 @@ async function batchRecover(){
     +`· 想确认能不能用，恢复后接着点一次「你好探测」`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-recover',{method:'POST',body:{kind:'risk',names:list}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   stopProbePoll();
   showDlg(`<h2>批量恢复（${list.length} 个账号）</h2>
     <div id="probeProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
@@ -1048,7 +1047,7 @@ async function batchRecover(){
 async function openBatchProxy(){
   const list=[...selAccounts];
   if(!list.length)return alert('请先勾选账号');
-  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
+  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(dialogText`${e.message}`);}
   const opts='<option value="">默认代理（DOLA_PROXY）</option>'+proxyCache.map(p=>
     `<option translate="no" value="${esc(p.id)}">${esc(p.name)}（${esc(p.protocol)}://${esc(p.host)}:${p.port}）</option>`).join('');
   showDlg(`<h2>批量更改代理（${list.length} 个账号）</h2>
@@ -1064,7 +1063,7 @@ async function submitBatchProxy(){
   const proxyId=q('#f_bproxy').value||null;
   let r;
   try{r=await api('/api/admin/accounts/batch-proxy',{method:'POST',body:{names:list,proxy_id:proxyId}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');refresh();
   const failed=(r.failed||[]);
   alert(`已更新 ${r.updated.length} 个账号的代理`
@@ -1074,7 +1073,7 @@ async function submitBatchProxy(){
 async function resetAllQuotas(){
   if(!confirm('立即重置全池额度？\n所有因「每日上限 / 积分不足 / 失败」被挡的账号会恢复调度与积分缓存。\n（不等同于风控冷却，风控账号仍需重新登录）'))return;
   try{const r=await api('/api/admin/accounts/reset-quotas',{method:'POST'});alert(`已重置 ${r.reset} 个账号的额度`);}
-  catch(e){alert(e.message);}
+  catch(e){alert(dialogText`${e.message}`);}
   refresh();
 }
 
@@ -1085,7 +1084,7 @@ async function delSelected(){
   let ok=0;
   for(const name of list){
     try{await api('/api/admin/accounts/'+encodeURIComponent(name),{method:'DELETE'});ok++;}
-    catch(e){alert(name+' 删除失败：'+e.message);}
+    catch(e){alert(dialogText`${name} 删除失败：${e.message}`);}
   }
   selAccounts.clear();
   refresh();
@@ -1094,7 +1093,7 @@ async function delSelected(){
 }
 
 async function openSetAccountProxy(name,currentId){
-  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
+  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(dialogText`${e.message}`);}
   const opts='<option value="">默认代理（DOLA_PROXY）</option>'+proxyCache.map(p=>
     `<option translate="no" value="${esc(p.id)}" ${p.id===currentId?'selected':''}>${esc(p.name)}</option>`).join('');
   showDlg(`<h2>设置账号代理：${noTr(name)}</h2>
@@ -1105,7 +1104,7 @@ async function openSetAccountProxy(name,currentId){
 }
 async function submitSetAccountProxy(name){
   const body={proxy_id:q('#f_proxy').value||null};
-  try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/proxy',{method:'POST',body});}catch(e){return alert(e.message);}
+  try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/proxy',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');refresh();
 }
 
@@ -1423,7 +1422,7 @@ function renderAddAccountForm(){
 async function submitAddAccount(){
   const body={name:q('#f_name').value.trim(),email:q('#f_email').value.trim(),password:q('#f_pass').value,totp:q('#f_totp').value.trim()};
   if(!body.name||!body.email||!body.password)return alert('请填写账号名/邮箱/密码');
-  try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(e.message);}
+  try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');refresh();
 }
 async function submitAddCookie(){
@@ -1431,7 +1430,7 @@ async function submitAddCookie(){
   if(!body.name)return alert('请填写账号名');
   if(!body.cookies)return alert('请粘贴 Cookie JSON');
   try{JSON.parse(body.cookies);}catch(e){return alert('Cookie JSON 解析失败：'+e.message);}
-  try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(e.message);}
+  try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');refresh();
 }
 
@@ -1514,7 +1513,7 @@ async function loadProxies(){
 async function showNodes(id){
   let r;
   try{ r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/nodes'); }
-  catch(e){ return alert(e.message); }
+  catch(e){ return alert(dialogText`${e.message}`); }
   const p=proxyCache.find(x=>x.id===id);
   const now=Date.now()/1000;
   const rows=(r.nodes||[]).map(n=>[
@@ -1551,21 +1550,21 @@ async function submitPasteNodes(id){
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/nodes',{method:'POST',body:{text}});
     alert(`已加入 ${r.added} 个节点（解析到 ${r.parsed} 行）`);
-  }catch(e){return alert(e.message);}
+  }catch(e){return alert(dialogText`${e.message}`);}
   showNodes(id);loadProxies();
 }
 async function refreshNodes(id){
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/refresh-nodes',{method:'POST'});
     alert(r.ok?('提取成功，新增 '+r.added+' 个节点'):('提取失败：'+(r.error||'未知错误')));
-  }catch(e){return alert(e.message);}
+  }catch(e){return alert(dialogText`${e.message}`);}
   showNodes(id);loadProxies();
 }
 async function pruneNodes(id){
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/prune-nodes',{method:'POST'});
     alert('已清理 '+r.removed+' 个节点');
-  }catch(e){return alert(e.message);}
+  }catch(e){return alert(dialogText`${e.message}`);}
   showNodes(id);loadProxies();
 }
 async function probeProxy(id,btn){
@@ -1574,29 +1573,29 @@ async function probeProxy(id,btn){
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/probe',{method:'POST'});
     if(!r.ok)alert('探测失败：'+(r.error||'未知错误'));
     else proxyProbeCache[id]=r.ip+(r.country?`（${r.country}${r.isp?' / '+r.isp:''}）`:'');
-  }catch(e){alert(e.message);}
+  }catch(e){alert(dialogText`${e.message}`);}
   btn.disabled=false;btn.textContent=old;loadProxies();
 }
 async function rotateProxy(id){
   const p=proxyCache.find(x=>x.id===id);
-  if(!confirm('给绑定在「'+(p?p.name:id)+'」上的所有号换出口 IP？'))return;
+  if(!confirm(dialogText`给绑定在「${p?p.name:id}」上的所有号换出口 IP？`))return;
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/rotate',{method:'POST'});
     alert(`已换 IP：${r.rotated.length} 个\n跳过：${r.skipped.length} 个${r.skipped.length?'（未到最小换IP间隔）':''}`);
-  }catch(e){return alert(e.message);}
+  }catch(e){return alert(dialogText`${e.message}`);}
   loadProxies();loadAccounts();
 }
 async function rotateIp(name){
   try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/rotate-ip',{method:'POST'});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   loadAccounts();
 }
 async function probeIp(name){
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/probe-ip',{method:'POST'});
     if(!r.ok)return alert('探测失败：'+(r.error||'未知错误'));
-    alert(`${name}\n出口 IP：${r.ip}\n归属：${r.country||'—'} ${r.region||''}\nISP：${r.isp||'—'}`);
-  }catch(e){return alert(e.message);}
+    alert(dialogText`${name}\n出口 IP：${r.ip}\n归属：${r.country||'—'} ${r.region||''}\nISP：${r.isp||'—'}`);
+  }catch(e){return alert(dialogText`${e.message}`);}
   loadAccounts();
 }
 function proxyDialog(p){
@@ -1735,7 +1734,7 @@ async function submitQuickProxies(){
   const out=q('#f_qpres');
   const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(x=>x&&!x.startsWith('#'));
   if(!lines.length)return alert('请粘贴代理，一行一个');
-  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
+  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(dialogText`${e.message}`);}
   const keyOf=x=>`${String(x.host).toLowerCase()}:${x.port}:${x.username||''}`;
   // 节点池不按单条去重（同一个网关地址的不同账号就是不同节点）
   const existing=new Set(mode==='pool'?[]:proxyCache.filter(x=>x.mode!=='extract').map(keyOf));
@@ -1848,13 +1847,13 @@ async function submitProxy(id){
         alert(`已追加 ${r.added} 个节点（解析到 ${r.parsed} 行）`);
       }
     }else await api('/api/admin/proxies',{method:'POST',body});
-  }catch(e){return alert(e.message);}
+  }catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');loadProxies();
 }
 async function delProxy(id){
   const p=proxyCache.find(x=>x.id===id);
-  if(!confirm('删除代理「'+(p?p.name:id)+'」？已绑定该代理的账号会改回默认代理。'))return;
-  try{await api('/api/admin/proxies/'+encodeURIComponent(id),{method:'DELETE'});}catch(e){return alert(e.message);}
+  if(!confirm(dialogText`删除代理「${p?p.name:id}」？已绑定该代理的账号会改回默认代理。`))return;
+  try{await api('/api/admin/proxies/'+encodeURIComponent(id),{method:'DELETE'});}catch(e){return alert(dialogText`${e.message}`);}
   loadProxies();
 }
 
@@ -1904,7 +1903,7 @@ async function delSelected(kind){
              users:'/api/admin/users/delete-batch',keys:'/api/admin/keys/delete-batch'}[kind];
   const body=kind==='users'?{usernames:ids}:{ids};
   let r;
-  try{r=await api(url,{method:'POST',body});}catch(e){return alert(e.message);}
+  try{r=await api(url,{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   (r.deleted||[]).forEach(id=>SEL[kind].delete(id));
   if(r.skipped&&r.skipped.length)alert('已删除 '+(r.deleted||[]).length+' '+SEL_LABEL[kind]+'；跳过：\n'+r.skipped.join('\n'));
   ({proxies:loadProxies,tasks:loadTasks,users:loadUsers,keys:loadKeys})[kind]();
@@ -1960,20 +1959,20 @@ async function submitUser(orig){
     if(!name||!pw)return alert('请填写用户名和密码');
     if(!/^[A-Za-z0-9_-]{1,32}$/.test(name))return alert('用户名只能包含字母/数字/_/-，且不超过32位');
     body.username=name;body.password=pw;
-    try{await api('/api/admin/users',{method:'POST',body});}catch(e){return alert(e.message);}
+    try{await api('/api/admin/users',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   }else{
     if(!name)return alert('用户名不能为空');
     if(name!==orig)body.username=name;
     if(pw)body.password=pw;
     const eb=q('#f_uenabled');
     if(eb)body.enabled=eb.checked;
-    try{await api('/api/admin/users/'+encodeURIComponent(orig),{method:'PATCH',body});}catch(e){return alert(e.message);}
+    try{await api('/api/admin/users/'+encodeURIComponent(orig),{method:'PATCH',body});}catch(e){return alert(dialogText`${e.message}`);}
   }
   hide('dlg');loadUsers();
 }
 async function delUser(username){
-  if(!confirm('确定删除管理员 '+username+'？'))return;
-  try{await api('/api/admin/users/'+encodeURIComponent(username),{method:'DELETE'});}catch(e){return alert(e.message);}
+  if(!confirm(dialogText`确定删除管理员 ${username}？`))return;
+  try{await api('/api/admin/users/'+encodeURIComponent(username),{method:'DELETE'});}catch(e){return alert(dialogText`${e.message}`);}
   loadUsers();
 }
 
@@ -2230,7 +2229,7 @@ function toggleAllVideos(on){
 }
 async function delVideo(id){
   if(!confirm('确定删除该视频？视频文件与任务记录将一并删除，不可恢复。'))return;
-  try{await api('/api/admin/videos/'+id,{method:'DELETE'});}catch(e){alert(e.message);}
+  try{await api('/api/admin/videos/'+id,{method:'DELETE'});}catch(e){alert(dialogText`${e.message}`);}
   selVideos.delete(id);
   refresh();
 }
@@ -2276,7 +2275,7 @@ async function loadKeys(){
   selUpdate('keys');
 }
 async function setKey(key,on){
-  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{enabled:on}});}catch(e){alert(e.message);}refresh();
+  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{enabled:on}});}catch(e){alert(dialogText`${e.message}`);}refresh();
 }
 async function copyKey(key){
   await copy(key);
@@ -2284,7 +2283,7 @@ async function copyKey(key){
 }
 async function delKey(key){
   if(!confirm('删除该密钥？调用方将立即失效。'))return;
-  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'DELETE'});}catch(e){alert(e.message);}refresh();
+  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'DELETE'});}catch(e){alert(dialogText`${e.message}`);}refresh();
 }
 // 仅作接口返回前的占位默认值；真实档位由 /api/admin/keys 下发（随 DOLA_NATIVE_DURATION_MAX 变化）。
 let SUPPORTED_DURATIONS=[5,10,15,30];
@@ -2316,7 +2315,7 @@ async function submitCreateKey(){
       <div class="tiny">完整 key 只在此显示一次：</div>
       <div class="keyfull" id="newKey">${esc(k)}</div>
       <div class="row"><button class="btn" onclick="copyFromNewKey()">复制</button><button class="btn btn-p" onclick="hide('dlg');loadKeys()">完成</button></div>`);
-  }catch(e){alert(e.message);}
+  }catch(e){alert(dialogText`${e.message}`);}
 }
 async function openEditKey(key){
   const r=await api('/api/admin/keys');const k=r.keys.find(x=>x.key===key);if(!k)return;
@@ -2330,7 +2329,7 @@ async function openEditKey(key){
 }
 async function submitEditKey(key){
   const allowed=selectedDurations();if(!allowed.length)return alert('至少选择一个视频时长');
-  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{daily_limit:Number(q('#f_daily').value||0),concurrency_limit:Number(q('#f_conc').value||0),allowed_durations:allowed,expires_at:Number(q('#f_exp').value||0)}});hide('dlg');refresh();}catch(e){alert(e.message);}
+  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{daily_limit:Number(q('#f_daily').value||0),concurrency_limit:Number(q('#f_conc').value||0),allowed_durations:allowed,expires_at:Number(q('#f_exp').value||0)}});hide('dlg');refresh();}catch(e){alert(dialogText`${e.message}`);}
 }
 function copyFromNewKey(){copy(q('#newKey').textContent.trim());}
 async function copy(text){
@@ -2391,7 +2390,7 @@ async function startStress(){
     await api('/api/admin/stress',{method:'POST',body:{max_concurrency:n,hold_seconds:5}});
     q('#stressOut').textContent='压测已开始：1→'+n+' 个浏览器逐级同时拉起…';
     stressPollTimer=setInterval(()=>loadStressStatus(false),2500);
-  }catch(e){alert(e.message);btn.disabled=false;}
+  }catch(e){alert(dialogText`${e.message}`);btn.disabled=false;}
 }
 
 /* 启动：探测鉴权，401 才弹登录遮罩（ADMIN_KEY 留空时免登录） */

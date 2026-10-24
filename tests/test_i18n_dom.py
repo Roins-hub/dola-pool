@@ -76,3 +76,28 @@ def test_panel_renders_user_data_with_notr():
     raw = re.findall(r"^\s*(?:t\.api_key_name|v\.account|k\.name)\|\|", (ROOT / "web" / "index.html")
                      .read_text(encoding="utf-8"), flags=re.M)
     assert not raw
+
+
+@pytest.mark.parametrize("lang", ["zh", "vi", "vi-zh"])
+def test_native_dialogs_keep_dynamic_values(lang):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 node")
+    r = subprocess.run([node, str(HARNESS), str(ROOT), lang], capture_output=True,
+                       text=True, encoding="utf-8", timeout=60)
+    assert r.returncode == 0, r.stderr
+    result = json.loads(r.stdout.strip().splitlines()[-1])
+    for key in ("delete_account_confirm", "delete_user_confirm", "recover_confirm"):
+        assert "风控账号" in result[key]
+        assert "Rủi roTài khoản" not in result[key]
+    for key in ("delete_proxy_confirm", "rotate_confirm"):
+        assert "代理(默认)" in result[key]
+        assert "Proxy (mặc định)" not in result[key]
+    for key in ("opaque_alert", "opaque_prompt"):
+        assert result["opaque_value"] in result[key]
+    if lang == "zh":
+        assert result["delete_account_confirm"] == "确定删除账号 风控账号？将同时删除其 profile。"
+    else:
+        assert result["delete_account_confirm"].startswith("Xác nhận xóa tài khoản 风控账号?")
+        if lang == "vi-zh":
+            assert "确定删除账号 风控账号？将同时删除其 profile。" in result["delete_account_confirm"]

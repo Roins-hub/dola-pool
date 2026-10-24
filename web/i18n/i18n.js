@@ -196,8 +196,21 @@
     var orig = window[name];
     window[name] = function (msg) {
       var args = Array.prototype.slice.call(arguments);
-      var t = tr(msg);
-      if (t != null) args[0] = conf.bilingual ? t + '\n\n' + msg : t;
+      if (msg && Array.isArray(msg.i18nParts) && Array.isArray(msg.i18nValues)) {
+        // Translate the template before interpolation. Names, errors and other values are opaque.
+        var src = String(msg);
+        var template = msg.i18nParts.reduce(function (out, part, i) {
+          return out + part + (i < msg.i18nValues.length ? '{' + i + '}' : '');
+        }, '');
+        var translated = tr(template);
+        args[0] = translated == null ? src : translated.replace(PH, function (_, i) {
+          return String(msg.i18nValues[+i]);
+        });
+        if (translated != null && conf.bilingual) args[0] += '\n\n' + src;
+      } else {
+        var t = tr(msg);
+        if (t != null) args[0] = conf.bilingual ? t + '\n\n' + msg : t;
+      }
       return orig.apply(window, args);
     };
   }
@@ -238,6 +251,7 @@
   };
 
   document.documentElement.lang = conf.html;
+  ['alert', 'confirm', 'prompt'].forEach(wrapDialog);
   if (!conf.dict) { onReady(mountSwitchers); return; }
 
   // 词典加载完之前先把页面藏起来，避免先闪一下中文
@@ -246,8 +260,6 @@
   style.textContent = 'html.i18n-pending body{visibility:hidden}';
   document.head.appendChild(style);
   setTimeout(function () { document.documentElement.classList.remove('i18n-pending'); }, 3000);
-
-  ['alert', 'confirm', 'prompt'].forEach(wrapDialog);
 
   fetch('i18n/' + conf.dict + '.json', { cache: 'no-cache' })
     .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
