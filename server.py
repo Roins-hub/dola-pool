@@ -2247,8 +2247,15 @@ async def _run_batch_probe_job(job_id: str, names: list[str]) -> None:
                         item["attempts"] = 2
                 item["status"] = str(result.get("status") or "")
                 item["ok"] = bool(result.get("ok"))
+                if item["status"] == "skipped":
+                    # A runtime deliberately bypassing this probe is not a successful check.
+                    item["ok"] = None
+                    item["attempts"] = 0
                 item["reply"] = str(result.get("reply") or "")[:40]
                 item["message"] = label.get(item["status"], str(result.get("reason") or "")[:120])
+                if item["status"] == "skipped":
+                    item["message"] = (str(result.get("reason") or label["skipped"])[:120]
+                                       + "；请使用“验证”检查登录态")
                 if item["status"] == "error" and result.get("reason"):
                     # 把具体原因带出来（710022002 / 出口限流中还需 N 秒 / 网络错误…），
                     # 否则面板上一排「未完成」看不出是哪种问题

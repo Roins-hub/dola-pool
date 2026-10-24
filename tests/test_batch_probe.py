@@ -176,3 +176,18 @@ def test_retry_rescues_account_that_was_silent_once(tmp_path, monkeypatch):
     assert by_name["acc2"]["ok"] is True
     assert by_name["acc2"]["group"] == "满额"
     assert pool._meta("acc2")["risk_control"] == 0      # 没被误锁
+
+
+def test_skipped_runtime_is_not_reported_as_passed(tmp_path, monkeypatch):
+    skipped = {"ok": True, "status": "skipped", "probed": False,
+               "reason": "严格 Cloak Cookie 账号，跳过纯 API 探活"}
+    _, _, server, _ = _setup(tmp_path, monkeypatch, {
+        "acc1": skipped, "acc2": skipped, "acc3": OK})
+    job_id = "runtime_skip"
+    server.BATCH_JOBS[job_id] = {"results": [], "current": "", "total": 3}
+    _run(server._run_batch_probe_job(job_id, ["acc1", "acc2", "acc3"]))
+    job = server.BATCH_JOBS[job_id]
+    assert (job["done"], job["ok_count"], job["failed_count"], job["skipped_count"]) == (3, 1, 0, 2)
+    rows = {r["name"]: r for r in job["results"]}
+    assert rows["acc1"]["ok"] is None and rows["acc1"]["attempts"] == 0
+    assert "严格 Cloak" in rows["acc1"]["message"] and "验证" in rows["acc1"]["message"]
