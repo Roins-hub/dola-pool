@@ -259,7 +259,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
           </select>
           <button class="btn btn-danger" id="btnDelSel" onclick="delSelected()" disabled>删除选中</button>
           <button class="btn" id="btnVerifySel" onclick="batchVerifySelected()" disabled>一键验证</button>
-          <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="发一句「你好」判风控：被登出或没回复 → 进【风控】组；不勾选就对当前筛选出来的号批量探测">你好探测</button>
+          <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="按账号模式探测：Cloak 使用独立浏览器，超时未确认不判风控；不勾选则探测当前筛选账号">你好探测</button>
           <button class="btn" id="btnBatchRecover" onclick="batchRecover()" title="批量把选中的号从【风控】/【异常】组放出来（风控恢复后回到【待激活】，建议接着探测一次）">批量恢复</button>
           <button class="btn" id="btnProxySel" onclick="openBatchProxy()" disabled>更改代理</button>
           <button class="btn" id="btnExportCookies" onclick="exportAccountCookies()" disabled>导出选中 Cookie</button>
@@ -689,7 +689,7 @@ async function loadAccounts(){
       `<button class="btn" style="margin-right:6px" onclick="exportAccountCookies('${x.name}')">导出 Cookie</button>`+
       `<button class="btn" style="margin-right:6px" onclick="openSetAccountProxy('${x.name}','${x.proxy_id||''}')">${x.proxy_name?noTr(x.proxy_name):'代理(默认)'}</button>`+
       ((x.group==='风控'||x.group==='待激活')
-        ?`<button class="btn" style="margin-right:6px" title="发一句「你好」：被登出或没回复即判风控" onclick="probeHello('${x.name}')">你好探测</button>`:'')+
+        ?`<button class="btn" style="margin-right:6px" title="发一句「你好」：Cloak 在独立浏览器探测，超时未确认不判风控" onclick="probeHello('${x.name}')">你好探测</button>`:'')+
       ((x.group==='风控'||x.group==='异常')
         ?`<button class="btn" style="margin-right:6px" title="放回正常流程（风控恢复后回到待激活，需重新探测）" onclick="recoverAccount('${x.name}',${x.group==='异常'?"'abnormal'":"'risk'"} )">恢复</button>`:'')+
       `<button class="btn btn-danger" onclick="delAccount('${x.name}')">删除</button>`
@@ -784,7 +784,7 @@ async function probeHello(name){
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/probe-hello',{method:'POST'});
     const p=r.probe||{};
-    alert(dialogText`${name} 你好探测：${p.ok?'通过 ✓':'未通过 ✗'}\n登录标记：${p.login_ok?'有效':'已被登出'}\n是否回复：${p.replied?'有回复':'无回复'}\n耗时：${p.elapsed||0}s${p.cached?'（缓存）':''}\n原因：${p.reason||'-'}\n回复：${(p.reply||'').slice(0,80)}`);
+    alert(dialogText`${name} 你好探测：${p.status==='unconfirmed'?'未确认（不判风控）':p.status==='skipped'?'已跳过':p.ok?'通过 ✓':'未通过 ✗'}\n登录标记：${p.login_ok==null?'未确认':p.login_ok?'有效':'已被登出'}\n是否回复：${p.replied?'有回复':'无回复'}\n耗时：${p.elapsed||0}s${p.cached?'（缓存）':''}\n原因：${p.reason||'-'}\n回复：${(p.reply||'').slice(0,80)}`);
   }catch(e){return alert(dialogText`${e.message}`);}
   refresh();
 }
@@ -1018,9 +1018,9 @@ async function batchProbeHello(){
   const list=sel.length?sel:allAccounts.filter(x=>matchGroup(x)&&(srcFilterVal==='all'||x.source===srcFilterVal)).map(x=>x.name);
   if(!list.length)return alert('没有要探测的账号：先勾选，或用分组按钮筛出一批');
   if(!confirm(`对 ${list.length} 个账号各发一句「你好」探测风控？\n`
-    +`· 被登出 → 直接进【风控】组；没回复 → 重试一次仍没回复才进\n`
+    +`· Cloak 使用账号独立浏览器与绑定代理；被登出才判风控，超时未确认不判风控\n`
     +`· 网络或上游限流（710022002）导致没探成 → 只记「未完成」，不会锁号\n`
-    +`· 不限并发全部一起发，通常十几秒内跑完；被限流的那批会显示为「未完成」`))return;
+    +`· 浏览器探测串行执行，账号忙或出口限流时跳过；普通 API 探测按服务器并发设置执行`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-probe-hello',{method:'POST',body:{names:list}});}
   catch(e){return alert(dialogText`${e.message}`);}

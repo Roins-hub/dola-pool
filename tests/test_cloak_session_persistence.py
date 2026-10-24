@@ -152,3 +152,29 @@ def test_migration_failure_closes_launched_browser(runtime, monkeypatch):
     with pytest.raises(ValueError):
         run(mod.launch_account_context(None, "example"))
     assert ctx.closed
+
+
+def test_accounts_keep_distinct_profiles_and_bound_proxies(runtime, monkeypatch):
+    mod, root, profile, cookie = runtime
+    other = root.parent / "other"
+    other.mkdir()
+    (other / "cookie_state.json").write_text(json.dumps({"cookies_list": [cookie]}))
+    launches = []
+    async def launch(path, **kwargs):
+        launches.append((str(Path(path).resolve()), kwargs["proxy"]))
+        return Context()
+    async def materialize(*args): pass
+    monkeypatch.setitem(__import__("sys").modules, "cloakbrowser",
+                        types.SimpleNamespace(launch_persistent_context_async=launch))
+    monkeypatch.setattr(mod, "_materialize_cloak_cookie_profile", materialize)
+    monkeypatch.setattr(mod.proxy_store, "get_account_proxy", lambda n: {"id":n})
+    monkeypatch.setattr(mod.proxy_store, "proxy_url_for", lambda n: "http://"+n+".invalid:8080")
+    async def scenario():
+        for n in ("example", "other", "example"):
+            ctx = await mod.launch_account_context(None, n)
+            await ctx.close()
+    run(scenario())
+    assert launches[0] == launches[2]
+    assert launches[0][0] != launches[1][0]
+    assert launches[0][1] == "http://example.invalid:8080"
+    assert launches[1][1] == "http://other.invalid:8080"

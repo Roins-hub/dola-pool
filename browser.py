@@ -205,9 +205,12 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
         if config.CLOAK_CACHE_DIR:
             import os
             os.environ.setdefault("CLOAKBROWSER_CACHE_DIR", config.CLOAK_CACHE_DIR)
-        if not proxy_store.get_account_proxy(account):
+        bound_proxy = proxy_store.get_account_proxy(account)
+        if not bound_proxy:
             raise RuntimeError("CloakBrowser requires an enabled account proxy; bind it before verification")
         cloak_proxy = proxy_store.proxy_url_for(account)
+        if bound_proxy.get("mode") == "extract" and not (proxy_store.get_session(account) or {}).get("node_id"):
+            raise RuntimeError("Account proxy pool has no available node; direct fallback is disabled")
         if not cloak_proxy:
             raise RuntimeError("Account proxy unavailable; direct fallback is disabled")
         extension_paths = []

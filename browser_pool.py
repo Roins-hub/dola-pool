@@ -278,6 +278,7 @@ class BrowserPool:
         self.semaphore = (asyncio.Semaphore(max_concurrency)
                           if max_concurrency > 0 else _UnlimitedSemaphore())
         self._locks: dict[str, asyncio.Lock] = {}
+        self._browser_probe_lock = asyncio.Lock()
         self._fail_until: dict[str, float] = {}
         self._fail_streak: dict[str, int] = {}   # 连续失败计数（内存，成功即清零）
         self._probe_cache: dict[str, tuple[float, dict]] = {}   # 你好探测结果缓存
@@ -934,6 +935,27 @@ class BrowserPool:
     async def probe_hello_async(self, name: str, *, force: bool = False,
                                 apply_risk: bool = True) -> dict:
         """派发门用的异步探测：网络在线程池，落库回到事件循环线程。"""
+        if force and is_cloak_cookie_account(name):
+            if name not in self.accounts:
+                raise FileNotFoundError("账号不存在")
+            lock = self._locks.setdefault(name, asyncio.Lock())
+            def pending(reason):
+                return {"ok": False, "status": "unconfirmed", "login_ok": None,
+                        "replied": False, "probed": False, "cached": False,
+                        "reason": reason, "reply": "", "elapsed": 0, "runtime": "cloak"}
+            if lock.locked():
+                return pending("账号正在出片、验证或探测，本次未启动浏览器")
+            async with self._browser_probe_lock:
+                if lock.locked():
+                    return pending("账号已被其他任务占用，本次未启动浏览器")
+                if self.egress_throttle_remaining(name) > 0:
+                    return pending("账号出口仍在限流退避，本次未发送问候")
+                async with lock:
+                    from browser_hello_probe import probe_browser_hello
+                    result = await probe_browser_hello(name, timeout=config.HELLO_PROBE_TIMEOUT)
+                    if result.get("status") == "unconfirmed":
+                        return result
+                    return self._persist_probe(name, result, apply_risk=apply_risk)
         result = await asyncio.to_thread(self._probe_network, name, force)
         return self._persist_probe(name, result, apply_risk=apply_risk)
 
@@ -1059,6 +1081,10 @@ class BrowserPool:
         lock = self._locks.setdefault(name, asyncio.Lock())
         if lock.locked():
             raise RuntimeError("账号正在出片，稍后再验证")
+        async with lock:
+            return await self._verify_account_detail_locked(name)
+
+    async def _verify_account_detail_locked(self, name: str) -> tuple[bool, str]:
         reason = ""
         pure_state = self._pure_state(name)
         if pure_state is not None and self._is_cookie_source(name) and not is_cloak_cookie_account(name):

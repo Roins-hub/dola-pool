@@ -621,3 +621,8 @@ Trong mỗi hàng, nhấn “Xuất Cookie” để tải JSON. Chọn nhiều t
 Chỉ xuất Cookie đã lưu; không mở trình duyệt hay kiểm tra phiên trực tuyến, không xuất mật khẩu, TOTP, mật khẩu proxy hoặc toàn bộ bộ nhớ trình duyệt. Ưu tiên bản lưu Cloak; bản rỗng không khôi phục Cookie cũ. Tài khoản chỉ có profile mà không có bản lưu Cookie chưa được hỗ trợ. Tối đa 500 tài khoản / 32 MB mỗi lần.
 
 Khi thêm tài khoản Google hoặc Cookie, có thể chọn một proxy đang bật. Cả ba chế độ thêm hàng loạt đều cho chọn nhiều proxy, phân lần lượt theo thứ tự danh sách trước lần đăng nhập/xác thực đầu tiên. Không chọn thì dùng proxy mặc định. Tài khoản trùng bị bỏ qua, không đổi liên kết hiện có.
+
+
+### Kiểm tra lời chào bằng trình duyệt Cloak
+
+Kiểm tra thủ công dùng profile, seed vân tay đã lưu và proxy của chính tài khoản. Chỉ công nhận phản hồi trợ lý của yêu cầu vừa gửi khi có dấu hiệu đăng nhập từ upstream. Không chuyển sang API thuần hoặc kết nối trực tiếp. Kiểm tra trình duyệt chạy lần lượt và không đồng thời với tạo video/xác thực cùng tài khoản. Hết thời gian hoặc lỗi mạng là chưa xác nhận, không đánh dấu rủi ro. Kiểm tra tự động trước khi giao tác vụ vẫn bỏ qua Cloak như trước. Profile riêng không có nghĩa là hệ điều hành hay IP riêng.

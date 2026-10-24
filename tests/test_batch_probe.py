@@ -191,3 +191,15 @@ def test_skipped_runtime_is_not_reported_as_passed(tmp_path, monkeypatch):
     rows = {r["name"]: r for r in job["results"]}
     assert rows["acc1"]["ok"] is None and rows["acc1"]["attempts"] == 0
     assert "严格 Cloak" in rows["acc1"]["message"] and "验证" in rows["acc1"]["message"]
+
+
+def test_browser_unconfirmed_is_neither_pass_nor_risk(tmp_path, monkeypatch):
+    pending = {"ok": False, "status": "unconfirmed", "probed": True,
+               "reason": "浏览器探测超时，未确认收到回复（不判风控）"}
+    _, pool, server, _ = _setup(tmp_path, monkeypatch, {n: pending for n in ("acc1", "acc2", "acc3")})
+    server.BATCH_JOBS["pending"] = {"results": [], "current": "", "total": 3}
+    _run(server._run_batch_probe_job("pending", ["acc1", "acc2", "acc3"]))
+    job = server.BATCH_JOBS["pending"]
+    assert (job["ok_count"], job["failed_count"], job["skipped_count"]) == (0, 0, 3)
+    assert all(r["ok"] is None and r["attempts"] == 1 for r in job["results"])
+    assert all(pool._meta(n)["risk_control"] == 0 for n in ("acc1", "acc2", "acc3"))

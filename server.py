@@ -2212,6 +2212,7 @@ async def _run_batch_probe_job(job_id: str, names: list[str]) -> None:
         "no_reply": "没回复 → 已进【风控】组",
         "error": "探测未完成（网络/上游拒绝，不判风控）",   # 实际展示时会带上具体原因
         "skipped": "非纯 API 账号，跳过",
+        "unconfirmed": "浏览器探测未确认（不判风控）",
     }
 
     async def probe_one(name: str) -> None:
@@ -2251,11 +2252,16 @@ async def _run_batch_probe_job(job_id: str, names: list[str]) -> None:
                     # A runtime deliberately bypassing this probe is not a successful check.
                     item["ok"] = None
                     item["attempts"] = 0
+                if item["status"] == "unconfirmed":
+                    item["ok"] = None
+                    item["attempts"] = 1 if result.get("probed") else 0
                 item["reply"] = str(result.get("reply") or "")[:40]
                 item["message"] = label.get(item["status"], str(result.get("reason") or "")[:120])
                 if item["status"] == "skipped":
                     item["message"] = (str(result.get("reason") or label["skipped"])[:120]
                                        + "；请使用“验证”检查登录态")
+                if item["status"] == "unconfirmed":
+                    item["message"] = str(result.get("reason") or label["unconfirmed"])[:200]
                 if item["status"] == "error" and result.get("reason"):
                     # 把具体原因带出来（710022002 / 出口限流中还需 N 秒 / 网络错误…），
                     # 否则面板上一排「未完成」看不出是哪种问题
@@ -2272,7 +2278,7 @@ async def _run_batch_probe_job(job_id: str, names: list[str]) -> None:
         job["failed_count"] = sum(
             1 for r in job["results"] if r.get("status") in ("logged_out", "no_reply"))
         job["skipped_count"] = sum(
-            1 for r in job["results"] if r.get("status") in ("error", "skipped"))
+            1 for r in job["results"] if r.get("status") in ("error", "skipped", "unconfirmed"))
 
     try:
         await asyncio.gather(*(probe_one(n) for n in names))
