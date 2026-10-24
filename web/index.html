@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>dola-pool 管理面板</title>
+<script src="i18n/i18n.js"></script>
 <style>
 :root{
   --bg:#0a0f1d;--card:rgba(255,255,255,.08);
@@ -148,6 +149,9 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
 .mask input{width:100%;padding:10px 12px;margin-bottom:14px;font-size:14px}
 .mask .err{color:#ff9a9a;font-size:12px;margin-bottom:10px;display:none}
 .mask button{width:100%}
+.lang-sel{width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:10px;font-size:13px;font-family:inherit;background:rgba(255,255,255,.06);color:var(--text);cursor:pointer}
+.lang-sel option{background:#0f1526;color:var(--text)}
+.mask .lang-sel{margin-top:14px}
 .dialog{position:fixed;inset:0;background:rgba(4,8,16,.62);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   display:flex;align-items:center;justify-content:center;z-index:90}
 .dialog .box{background:var(--glass);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
@@ -205,6 +209,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
     <input id="loginPassword" type="password" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
     <div class="err" id="loginErr">用户名或密码错误</div>
     <button class="btn btn-p" onclick="submitLogin()">登录</button>
+    <select class="lang-sel" data-i18n-switcher aria-label="Language"></select>
   </div>
 </div>
 
@@ -227,6 +232,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
     <button class="btn" onclick="refresh()">刷新</button>
     <button class="btn btn-p" onclick="openStress()">压力测试</button>
     <button class="btn btn-danger" onclick="logout()" title="清除面板密码">注销</button>
+    <select class="lang-sel" data-i18n-switcher aria-label="Language"></select>
   </div>
 </aside>
 
@@ -356,7 +362,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
   <div class="box" style="width:720px">
     <h2>任务提示词</h2>
     <div class="tiny" id="promptMeta" style="margin-bottom:10px"></div>
-    <div class="prompt-body" id="promptBody"></div>
+    <div class="prompt-body" id="promptBody" translate="no"></div>
     <div class="row">
       <button class="btn" id="promptCopyBtn" onclick="copyPrompt()">复制</button>
       <button class="btn" onclick="hide('promptModal')">关闭</button>
@@ -387,6 +393,14 @@ function q(s){return document.querySelector(s);}
 function show(id){document.getElementById(id).style.display='flex';}
 function hide(id){document.getElementById(id).style.display='none';}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+/** 用户 / 上游数据（账号名、代理名、备注、dola 原话…）：转义并标 translate="no"，面板多语言不会把它当文案改写 */
+function noTr(s){return '<span translate="no">'+esc(s)+'</span>';}
+/** 原生弹窗的模板与动态值分开传递；动态值始终保留原文，不能用 noTr() 的 HTML。 */
+function dialogText(strings,...values){
+  return {i18nParts:strings,i18nValues:values,toString(){
+    return strings.reduce((out,part,i)=>out+part+(i<values.length?String(values[i]):''),'');
+  }};
+}
 function fmt(ts){if(!ts)return '-';const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function fmtHM(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}`;}
 
@@ -466,7 +480,7 @@ async function loadDash(){
   );
 }
 
-function accLabel(x){return x.email?`<div>${esc(x.email)}</div>`:'<span class="tiny">未录入邮箱</span>';}
+function accLabel(x){return x.email?`<div translate="no">${esc(x.email)}</div>`:'<span class="tiny">未录入邮箱</span>';}
 /** 运行态（与分组正交的瞬时信息）：出片中 / 加号任务 / 动态代理出口 IP。
     风控、冷却、待激活、异常这些「状态」已经由分组列表达，不在这里重复；
     「限流」「失败(待全池重置)」两个概念已于 2.1.0 P3 删除。 */
@@ -482,7 +496,7 @@ function table(heads,rows){
 }
 
 async function setSched(name,on){
-  try{await api('/api/admin/accounts/'+name,{method:'PATCH',body:{scheduling:on}});}catch(e){alert(e.message);}refresh();
+  try{await api('/api/admin/accounts/'+name,{method:'PATCH',body:{scheduling:on}});}catch(e){alert(dialogText`${e.message}`);}refresh();
 }
 
 /* ---- 账号管理 ---- */
@@ -516,7 +530,7 @@ function searchHit(kind,...fields){
   return terms.every(t=>hay.includes(t));
 }
 function searchQS(kind){return SEARCH[kind]?'&q='+encodeURIComponent(SEARCH[kind]):'';}
-function searchEmpty(kind,n){return SEARCH[kind]&&!n?'<div class="hint" style="margin:10px 0">没有匹配「'+esc(SEARCH[kind])+'」的结果</div>':'';}
+function searchEmpty(kind,n){return SEARCH[kind]&&!n?'<div class="hint" style="margin:10px 0">没有匹配「'+noTr(SEARCH[kind])+'」的结果</div>':'';}
 let groupFilterVal='all';   // all / valid / 满额 / 半额 / 冷却 / 生成中 / 风控 / 待激活 / 异常
 
 const GROUP_STYLE={'满额':'b-green','半额':'b-blue','冷却':'b-orange','生成中':'b-blue',
@@ -551,19 +565,19 @@ function renderGroupBar(d,container,jump){
       +'seedance-2.5 每条 2 点、seedance-2.0-fast 每条 3 点">剩余额度 <b>'+pts+'</b> 点'
       +'<span class="n">≈2.5 可出 '+Math.floor(pts/2)+' 条</span></span>';
 }
-/** 出口显示名：直连 / 绑定的代理名 + host:port（egress 本身已去掉代理凭据）。 */
+/** 出口显示名（HTML）：直连 / 绑定的代理名 + host:port（egress 本身已去掉代理凭据）。 */
 function egressLabel(e,accs){
   if(!e||e==='direct')return '服务器直连（未配代理）';
   const names=[...new Set(accs.filter(x=>x.effective_egress===e&&x.proxy_name).map(x=>x.proxy_name))];
   const host=e.replace(/^[a-z0-9]+:\/\//i,'').replace(/#.*$/,'');
-  return (names.length?names.join(' / ')+' · ':'')+host;
+  return noTr((names.length?names.join(' / ')+' · ':'')+host);
 }
 /** 账号页提示：哪些出口正被上游限流（710022002）、哪些出口挂的号太多。 */
 function renderEgressWarn(a){
   const box=q('#egressWarn');if(!box)return;
   const accs=a.accounts||[];
   const lines=(a.egress_throttle||[]).map(t=>
-    '<div class="ew ew-red">⏳ 出口 <b>'+esc(egressLabel(t.egress,accs))+'</b> 被上游限流（710022002 访问频繁），'
+    '<div class="ew ew-red">⏳ 出口 <b>'+egressLabel(t.egress,accs)+'</b> 被上游限流（710022002 访问频繁），'
     +t.accounts.length+' 个号暂停派发和探测，约 '+fmtDur(t.remaining)+' 后自动恢复'
     +(t.streak>1?'（连续第 '+t.streak+' 次，退避时间已加倍）':'')+'</div>');
   const warn=a.egress_share_warn||0;
@@ -584,7 +598,7 @@ function renderEgressWarn(a){
       +' 个）。同一出口的号越多越容易被上游判「访问频繁」(710022002)，请给账号绑定更多不同 IP 的代理。'
       +'<span class="tiny">（点击'+(open?'收起':'展开明细')+'）</span></summary>'
       +'<div style="margin-top:6px;line-height:1.8">'
-      +shared.map(x=>'· '+x.n+' 个号共用出口 <b>'+esc(egressLabel(x.e,accs))+'</b>'
+      +shared.map(x=>'· '+x.n+' 个号共用出口 <b>'+egressLabel(x.e,accs)+'</b>'
         +(x.e==='direct'?'（服务器直连，不在日本/韩国时必须配代理）':'')).join('<br>')
       +'</div></details>');
   }
@@ -658,7 +672,7 @@ async function loadAccounts(){
     const warn=(jb&&jb.status==='failed')?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
     return [
       `<input type="checkbox" data-name="${esc(x.name)}" ${selAccounts.has(x.name)?'checked':''} onchange="toggleSel('${x.name}',this.checked)">`,
-      `<span class="account-id">${esc(x.name)}</span>`,
+      `<span class="account-id" translate="no">${esc(x.name)}</span>`,
       accLabel(x)+warn,
       groupBadge(x),
       badge+ipInfo,
@@ -671,7 +685,7 @@ async function loadAccounts(){
       `<button class="btn" style="margin-right:6px" onclick="openRenameAccount('${x.name}')">改名</button>`+
       `<button class="btn" style="margin-right:6px" onclick="verify('${x.name}',this)">验证</button>`+
       `<button class="btn" style="margin-right:6px" onclick="openTestGen('${x.name}')">测试生成</button>`+
-      `<button class="btn" style="margin-right:6px" onclick="openSetAccountProxy('${x.name}','${x.proxy_id||''}')">${x.proxy_name?esc(x.proxy_name):'代理(默认)'}</button>`+
+      `<button class="btn" style="margin-right:6px" onclick="openSetAccountProxy('${x.name}','${x.proxy_id||''}')">${x.proxy_name?noTr(x.proxy_name):'代理(默认)'}</button>`+
       ((x.group==='风控'||x.group==='待激活')
         ?`<button class="btn" style="margin-right:6px" title="发一句「你好」：被登出或没回复即判风控" onclick="probeHello('${x.name}')">你好探测</button>`:'')+
       ((x.group==='风控'||x.group==='异常')
@@ -703,7 +717,7 @@ function pendingAddRows(jobs,inPool){
         :`<span class="badge b-red" title="${esc(j.error)}">加号失败</span><div class="tiny">${esc((j.error||'').slice(0,80))}</div>`;
       const src=j.source==='cookie'?'<span class="badge b-orange">Cookie 载入</span>'
         :j.source==='login'?'<span class="badge b-green">账号登录</span>':'<span class="tiny">—</span>';
-      return ['',`<span class="account-id">${esc(n)}</span>`,accLabel(j),state,'',src,'','','',fmt(j.started_at),'',
+      return ['',`<span class="account-id" translate="no">${esc(n)}</span>`,accLabel(j),state,'',src,'','','',fmt(j.started_at),'',
         '<span class="tiny">完成后自动出现在列表</span>'];
     });
 }
@@ -720,14 +734,14 @@ function noteCell(x){
   const note=x.note||'';
   const open=`onclick="editNote('${x.name}')"`;
   if(!note)return `<span class="tiny" style="cursor:pointer" title="点击可填写备注" ${open}>—</span>`;
-  return `<span class="note" title="点击编辑备注" ${open}>${esc(note)}</span>`;
+  return `<span class="note" title="点击编辑备注" ${open}>${noTr(note)}</span>`;
 }
 async function editNote(name){
   const cur=(allAccounts.find(a=>a.name===name)||{}).note||'';
   const v=prompt('账号备注（上游拒稿原文会自动追加在此，可手动修改）：',cur);
   if(v===null||v===cur)return;
   try{await api('/api/admin/accounts/'+encodeURIComponent(name),{method:'PATCH',body:{note:v}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   refresh();
 }
 
@@ -768,31 +782,25 @@ async function probeHello(name){
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/probe-hello',{method:'POST'});
     const p=r.probe||{};
-    alert(`${name} 你好探测：${p.ok?'通过 ✓':'未通过 ✗'}\n`
-      +`登录标记：${p.login_ok?'有效':'已被登出'}\n`
-      +`是否回复：${p.replied?'有回复':'无回复'}\n`
-      +`耗时：${p.elapsed||0}s${p.cached?'（缓存）':''}\n`
-      +`原因：${p.reason||'-'}\n`
-      +`回复：${(p.reply||'').slice(0,80)}`);
-  }catch(e){return alert(e.message);}
+    alert(dialogText`${name} 你好探测：${p.ok?'通过 ✓':'未通过 ✗'}\n登录标记：${p.login_ok?'有效':'已被登出'}\n是否回复：${p.replied?'有回复':'无回复'}\n耗时：${p.elapsed||0}s${p.cached?'（缓存）':''}\n原因：${p.reason||'-'}\n回复：${(p.reply||'').slice(0,80)}`);
+  }catch(e){return alert(dialogText`${e.message}`);}
   refresh();
 }
 async function recoverAccount(name,kind){
-  if(!confirm(`确定把 ${name} 从【${kind==='abnormal'?'异常':'风控'}】组恢复出来？\n`
-    +(kind==='risk'?'（风控恢复后回到【待激活】，要再做一次「你好探测」确认登录）':'')))return;
+  if(!confirm(dialogText`确定把 ${name} 从【${kind==='abnormal'?'异常':'风控'}】组恢复出来？\n${kind==='risk'?'（风控恢复后回到【待激活】，要再做一次「你好探测」确认登录）':''}`))return;
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/recover',
       {method:'POST',body:{kind:kind}});
-    alert(`${name} 已恢复，当前分组：${(r.account&&r.account.group)||'-'}`);
-  }catch(e){return alert(e.message);}
+    alert(dialogText`${name} 已恢复，当前分组：${(r.account&&r.account.group)||'-'}`);
+  }catch(e){return alert(dialogText`${e.message}`);}
   refresh();
 }
 
 async function verify(name,btn){
   btn.disabled=true;const old=btn.textContent;btn.textContent='验证中…';
   try{const r=await api('/api/admin/accounts/'+name+'/verify',{method:'POST'});
-    alert(name+' 登录态：'+(r.ok?'有效✓':('失效✗'+(r.reason?'\n原因：'+r.reason:''))));
-  }catch(e){alert(e.message);}
+    alert(dialogText`${name} 登录态：${r.ok?'有效✓':('失效✗'+(r.reason?'\n原因：'+r.reason:''))}`);
+  }catch(e){alert(dialogText`${e.message}`);}
   btn.disabled=false;btn.textContent=old;refresh();
 }
 
@@ -808,7 +816,7 @@ function openTestGen(name){
       <option value="doubao-seedance-2.5">doubao-seedance-2.5（会员，5 倍消耗，最长 30 秒）</option>`
     :`<option value="seedance-2.0-fast" selected>seedance-2.0-fast</option>
       <option value="seedance-2.5">seedance-2.5</option>`;
-  showDlg(`<h2>测试生成：${esc(name)}</h2>
+  showDlg(`<h2>测试生成：${noTr(name)}</h2>
     <p class="tiny" style="line-height:1.6;margin-bottom:10px">用<strong>该账号</strong>跑一条真实视频生成，验证此号能否成功出片（消耗该账号真实额度）。</p>
     <label>模型</label>
     <select id="tg_model" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
@@ -850,8 +858,7 @@ async function submitTestGen(name,force){
     // 服务端判定这个号现在测试大概率白撞（风控/限流暂停/出口被限流/没绑代理/额度不够）：确认后再强制发
     if(String(e.message).startsWith('TEST_GEN_WARN:')){
       const reasons=String(e.message).slice('TEST_GEN_WARN:'.length).split('\n').filter(Boolean);
-      const msg=`测试生成会用 ${name} 真实出片、消耗真实额度。这个号现在：\n\n`
-        +reasons.map(r=>'• '+r).join('\n')+'\n\n仍然要测试吗？';
+      const msg=dialogText`测试生成会用 ${name} 真实出片、消耗真实额度。这个号现在：\n\n${reasons.map(r=>'• '+r).join('\n')}\n\n仍然要测试吗？`;
       if(confirm(msg))return submitTestGen(name,true);
       q('#tg_status').textContent='已取消：'+reasons.join('；');q('#tg_status').style.color='var(--sub)';
       return;
@@ -899,7 +906,7 @@ async function pollTestGen(taskId,name){
 }
 
 function openRenameAccount(name){
-  showDlg(`<h2>重命名账号：${esc(name)}</h2>
+  showDlg(`<h2>重命名账号：${noTr(name)}</h2>
     <p class="tiny" style="line-height:1.6">会一起搬走该账号的浏览器 profile、代理绑定、今日额度与登录凭据；账号正在出片时不能改名。</p>
     <label>新账号名</label>
     <input id="f_newName" value="${esc(name)}" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;margin-top:4px">
@@ -912,15 +919,15 @@ async function submitRenameAccount(name){
   if(!newName)return alert('请填新账号名');
   if(newName===name)return hide('dlg');
   try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/rename',{method:'POST',body:{new_name:newName}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');
   selAccounts.delete(name);
   refresh();
 }
 
 async function delAccount(name){
-  if(!confirm('确定删除账号 '+name+'？将同时删除其 profile。'))return;
-  try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(e.message);}refresh();
+  if(!confirm(dialogText`确定删除账号 ${name}？将同时删除其 profile。`))return;
+  try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(dialogText`${e.message}`);}refresh();
 }
 
 function toggleSel(name,on){
@@ -954,7 +961,7 @@ async function batchVerifySelected(){
   if(!confirm(`对选中的 ${list.length} 个账号逐个验证登录态？\n验证会真实打开账号会话，耗时较长（每号约 10-40 秒）。`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-verify',{method:'POST',body:{names:list}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   stopBatchPoll();
   showDlg(`<h2>批量验证（${list.length} 个账号）</h2>
     <div id="batchProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
@@ -988,7 +995,7 @@ async function batchProbeHello(){
     +`· 不限并发全部一起发，通常十几秒内跑完；被限流的那批会显示为「未完成」`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-probe-hello',{method:'POST',body:{names:list}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   stopProbePoll();
   showDlg(`<h2>批量你好探测（${list.length} 个账号）</h2>
     <div id="probeProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
@@ -1027,7 +1034,7 @@ async function batchRecover(){
     +`· 想确认能不能用，恢复后接着点一次「你好探测」`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-recover',{method:'POST',body:{kind:'risk',names:list}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   stopProbePoll();
   showDlg(`<h2>批量恢复（${list.length} 个账号）</h2>
     <div id="probeProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
@@ -1040,13 +1047,13 @@ async function batchRecover(){
 async function openBatchProxy(){
   const list=[...selAccounts];
   if(!list.length)return alert('请先勾选账号');
-  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
+  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(dialogText`${e.message}`);}
   const opts='<option value="">默认代理（DOLA_PROXY）</option>'+proxyCache.map(p=>
-    `<option value="${esc(p.id)}">${esc(p.name)}（${esc(p.protocol)}://${esc(p.host)}:${p.port}）</option>`).join('');
+    `<option translate="no" value="${esc(p.id)}">${esc(p.name)}（${esc(p.protocol)}://${esc(p.host)}:${p.port}）</option>`).join('');
   showDlg(`<h2>批量更改代理（${list.length} 个账号）</h2>
     <p class="tiny">把勾选的账号统一绑定到指定代理；选“默认代理”则解除绑定、回落到环境变量默认代理。验证/出片/下载都按账号代理走。</p>
     <select id="f_bproxy" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${opts}</select>
-    <div class="tiny" style="margin-top:8px;max-height:150px;overflow:auto">${list.map(esc).join('、')}</div>
+    <div class="tiny" style="margin-top:8px;max-height:150px;overflow:auto">${list.map(noTr).join('、')}</div>
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
       <button class="btn btn-p" onclick="submitBatchProxy()">应用</button></div>`);
 }
@@ -1056,7 +1063,7 @@ async function submitBatchProxy(){
   const proxyId=q('#f_bproxy').value||null;
   let r;
   try{r=await api('/api/admin/accounts/batch-proxy',{method:'POST',body:{names:list,proxy_id:proxyId}});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');refresh();
   const failed=(r.failed||[]);
   alert(`已更新 ${r.updated.length} 个账号的代理`
@@ -1066,7 +1073,7 @@ async function submitBatchProxy(){
 async function resetAllQuotas(){
   if(!confirm('立即重置全池额度？\n所有因「每日上限 / 积分不足 / 失败」被挡的账号会恢复调度与积分缓存。\n（不等同于风控冷却，风控账号仍需重新登录）'))return;
   try{const r=await api('/api/admin/accounts/reset-quotas',{method:'POST'});alert(`已重置 ${r.reset} 个账号的额度`);}
-  catch(e){alert(e.message);}
+  catch(e){alert(dialogText`${e.message}`);}
   refresh();
 }
 
@@ -1077,7 +1084,7 @@ async function delSelected(){
   let ok=0;
   for(const name of list){
     try{await api('/api/admin/accounts/'+encodeURIComponent(name),{method:'DELETE'});ok++;}
-    catch(e){alert(name+' 删除失败：'+e.message);}
+    catch(e){alert(dialogText`${name} 删除失败：${e.message}`);}
   }
   selAccounts.clear();
   refresh();
@@ -1086,10 +1093,10 @@ async function delSelected(){
 }
 
 async function openSetAccountProxy(name,currentId){
-  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
+  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(dialogText`${e.message}`);}
   const opts='<option value="">默认代理（DOLA_PROXY）</option>'+proxyCache.map(p=>
-    `<option value="${esc(p.id)}" ${p.id===currentId?'selected':''}>${esc(p.name)}</option>`).join('');
-  showDlg(`<h2>设置账号代理：${esc(name)}</h2>
+    `<option translate="no" value="${esc(p.id)}" ${p.id===currentId?'selected':''}>${esc(p.name)}</option>`).join('');
+  showDlg(`<h2>设置账号代理：${noTr(name)}</h2>
     <p class="tiny">选择该账号验证/出片时使用的代理；留空则使用环境变量默认代理。</p>
     <select id="f_proxy" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">${opts}</select>
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
@@ -1097,7 +1104,7 @@ async function openSetAccountProxy(name,currentId){
 }
 async function submitSetAccountProxy(name){
   const body={proxy_id:q('#f_proxy').value||null};
-  try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/proxy',{method:'POST',body});}catch(e){return alert(e.message);}
+  try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/proxy',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');refresh();
 }
 
@@ -1415,7 +1422,7 @@ function renderAddAccountForm(){
 async function submitAddAccount(){
   const body={name:q('#f_name').value.trim(),email:q('#f_email').value.trim(),password:q('#f_pass').value,totp:q('#f_totp').value.trim()};
   if(!body.name||!body.email||!body.password)return alert('请填写账号名/邮箱/密码');
-  try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(e.message);}
+  try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');refresh();
 }
 async function submitAddCookie(){
@@ -1423,7 +1430,7 @@ async function submitAddCookie(){
   if(!body.name)return alert('请填写账号名');
   if(!body.cookies)return alert('请粘贴 Cookie JSON');
   try{JSON.parse(body.cookies);}catch(e){return alert('Cookie JSON 解析失败：'+e.message);}
-  try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(e.message);}
+  try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');refresh();
 }
 
@@ -1483,18 +1490,18 @@ async function loadProxies(){
     [selAllBox('proxies'),'名称','类型','协议','地址','端口','用户名','已绑账号','出口IP','备注','操作'],
     shown.map(p=>[
       selBox('proxies',p.id,false),
-      esc(p.name),
+      noTr(p.name),
       p.mode==='extract'?(p.extract_url?'<span class="badge b-blue">提取链接</span>'
                                         :'<span class="badge b-blue">粘贴节点</span>')
         :p.is_dynamic?'<span class="badge b-blue">隧道</span>':'<span class="tiny">静态</span>',
       esc(p.protocol),
       p.host?esc(p.host):'<span class="tiny">（节点池）</span>',
       p.port?p.port:'<span class="tiny">—</span>',
-      p.username?esc(p.username):'<span class="tiny">—</span>',
+      p.username?noTr(p.username):'<span class="tiny">—</span>',
       p.account_count||0,
       (proxyProbeCache[p.id]?esc(proxyProbeCache[p.id]):'<span class="tiny">—</span>')+
         ` <button class="btn" onclick="probeProxy('${p.id}',this)">探测</button>`,
-      esc(p.remark||'')||'<span class="tiny">—</span>',
+      p.remark?noTr(p.remark):'<span class="tiny">—</span>',
       `<button class="btn" style="margin-right:6px" onclick="openEditProxy('${p.id}')">编辑</button>
        ${p.mode==='extract'?`<button class="btn" style="margin-right:6px" onclick="showNodes('${p.id}')">节点池</button>`:''}
        ${p.is_dynamic||p.mode==='extract'?`<button class="btn" style="margin-right:6px" onclick="rotateProxy('${p.id}')">换IP</button>`:''}
@@ -1506,13 +1513,13 @@ async function loadProxies(){
 async function showNodes(id){
   let r;
   try{ r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/nodes'); }
-  catch(e){ return alert(e.message); }
+  catch(e){ return alert(dialogText`${e.message}`); }
   const p=proxyCache.find(x=>x.id===id);
   const now=Date.now()/1000;
   const rows=(r.nodes||[]).map(n=>[
     n.id,
     esc(n.host+':'+n.port),
-    esc(n.username||'')||'<span class="tiny">—</span>',
+    n.username?noTr(n.username):'<span class="tiny">—</span>',
     n.dead?'<span class="badge b-red">已废弃</span>'
       :(n.expires_at&&n.expires_at<=now)?'<span class="tiny">已过期</span>'
       :'<span class="badge b-green">可用</span>',
@@ -1520,7 +1527,7 @@ async function showNodes(id){
     esc(n.last_exit_ip||'')||'<span class="tiny">—</span>',
     n.fail_count||0
   ]);
-  showDlg('<h2>节点池 — '+esc(p?p.name:id)+'</h2>'+
+  showDlg('<h2>节点池 — '+noTr(p?p.name:id)+'</h2>'+
     '<div class="tiny" style="margin-bottom:8px">共 '+r.total+' 个，可用 '+r.alive+' 个，废弃 '+r.dead+' 个</div>'+
     '<div style="max-height:45vh;overflow:auto">'+table(['#','地址','用户名','状态','过期时间','出口IP','失败次数'],rows)+'</div>'+
     '<div class="row">'+(p&&p.extract_url?'<button class="btn" onclick="refreshNodes(\''+id+'\')">补一批节点（提取）</button>':'')+
@@ -1530,7 +1537,7 @@ async function showNodes(id){
 }
 function pasteNodes(id){
   const p=proxyCache.find(x=>x.id===id);
-  showDlg('<h2>粘贴节点 — '+esc(p?p.name:id)+'</h2>'+
+  showDlg('<h2>粘贴节点 — '+noTr(p?p.name:id)+'</h2>'+
     '<div class="tiny" style="margin-bottom:6px">一行一个 <code>host:port:user:pass</code>，可批量粘贴'+
     '（也认 <code>user:pass@host:port</code>、<code>host:port</code>）；已存在的节点会自动跳过。</div>'+
     '<textarea id="f_pnodes2" rows="8" spellcheck="false" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;font-family:monospace"></textarea>'+
@@ -1543,21 +1550,21 @@ async function submitPasteNodes(id){
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/nodes',{method:'POST',body:{text}});
     alert(`已加入 ${r.added} 个节点（解析到 ${r.parsed} 行）`);
-  }catch(e){return alert(e.message);}
+  }catch(e){return alert(dialogText`${e.message}`);}
   showNodes(id);loadProxies();
 }
 async function refreshNodes(id){
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/refresh-nodes',{method:'POST'});
     alert(r.ok?('提取成功，新增 '+r.added+' 个节点'):('提取失败：'+(r.error||'未知错误')));
-  }catch(e){return alert(e.message);}
+  }catch(e){return alert(dialogText`${e.message}`);}
   showNodes(id);loadProxies();
 }
 async function pruneNodes(id){
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/prune-nodes',{method:'POST'});
     alert('已清理 '+r.removed+' 个节点');
-  }catch(e){return alert(e.message);}
+  }catch(e){return alert(dialogText`${e.message}`);}
   showNodes(id);loadProxies();
 }
 async function probeProxy(id,btn){
@@ -1566,29 +1573,29 @@ async function probeProxy(id,btn){
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/probe',{method:'POST'});
     if(!r.ok)alert('探测失败：'+(r.error||'未知错误'));
     else proxyProbeCache[id]=r.ip+(r.country?`（${r.country}${r.isp?' / '+r.isp:''}）`:'');
-  }catch(e){alert(e.message);}
+  }catch(e){alert(dialogText`${e.message}`);}
   btn.disabled=false;btn.textContent=old;loadProxies();
 }
 async function rotateProxy(id){
   const p=proxyCache.find(x=>x.id===id);
-  if(!confirm('给绑定在「'+(p?p.name:id)+'」上的所有号换出口 IP？'))return;
+  if(!confirm(dialogText`给绑定在「${p?p.name:id}」上的所有号换出口 IP？`))return;
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/rotate',{method:'POST'});
     alert(`已换 IP：${r.rotated.length} 个\n跳过：${r.skipped.length} 个${r.skipped.length?'（未到最小换IP间隔）':''}`);
-  }catch(e){return alert(e.message);}
+  }catch(e){return alert(dialogText`${e.message}`);}
   loadProxies();loadAccounts();
 }
 async function rotateIp(name){
   try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/rotate-ip',{method:'POST'});}
-  catch(e){return alert(e.message);}
+  catch(e){return alert(dialogText`${e.message}`);}
   loadAccounts();
 }
 async function probeIp(name){
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/probe-ip',{method:'POST'});
     if(!r.ok)return alert('探测失败：'+(r.error||'未知错误'));
-    alert(`${name}\n出口 IP：${r.ip}\n归属：${r.country||'—'} ${r.region||''}\nISP：${r.isp||'—'}`);
-  }catch(e){return alert(e.message);}
+    alert(dialogText`${name}\n出口 IP：${r.ip}\n归属：${r.country||'—'} ${r.region||''}\nISP：${r.isp||'—'}`);
+  }catch(e){return alert(dialogText`${e.message}`);}
   loadAccounts();
 }
 function proxyDialog(p){
@@ -1727,7 +1734,7 @@ async function submitQuickProxies(){
   const out=q('#f_qpres');
   const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(x=>x&&!x.startsWith('#'));
   if(!lines.length)return alert('请粘贴代理，一行一个');
-  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(e.message);}
+  try{const r=await api('/api/admin/proxies');proxyCache=r.proxies||[];}catch(e){return alert(dialogText`${e.message}`);}
   const keyOf=x=>`${String(x.host).toLowerCase()}:${x.port}:${x.username||''}`;
   // 节点池不按单条去重（同一个网关地址的不同账号就是不同节点）
   const existing=new Set(mode==='pool'?[]:proxyCache.filter(x=>x.mode!=='extract').map(keyOf));
@@ -1840,13 +1847,13 @@ async function submitProxy(id){
         alert(`已追加 ${r.added} 个节点（解析到 ${r.parsed} 行）`);
       }
     }else await api('/api/admin/proxies',{method:'POST',body});
-  }catch(e){return alert(e.message);}
+  }catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');loadProxies();
 }
 async function delProxy(id){
   const p=proxyCache.find(x=>x.id===id);
-  if(!confirm('删除代理「'+(p?p.name:id)+'」？已绑定该代理的账号会改回默认代理。'))return;
-  try{await api('/api/admin/proxies/'+encodeURIComponent(id),{method:'DELETE'});}catch(e){return alert(e.message);}
+  if(!confirm(dialogText`删除代理「${p?p.name:id}」？已绑定该代理的账号会改回默认代理。`))return;
+  try{await api('/api/admin/proxies/'+encodeURIComponent(id),{method:'DELETE'});}catch(e){return alert(dialogText`${e.message}`);}
   loadProxies();
 }
 
@@ -1896,7 +1903,7 @@ async function delSelected(kind){
              users:'/api/admin/users/delete-batch',keys:'/api/admin/keys/delete-batch'}[kind];
   const body=kind==='users'?{usernames:ids}:{ids};
   let r;
-  try{r=await api(url,{method:'POST',body});}catch(e){return alert(e.message);}
+  try{r=await api(url,{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   (r.deleted||[]).forEach(id=>SEL[kind].delete(id));
   if(r.skipped&&r.skipped.length)alert('已删除 '+(r.deleted||[]).length+' '+SEL_LABEL[kind]+'；跳过：\n'+r.skipped.join('\n'));
   ({proxies:loadProxies,tasks:loadTasks,users:loadUsers,keys:loadKeys})[kind]();
@@ -1913,7 +1920,7 @@ async function loadUsers(){
     users.map(u=>[
       selBox('users',u.username,u.role==='owner'||u.username===me,
              u.role==='owner'?'主管理员不能删除':(u.username===me?'不能删除当前登录的账号':'')),
-      esc(u.username)+(u.username===me?' <span class="badge b-blue">当前</span>':''),
+      noTr(u.username)+(u.username===me?' <span class="badge b-blue">当前</span>':''),
       u.role==='owner'?'<span class="badge b-green">主管理员</span>':'<span class="badge b-blue">管理员</span>',
       u.enabled?'<span class="badge b-green">启用</span>':'<span class="badge b-red">停用</span>',
       fmt(u.created_at),
@@ -1936,7 +1943,7 @@ function openEditUser(username){
     const u=r.users.find(x=>x.username===username);
     if(!u)return alert('用户不存在');
     const owner=u.role==='owner';
-    showDlg(`<h2>修改账号：${esc(u.username)}</h2>
+    showDlg(`<h2>修改账号：${noTr(u.username)}</h2>
       <label>用户名</label><input id="f_uname" value="${esc(u.username)}" ${owner?'disabled':''} ${owner?'title="主管理员不允许改名"':''}>
       <label>新密码（留空保持不变）</label><input id="f_upass" type="password" placeholder="留空则不修改">
       ${owner?'':'<label style="margin-top:8px;display:flex;align-items:center;gap:6px;color:var(--sub)"><input type="checkbox" id="f_uenabled" style="width:auto" '+(u.enabled?'checked':'')+'>启用该账号</label>'}
@@ -1952,20 +1959,20 @@ async function submitUser(orig){
     if(!name||!pw)return alert('请填写用户名和密码');
     if(!/^[A-Za-z0-9_-]{1,32}$/.test(name))return alert('用户名只能包含字母/数字/_/-，且不超过32位');
     body.username=name;body.password=pw;
-    try{await api('/api/admin/users',{method:'POST',body});}catch(e){return alert(e.message);}
+    try{await api('/api/admin/users',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   }else{
     if(!name)return alert('用户名不能为空');
     if(name!==orig)body.username=name;
     if(pw)body.password=pw;
     const eb=q('#f_uenabled');
     if(eb)body.enabled=eb.checked;
-    try{await api('/api/admin/users/'+encodeURIComponent(orig),{method:'PATCH',body});}catch(e){return alert(e.message);}
+    try{await api('/api/admin/users/'+encodeURIComponent(orig),{method:'PATCH',body});}catch(e){return alert(dialogText`${e.message}`);}
   }
   hide('dlg');loadUsers();
 }
 async function delUser(username){
-  if(!confirm('确定删除管理员 '+username+'？'))return;
-  try{await api('/api/admin/users/'+encodeURIComponent(username),{method:'DELETE'});}catch(e){return alert(e.message);}
+  if(!confirm(dialogText`确定删除管理员 ${username}？`))return;
+  try{await api('/api/admin/users/'+encodeURIComponent(username),{method:'DELETE'});}catch(e){return alert(dialogText`${e.message}`);}
   loadUsers();
 }
 
@@ -1977,8 +1984,8 @@ function accChain(t){
   if(!arr.length)return '-';
   const txt=arr.join(' → ');
   return arr.length>1
-    ?'<span class="tiny" title="换号顺序：'+esc(txt)+'">'+arr.map(esc).join('<span style="color:var(--gray)"> → </span>')+'</span>'
-    :esc(arr[0]);
+    ?'<span class="tiny" title="换号顺序：'+esc(txt)+'">'+arr.map(noTr).join('<span style="color:var(--gray)"> → </span>')+'</span>'
+    :noTr(arr[0]);
 }
 let TASK_MAP={};
 /** 任务耗时：主显示生成耗时（开始生成→结束），有明显排队时下方补一行含排队的总耗时。 */
@@ -2013,9 +2020,9 @@ const OPEN_NOTES=new Set();
 function noteToggle(el){if(el.open)OPEN_NOTES.add(el.dataset.k);else OPEN_NOTES.delete(el.dataset.k);}
 function foldText(k,label,text,limit){
   text=String(text||'').replace(/\*\*/g,'');   // dola 回执带 Markdown 粗体标记
-  if(text.length<=limit)return '<div class="tiny note-line">'+label+esc(text)+'</div>';
+  if(text.length<=limit)return '<div class="tiny note-line">'+label+noTr(text)+'</div>';
   return '<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
-    +'<summary>'+label+esc(text.slice(0,limit))+'<span class="ell">…</span></summary>'+esc(text.slice(limit))+'</details>';
+    +'<summary>'+label+noTr(text.slice(0,limit))+'<span class="ell">…</span></summary>'+noTr(text.slice(limit))+'</details>';
 }
 /** dola 回执原话：当前号的在前（长了折叠），前面换过的号收进「前面 N 个号的回复」。
     失败时报错里已经带了同一句原话就不重复。 */
@@ -2027,12 +2034,12 @@ function upstreamNote(t){
   const cur=notes[notes.length-1],prev=notes.slice(0,-1);
   let html='';
   const dup=t.status==='failed'&&t.error&&t.error.indexOf(String(cur.note).slice(0,12))>=0;
-  if(!dup)html+=foldText(t.id+':cur',(cur.account?esc(cur.account)+' · ':'')+'dola：',cur.note,60);
+  if(!dup)html+=foldText(t.id+':cur',(cur.account?noTr(cur.account)+' · ':'')+'dola：',cur.note,60);
   if(prev.length){
     const k=t.id+':prev';
     html+='<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
       +'<summary>前面 '+prev.length+' 个号的回复</summary>'
-      +prev.map(n=>'<div>'+esc(n.account||'?')+'：'+esc(String(n.note||'').replace(/\*\*/g,''))+'</div>').join('')+'</details>';
+      +prev.map(n=>'<div>'+noTr(n.account||'?')+'：'+noTr(String(n.note||'').replace(/\*\*/g,''))+'</div>').join('')+'</details>';
   }
   return html;
 }
@@ -2071,7 +2078,7 @@ function costCell(t){
     // 生成中：实时已用时 + 预计总时长与剩余倒计时（超出预计会提示已超出）
     return liveSpan('run',s,0,'color:#2f6fde')
       +(typ?'<div class="tiny">'+liveSpan('eta',s2,typ,'',lab)+'</div>':'')
-      +(s2>s+1&&t.account?'<div class="tiny">当前 '+esc(t.account)+' '+liveSpan('run',s2,0,'')+'</div>':'');
+      +(s2>s+1&&t.account?'<div class="tiny">当前 '+noTr(t.account)+' '+liveSpan('run',s2,0,'')+'</div>':'');
   }
   if(!f)return '—';
   const total=c?f-c:0,gen=s?f-s:0,queue=(s&&c)?s-c:0;
@@ -2093,11 +2100,11 @@ async function loadTasks(){
   const rows=r.tasks.map(t=>[
     selBox('tasks',t.id,running(t),running(t)?'还在排队/生成中，不能删除':''),
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
-    '<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>'
+    '<span class="prompt" translate="no" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>'
       +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">查看</button>',
     refCell(t),
     accChain(t),
-    t.api_key_name||'—',
+    t.api_key_name?noTr(t.api_key_name):'—',
     (t.duration||10)+'秒',
     sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
     costCell(t),
@@ -2131,8 +2138,8 @@ function showThumb(url){q('#thumbImg').src=url;show('thumbModal');}
 
 function openPrompt(id){
   const t=TASK_MAP[id]||{};
-  q('#promptMeta').textContent=id+' · '+pubModel(t.model)+' · '+(t.duration||10)+'秒 · '
-    +(t.api_key_name?('客户 '+t.api_key_name):'');
+  q('#promptMeta').innerHTML=esc(id)+' · '+esc(pubModel(t.model))+' · '+(t.duration||10)+'秒 · '
+    +(t.api_key_name?('客户 '+noTr(t.api_key_name)):'');
   q('#promptBody').textContent=(t.prompt&&String(t.prompt).length)?t.prompt:'（空提示词）';
   q('#promptCopyBtn').textContent='复制';
   show('promptModal');
@@ -2187,10 +2194,10 @@ async function loadVideos(){
       dur,
       dim,
       size,
-      v.account||'-',
+      v.account?noTr(v.account):'-',
       pubModel(v.model),
       state,
-      '<span class="prompt" title="'+esc(v.prompt||'')+'">'+esc(v.prompt||'')+'</span>',
+      '<span class="prompt" translate="no" title="'+esc(v.prompt||'')+'">'+esc(v.prompt||'')+'</span>',
       ops
     ];
   });
@@ -2222,7 +2229,7 @@ function toggleAllVideos(on){
 }
 async function delVideo(id){
   if(!confirm('确定删除该视频？视频文件与任务记录将一并删除，不可恢复。'))return;
-  try{await api('/api/admin/videos/'+id,{method:'DELETE'});}catch(e){alert(e.message);}
+  try{await api('/api/admin/videos/'+id,{method:'DELETE'});}catch(e){alert(dialogText`${e.message}`);}
   selVideos.delete(id);
   refresh();
 }
@@ -2255,7 +2262,7 @@ async function loadKeys(){
   const rows=keys.map(k=>[
     selBox('keys',k.key,false),
     '<span style="font-family:monospace">'+mask(k.key)+'</span>',
-    k.name||'—',
+    k.name?noTr(k.name):'—',
     (k.allowed_durations||[]).join(' / ')+' 秒',
     (k.daily_limit?`${k.today_total} / ${k.daily_limit}`:`${k.today_total} / 不限`),
     (k.concurrency_limit?`${k.today_active} / ${k.concurrency_limit}`:`${k.today_active} / 不限`)+(k.today_queued?` <span class=\"tiny\">排队 ${k.today_queued}</span>`:''),
@@ -2268,7 +2275,7 @@ async function loadKeys(){
   selUpdate('keys');
 }
 async function setKey(key,on){
-  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{enabled:on}});}catch(e){alert(e.message);}refresh();
+  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{enabled:on}});}catch(e){alert(dialogText`${e.message}`);}refresh();
 }
 async function copyKey(key){
   await copy(key);
@@ -2276,7 +2283,7 @@ async function copyKey(key){
 }
 async function delKey(key){
   if(!confirm('删除该密钥？调用方将立即失效。'))return;
-  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'DELETE'});}catch(e){alert(e.message);}refresh();
+  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'DELETE'});}catch(e){alert(dialogText`${e.message}`);}refresh();
 }
 // 仅作接口返回前的占位默认值；真实档位由 /api/admin/keys 下发（随 DOLA_NATIVE_DURATION_MAX 变化）。
 let SUPPORTED_DURATIONS=[5,10,15,30];
@@ -2308,12 +2315,12 @@ async function submitCreateKey(){
       <div class="tiny">完整 key 只在此显示一次：</div>
       <div class="keyfull" id="newKey">${esc(k)}</div>
       <div class="row"><button class="btn" onclick="copyFromNewKey()">复制</button><button class="btn btn-p" onclick="hide('dlg');loadKeys()">完成</button></div>`);
-  }catch(e){alert(e.message);}
+  }catch(e){alert(dialogText`${e.message}`);}
 }
 async function openEditKey(key){
   const r=await api('/api/admin/keys');const k=r.keys.find(x=>x.key===key);if(!k)return;
   showDlg(`<h2>设置 API 密钥</h2>
-    <div class="tiny" style="margin-bottom:8px">${esc(k.name||key)}</div>
+    <div class="tiny" style="margin-bottom:8px">${noTr(k.name||key)}</div>
     <label>每日任务上限（0 = 不限）</label><input id="f_daily" type="number" min="0" value="${k.daily_limit}">
     <label>同时生成上限（0 = 不限）</label><input id="f_conc" type="number" min="0" value="${k.concurrency_limit}">
     <label>允许的视频时长</label><div style="padding:8px 0">${durationChecks(k.allowed_durations)}</div>
@@ -2322,7 +2329,7 @@ async function openEditKey(key){
 }
 async function submitEditKey(key){
   const allowed=selectedDurations();if(!allowed.length)return alert('至少选择一个视频时长');
-  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{daily_limit:Number(q('#f_daily').value||0),concurrency_limit:Number(q('#f_conc').value||0),allowed_durations:allowed,expires_at:Number(q('#f_exp').value||0)}});hide('dlg');refresh();}catch(e){alert(e.message);}
+  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{daily_limit:Number(q('#f_daily').value||0),concurrency_limit:Number(q('#f_conc').value||0),allowed_durations:allowed,expires_at:Number(q('#f_exp').value||0)}});hide('dlg');refresh();}catch(e){alert(dialogText`${e.message}`);}
 }
 function copyFromNewKey(){copy(q('#newKey').textContent.trim());}
 async function copy(text){
@@ -2383,7 +2390,7 @@ async function startStress(){
     await api('/api/admin/stress',{method:'POST',body:{max_concurrency:n,hold_seconds:5}});
     q('#stressOut').textContent='压测已开始：1→'+n+' 个浏览器逐级同时拉起…';
     stressPollTimer=setInterval(()=>loadStressStatus(false),2500);
-  }catch(e){alert(e.message);btn.disabled=false;}
+  }catch(e){alert(dialogText`${e.message}`);btn.disabled=false;}
 }
 
 /* 启动：探测鉴权，401 才弹登录遮罩（ADMIN_KEY 留空时免登录） */

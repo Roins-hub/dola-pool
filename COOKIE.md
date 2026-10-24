@@ -1,3 +1,5 @@
+> 🌐 **中文** | [Tiếng Việt](COOKIE.vi.md)
+
 # 怎么获取 dola 账号的 Cookie
 
 号池用 Cookie 导入的号走「纯 API」出片：不开浏览器，最稳定，**30 秒两段拼接也只能用这种号**。

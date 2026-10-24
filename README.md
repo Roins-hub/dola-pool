@@ -1,3 +1,5 @@
+> 🌐 **中文** | [Tiếng Việt](README.vi.md)
+
 有兴趣的可以加群交流
 <img width="1305" height="2321" alt="301130c1842c3b30432394fc276a7a58" src="https://github.com/user-attachments/assets/39207d3c-955f-49ec-adbc-8db471f23b79" />
 
@@ -10,7 +12,7 @@
 - 两种出片路径：纯 HTTP 协议（默认）与 Chromium 浏览器自动化（兜底，仅 dola）
 - 可选严格 Cookie 隔离：Dola Cookie 账号按账号绑定 CloakBrowser 持久 profile、固定 fingerprint seed 和独立出口
 - 对外接口：OpenAI 风格 `/v1/videos`、`/v1/images/generations`、`/v1/images/edits`，Ark 风格 `/api/v3/contents/generations/tasks`
-- 自带管理面板：账号、代理、客户 API Key、任务、视频、压力测试
+- 自带管理面板：账号、代理、客户 API Key、任务、视频、压力测试；界面支持中文 / 越南语 / 中越双语（见 [`I18N.md`](I18N.md)）
 - 参考图生视频 / 图生图、本地转存与静态分发（水印情况见「注意事项」）
 
 > 📖 **第一次使用？先看 [`USAGE.md`](USAGE.md) 使用手册**：核心概念、管理面板每个按钮的作用、从零出第一条视频、日常运营与常见问题。
@@ -323,6 +325,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `browser.py` / `video_worker_ui.py` | 浏览器自动化出片路径 |
 | `media.py` | 参考图下载、成片元数据 |
 | `web/` | 管理面板前端 |
+| `web/i18n/` / `i18n_tool.py` | 管理面板多语言（中文 / Tiếng Việt / 双语），见 [`I18N.md`](I18N.md) |
 | `extensions/dola30/` | 第三方 Chromium 扩展（30 秒时长、无水印解析） |
 | `deploy-cloak-requirements.txt` | 严格 Cookie 模式的可选 CloakBrowser wrapper 依赖 |
 | `Dockerfile` / `docker-compose.yml` / `docker/` | Docker 镜像与编排（纯 API，数据在 `/data`） |
