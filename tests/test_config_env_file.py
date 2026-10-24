@@ -39,3 +39,24 @@ def test_real_environment_wins(tmp_path):
 
 def test_without_env_file_default_unchanged():
     assert _load_config(None, {})["proxy"] == "http://127.0.0.1:7890"
+
+
+def test_explicit_env_file_overrides_local_defaults(tmp_path):
+    # An isolated config copy avoids touching the developer's own .env.local.
+    (tmp_path / "config.py").write_bytes((ROOT / "config.py").read_bytes())
+    (tmp_path / ".env.local").write_text(
+        "DOLA_PROXY=http://127.0.0.1:7890\nDOLA_PORT=8100\nDOLA_MAX_PENDING_TASKS=17\n",
+        encoding="utf-8")
+    explicit = tmp_path / "dola.env"
+    explicit.write_text("DOLA_PROXY=\nDOLA_PORT=9200\n", encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("DOLA_")}
+    env["DOLA_ENV_FILE"] = str(explicit)
+    code = "import config,json; print(json.dumps([config.PROXY, config.PORT, config.MAX_PENDING_TASKS]))"
+    def read():
+        r = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=env,
+                           capture_output=True, text=True, check=True)
+        return json.loads(r.stdout)
+    assert read() == ["", 9200, 17]
+    env["DOLA_PROXY"] = "http://10.0.0.1:8080"
+    env["DOLA_PORT"] = "9300"
+    assert read() == ["http://10.0.0.1:8080", 9300, 17]

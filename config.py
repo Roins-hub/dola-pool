@@ -9,9 +9,11 @@ def _load_local_env():
     DOLA_ENV_FILE（start-local.ps1 传 dola.env 的路径）同样按此读入：Windows 上进程环境变量不能是空串，
     SetEnvironmentVariable 传空值等于删除，dola.env 里 `DOLA_PROXY=` 这种显式留空会退回默认值，只能在这里补回空串。
     """
-    paths = [Path(__file__).with_name(".env.local")]
+    paths = []
     if os.getenv("DOLA_ENV_FILE"):
         paths.append(Path(os.environ["DOLA_ENV_FILE"]))
+    # First value wins: process environment > explicit file > local defaults.
+    paths.append(Path(__file__).with_name(".env.local"))
     for path in paths:
         if not path.exists():
             continue
