@@ -4,16 +4,25 @@ from pathlib import Path
 
 
 def _load_local_env():
-    """Load ignored .env.local for local/tunnel runs; real environment wins."""
-    path = Path(__file__).with_name(".env.local")
-    if not path.exists():
-        return
-    for raw in path.read_text(encoding="utf-8-sig").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    """Load ignored .env.local for local/tunnel runs; real environment wins.
+
+    DOLA_ENV_FILE（start-local.ps1 传 dola.env 的路径）同样按此读入：Windows 上进程环境变量不能是空串，
+    SetEnvironmentVariable 传空值等于删除，dola.env 里 `DOLA_PROXY=` 这种显式留空会退回默认值，只能在这里补回空串。
+    """
+    paths = []
+    if os.getenv("DOLA_ENV_FILE"):
+        paths.append(Path(os.environ["DOLA_ENV_FILE"]))
+    # First value wins: process environment > explicit file > local defaults.
+    paths.append(Path(__file__).with_name(".env.local"))
+    for path in paths:
+        if not path.exists():
             continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        for raw in path.read_text(encoding="utf-8-sig").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 _load_local_env()

@@ -80,6 +80,8 @@ foreach ($line in [System.IO.File]::ReadAllLines($envFile)) {
   $cfg[$k.Trim()] = $v.Trim()
   [Environment]::SetEnvironmentVariable($k.Trim(), $v.Trim(), "Process")
 }
+# 空值（如 DOLA_PROXY=）在 Windows 上设不进环境变量（等于删除），交给 config.py 从 dola.env 补回空串
+$env:DOLA_ENV_FILE = $envFile
 
 if ($cfg["DOLA_COOKIE_RUNTIME"] -eq "cloak" -and (Test-Path (Join-Path $Root "deploy-cloak-requirements.txt"))) {
   Info "安装 CloakBrowser wrapper（严格 Cookie 隔离模式）..."

@@ -21,6 +21,13 @@
   `tests/test_i18n.py` 检查面板里这些动态插入点都带了保护。
 - 新增越南语文档 `README.vi.md`、`USAGE.vi.md`、`COOKIE.vi.md`（模型名按 2.5.1 写 `seedance-2.0-fast`，注明旧名兼容）。
 
+**Windows 本地启动：`dola.env` 里留空的配置不再退回默认值。**
+
+- `start-local.ps1` 用 `SetEnvironmentVariable` 设空值等于删除变量，`DOLA_PROXY=`（模板默认就是留空）会退回
+  `http://127.0.0.1:7890`，本机没开 Clash 时没绑代理的账号全都连不上。现在脚本把 `dola.env` 路径交给 `DOLA_ENV_FILE`，
+  `config.py` 按 `.env.local` 的规则再读一遍（已有的环境变量优先），把空串补回来；测试：`tests/test_config_env_file.py`。
+- `.gitignore` 加上本地启动脚本放在项目目录里的 `.browsers/`、`.cache/`。
+
 ## 2.5.1 — 2026-10-20
 
 **dola 的 2.0 模型改名为 `seedance-2.0-fast`。** dola 网页上只有「Seedance 2.0 Fast」（上游值 `seedance_v2.0`），
