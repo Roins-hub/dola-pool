@@ -1,0 +1,5 @@
+# Test environment shared by local checks and GitHub Actions.
+-r requirements.txt
+-r deploy-extra-requirements.txt
+pytest
+httpx
