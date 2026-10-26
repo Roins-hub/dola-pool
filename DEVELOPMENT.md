@@ -34,6 +34,8 @@
 
 安装依赖：`pip install -r requirements.txt`，另需 `patchright opencv-python`，浏览器 `python -m patchright install chromium`。
 
+运行自动化测试：`pip install -r requirements-dev.txt`，然后 `python -m pytest -q tests`。测试环境需 Python 3.12、Node.js 和 ffmpeg；`httpx` 用于本地 ASGI 接口测试，不是生产运行依赖。GitHub Actions 使用同一份测试依赖清单。
+
 ---
 
 ## 3. 核心技术路线演进（为什么这么做）

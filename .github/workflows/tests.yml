@@ -23,12 +23,13 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             deploy-extra-requirements.txt
+            requirements-dev.txt
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - name: Install system packages
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Install Python packages
-        run: pip install -r requirements.txt -r deploy-extra-requirements.txt pytest
+        run: pip install -r requirements-dev.txt
       - name: Run tests
         run: pytest -q tests
