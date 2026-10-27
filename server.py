@@ -647,6 +647,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         def on_conversation_id(account, conversation_id, deadline_at):
             store.update(task_id, status="processing", account=account,
                          conversation_id=conversation_id, deadline_at=deadline_at,
+                         queue_note="已取得上游会话，正在查询视频结果",
                          last_poll_at=time.time())
 
         # 每个号的 dola 回执原话（按尝试顺序），面板把当前号显示在前、其它号折叠
@@ -730,6 +731,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 高并发下每完成一条就卡一次 loop，会把所有轮询/接口/健康检查一起拖住。
         meta = await asyncio.to_thread(_video_metadata, result["local_path"], duration, ratio)
         store.update(task_id, status="completed", video_url=public_url,
+                     queue_note="",
                      account=result.get("account"), last_poll_at=time.time(),
                      finished_at=time.time(), **meta)
         # 出片目录超限就从旧到新删，避免磁盘被撑满（同样是同步目录遍历）
@@ -2518,6 +2520,7 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
         TEST_JOBS[task_id]["error"] = err
         if result.get("ok"):
             store.update(task_id, status="completed",
+                         queue_note="",
                          video_url=result.get("video_url"),
                          finished_at=time.time())
         else:

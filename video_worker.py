@@ -77,29 +77,50 @@ async ({conversationId, msToken, fp}) => {
   const assistantTexts = [];
   const videos = [];
   const videoModels = [];
+  const addText = (target, text) => {
+    if (typeof text !== 'string' || !text.trim()) return;
+    const value = text.slice(0, 2000);
+    if (!target.includes(value)) target.push(value);
+  };
   for (const msg of messages) {
-    let content = msg.content;
-    if (typeof content === "string") {
-      try { content = JSON.parse(content); } catch (e) { continue; }
+    if (!msg || typeof msg !== 'object') continue;
+    // Chain messages use user_type (1=user, 2=assistant), unlike SSE roles.
+    const userType = Number(msg.user_type);
+    const isAssistant = userType === 2 || (userType !== 1 &&
+      (msg.role === 'assistant' || (msg.sender || {}).role === 'assistant'));
+    let legacy = msg.content;
+    if (typeof legacy === 'string') {
+      try { legacy = JSON.parse(legacy); } catch (e) { legacy = []; }
     }
-    if (!Array.isArray(content)) continue;
+    // Modern responses may leave content empty and only supply content_block.
+    const content = [
+      ...(Array.isArray(msg.content_block) ? msg.content_block : []),
+      ...(Array.isArray(legacy) ? legacy : []),
+    ];
+    let hasText = false;
     for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
       const text = (((block.content || {}).text_block) || {}).text || "";
-      if (text) {
-        texts.push(text.slice(0, 2000));
-        // Only explicitly marked assistant messages are used as upstream notes.
-        if (msg.role === 'assistant' || (msg.sender || {}).role === 'assistant') assistantTexts.push(text.slice(0, 2000));
+      if (typeof text === 'string' && text.trim()) {
+        hasText = true;
+        addText(texts, text);
+        if (isAssistant) addText(assistantTexts, text);
       }
       if (block.block_type !== 2074) continue;
       const creations = (((block.content || {}).creation_block) || {}).creations || [];
       for (const cre of creations) {
         if (cre.type !== 2) continue;
         const url = ((cre.video || {}).download_url) || "";
-        if (url.startsWith("http")) {
+        if (url.startsWith("http") && !videos.includes(url)) {
           videos.push(url);
           videoModels.push((cre.video || {}).video_model || "");
         }
       }
+    }
+    if (isAssistant && !hasText) {
+      const brief = msg.brief || (msg.ext || {}).brief;
+      addText(texts, brief);
+      addText(assistantTexts, brief);
     }
   }
   return {ok: true, status: resp.status, texts, assistantTexts, videos, videoModels};

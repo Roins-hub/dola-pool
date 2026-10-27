@@ -88,6 +88,10 @@ def test_outer_timeout_still_stops_task(tmp_path, monkeypatch):
 def test_poll_reports_upstream_note_before_quota_error():
     from browser_feedback import emit
     notes = []
+    progress_notes = []
+    def on_poll(now, note=None, progress=None):
+        if note: notes.append(note)
+        if progress: progress_notes.append(progress)
     class Context:
         async def cookies(self, *a): return []
     class Page:
@@ -101,8 +105,75 @@ def test_poll_reports_upstream_note_before_quota_error():
         DAILY_LIMIT_PATTERN=re.compile("daily quota"), AccountLimitedError=QuotaError)
     with pytest.raises(QuotaError):
         run(worker("acc1", Page(), Context(), "c1", 60,
-                   on_poll=lambda now, note=None: notes.append(note)))
+                   on_poll=on_poll))
     assert notes == ["今日视频额度已用完"]
+    assert progress_notes == ["已取得上游会话，正在查询视频结果"]
+
+
+def test_poll_reports_download_progress_before_awaiting_download(tmp_path):
+    from browser_feedback import emit
+    progress_notes, notes = [], []
+    output = tmp_path / 'video.mp4'
+    output.write_bytes(b'video')
+    def on_poll(now, note=None, progress=None):
+        if note: notes.append(note)
+        if progress: progress_notes.append(progress)
+    class Context:
+        async def cookies(self, *a): return []
+    class Page:
+        async def evaluate(self, *a):
+            return {'assistantTexts': ['视频已生成'], 'videos': ['https://example.invalid/video.mp4']}
+    async def no_wait(*a): pass
+    async def higher_bitrate(*a):
+        assert progress_notes[-1] == '上游已返回视频，正在获取下载地址'
+    async def download(*a):
+        assert progress_notes[-1] == '视频已生成，正在下载到服务器'
+        return output
+    worker = load_worker_function('poll_conversation', cookie_value=lambda *a: '',
+        asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for),
+        POLL_JS='', emit_feedback=emit, TERMINAL_TEXT_MAX_HITS=3, HARD_ERROR_TEXT_MAX_HITS=3,
+        fetch_higher_bitrate_url=higher_bitrate, extract_unwatermarked_url=lambda vm, url: url,
+        _download=download)
+    result = run(worker('acc1', Page(), Context(), 'c1', 60, on_poll=on_poll))
+    assert result['local_path'] == str(output)
+    assert notes == ['视频已生成']
+    assert progress_notes == ['已取得上游会话，正在查询视频结果',
+                              '上游已返回视频，正在获取下载地址',
+                              '视频已生成，正在下载到服务器',
+                              '视频已下载，正在完成本地处理']
+
+
+@pytest.mark.parametrize('account_test', [False, True])
+def test_completed_tasks_clear_progress_and_preserve_upstream_reply(tmp_path, monkeypatch, account_test):
+    import server
+    import store
+    task_id = 'progress_test'
+    monkeypatch.setattr(server, 'store', store.TaskStore(str(tmp_path / 'tasks.db')))
+    monkeypatch.setattr(server, 'TEST_JOBS', {task_id: {}})
+    monkeypatch.setattr(server, '_video_metadata', lambda *a: {})
+    monkeypatch.setattr(server, '_prune_downloads', lambda: None)
+    class Pool:
+        async def generate_video(self, *a, **kw):
+            kw['on_account_try']('acc1', 1)
+            server.store.set_queue_note(task_id, '已发送生成请求，等待上游会话确认')
+            kw['on_conversation_id']('acc1', 'c1', time.time() + 60)
+            assert server.store.get(task_id)['queue_note'] == '已取得上游会话，正在查询视频结果'
+            return await self.test_generate(*a, **kw)
+        async def test_generate(self, *a, **kw):
+            kw['on_poll'](time.time(), note='Dola 原始回话', progress='视频已下载，正在完成本地处理')
+            assert server.store.get(task_id)['queue_note'] == '视频已下载，正在完成本地处理'
+            return {'ok': True, 'local_path': str(tmp_path / 'video.mp4'),
+                    'video_url': 'https://example.invalid/video.mp4', 'account': 'acc1'}
+    monkeypatch.setattr(server, 'pool', Pool())
+    if account_test:
+        run(server._run_test_generate(task_id, 'acc1', 'p', '16:9', 5, 'seedance-2.0-fast'))
+    else:
+        server.store.create(task_id, 'seedance-2.0-fast', 'p', '16:9', 5)
+        run(server._run_task(task_id, 'seedance-2.0-fast', 'p', '16:9', 5, [], {}))
+    row = server.store.get(task_id)
+    assert row['status'] == 'completed'
+    assert row['queue_note'] == ''
+    assert row['upstream_note'] == 'Dola 原始回话'
 
 
 def load_worker_function(name, **bindings):

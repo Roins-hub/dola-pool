@@ -656,6 +656,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                             duration: int | None = None,
                             ratio: str | None = None) -> dict:
     """轮询已受理会话直到出片（不限时）；可被初次提交和服务重启恢复流程共同调用。"""
+    emit_feedback(on_poll, progress="已取得上游会话，正在查询视频结果")
     cookies = await context.cookies("https://www.dola.com")
     ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
     start = time.time()
@@ -747,6 +748,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 f"{last_hard_error_text[:150]}"
             )
         if videos:
+            emit_feedback(on_poll, progress="上游已返回视频，正在获取下载地址")
             video_models = poll.get("videoModels", [])
             if video_models:
                 print(
@@ -759,7 +761,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             url = await fetch_higher_bitrate_url(vm_str, account) \
                 or extract_unwatermarked_url(vm_str, videos[0])
             print(f"[{account}] 出片! 下载中（高码率优先）...", flush=True)
+            emit_feedback(on_poll, progress="视频已生成，正在下载到服务器")
             local = await _download(url, account)
+            emit_feedback(on_poll, progress="视频已下载，正在完成本地处理")
             print(f"[{account}] 已下载 {local}（{local.stat().st_size / 1e6:.1f} MB）", flush=True)
             return {"video_url": url, "local_path": str(local),
                     "conversation_id": conversation_id, "account": account}
