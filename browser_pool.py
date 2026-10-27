@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from dola_client import CreditError
+from generation_errors import PreSubmissionUploadError
 from video_worker_ui import (
     AccountLimitedError, CreditInsufficientError, LoginExpiredError, RiskControlError,
     generate_video, resume_video,
@@ -2137,6 +2138,11 @@ class BrowserPool:
                                 "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
                                 (time.time() + COOLDOWN_SEC, account))
                             self._conn.commit()
+                            last_err = e
+                        except PreSubmissionUploadError as e:
+                            # Upload failed before the browser sent the generation prompt.
+                            # Safe to try another account using its own profile/proxy.
+                            # Do not consume quota or mark the account as risk-controlled.
                             last_err = e
                         except TimeoutError as e:
                             # 请求已拿到 conversation_id 后仍可能在 Dola 端继续生成。

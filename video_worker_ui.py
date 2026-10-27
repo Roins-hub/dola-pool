@@ -427,6 +427,7 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
     """通过浏览器上传，记录 prepare / Apply / TOS / Commit 各阶段的失败。"""
     import re
     from urllib.parse import parse_qs, urlsplit
+    from generation_errors import PreSubmissionUploadError
     if not image_paths:
         return
     file_input = page.locator('input[type="file"]').first
@@ -507,7 +508,7 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
         deadline = time.time() + max(60, expected * 20)
         while time.time() < deadline:
             if errors:
-                raise TimeoutError("参考图片上传未完成（尚未提交生成）：" + errors[0])
+                raise PreSubmissionUploadError("参考图片上传未完成（尚未提交生成）：" + errors[0])
             prepare_count = sum("/alice/resource/prepare_upload" in url and 200 <= status < 300
                                 for status, url in events)
             tos_count = sum("/upload/v1/" in url and 200 <= status < 300
@@ -521,7 +522,7 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
                 print(f"[upload] 参考图片上传完成: {expected} 张", flush=True)
                 return
             await page.wait_for_timeout(250)
-        raise TimeoutError(
+        raise PreSubmissionUploadError(
             f"参考图片上传超时: prepare={prepare_count}/{expected}, "
             f"tos={tos_count}/{expected}, 页面图片={thumb_count}（页面图片数不代表上传成功）"
         )

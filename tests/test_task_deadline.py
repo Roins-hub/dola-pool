@@ -107,3 +107,57 @@ def test_expired_deadline_dispatches_nothing(tmp_path, monkeypatch):
 def test_config_defaults():
     assert config.TASK_DEADLINE == 600
     assert config.VIDEO_MAX_ATTEMPTS == 0
+
+
+def test_upload_failure_before_submission_tries_next_account(tmp_path, monkeypatch):
+    from generation_errors import PreSubmissionUploadError
+    _, bp = _pool(tmp_path, monkeypatch)
+    calls, notes = [], []
+
+    async def generate(account, *args, **kwargs):
+        calls.append(account)
+        if len(calls) == 1:
+            raise PreSubmissionUploadError("ApplyImageUpload 网络失败（尚未提交生成）")
+        return {"account": account, "local_path": "synthetic.mp4"}
+
+    bp._generate_effective = generate
+    result = _run(bp.generate_video("p", None, 5, "seedance-2.5",
+                                   deadline=time.time() + 30, on_wait=notes.append))
+    assert len(calls) == 2 and calls[0] != calls[1]
+    assert result["account"] == calls[1]
+    assert bp.used_today(calls[0]) == 0
+    assert bp.used_today(calls[1]) == 2
+    assert not bp._meta(calls[0])["risk_control"]
+    assert any("换下一个号" in note and "ApplyImageUpload" in note for note in notes)
+
+
+def test_upload_failures_respect_attempt_limit(tmp_path, monkeypatch):
+    from generation_errors import PreSubmissionUploadError
+    _, bp = _pool(tmp_path, monkeypatch)
+    calls = []
+
+    async def generate(account, *args, **kwargs):
+        calls.append(account)
+        raise PreSubmissionUploadError("参考图片上传超时")
+
+    bp._generate_effective = generate
+    with pytest.raises(Exception, match="上传超时"):
+        _run(bp.generate_video("p", None, 5, "seedance-2.5", max_attempts=2,
+                               deadline=time.time() + 30))
+    assert len(calls) == 2
+    assert all(bp.used_today(name) == 0 for name in calls)
+
+
+def test_ambiguous_timeout_never_resubmits(tmp_path, monkeypatch):
+    _, bp = _pool(tmp_path, monkeypatch)
+    calls = []
+
+    async def generate(account, *args, **kwargs):
+        calls.append(account)
+        raise TimeoutError("等待已提交任务出片超时")
+
+    bp._generate_effective = generate
+    with pytest.raises(TimeoutError, match="已提交"):
+        _run(bp.generate_video("p", None, 5, "seedance-2.5",
+                               deadline=time.time() + 30))
+    assert len(calls) == 1

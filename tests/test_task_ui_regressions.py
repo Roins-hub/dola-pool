@@ -149,6 +149,8 @@ def test_apply_upload_network_failure_preserves_stage_and_redacts_url():
     page = Page()
     with pytest.raises(TimeoutError) as error:
         run(load_worker_function("attach_reference_images")(page, ["synthetic.png"]))
+    from generation_errors import PreSubmissionUploadError
+    assert isinstance(error.value, PreSubmissionUploadError)
     assert "ApplyImageUpload" in str(error.value) and "net::ERR_EMPTY_RESPONSE" in str(error.value)
     assert "PRIVATE" not in str(error.value) and "token" not in str(error.value)
     assert not page.callbacks
