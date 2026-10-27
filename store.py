@@ -36,6 +36,10 @@ class TaskStore:
     def _init(self):
         with _LOCK:
             self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS app_settings "
+                "(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at REAL NOT NULL)"
+            )
+            self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
@@ -259,6 +263,24 @@ class TaskStore:
                 ),
             )
             self._conn.commit()
+
+    def get_global_concurrency(self, default: int) -> int:
+        with _LOCK:
+            row = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key='max_concurrency'"
+            ).fetchone()
+        return int(row['value']) if row else max(0, int(default))
+
+    def set_global_concurrency(self, value: int) -> None:
+        if type(value) is not int or not 0 <= value <= 1000:
+            raise ValueError('Concurrency must be an integer from 0 to 1000')
+        with _LOCK:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO app_settings(key,value,updated_at) VALUES('max_concurrency',?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+                    (str(value), time.time()),
+                )
 
     def update(self, task_id, **fields):
         if not fields:

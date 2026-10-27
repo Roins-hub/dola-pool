@@ -281,6 +281,15 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 
 ## 主要配置
 
+### 后台调整全局并发
+
+在管理后台左侧点击 **全局并发**，输入同时处理的任务数并点击 **保存并生效**。
+`1` 为串行，`2` 允许两条任务同时处理，`0` 为不限；浏览器模式可先从 `2` 开始观察资源占用。
+提高上限会立即放行等待全局名额的任务；降低上限不取消正在运行的任务，而是等待名额释放。
+同账号互斥、API Key 自身并发限制、账号可用性和出口隔离仍然有效，因此设置上限不代表一定能跑满。
+设置保存在任务数据库 `app_settings` 中，重启后保留，优先于环境变量 `DOLA_MAX_CONCURRENCY`；
+从未保存时才使用环境变量初始值。此功能适用于当前单进程服务，不支持多进程间共享并发计数。
+
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
 | `DOLA_API_KEYS` | 空 | 对外 API Key（逗号分隔）；也可在面板中创建带额度的 Key |
@@ -289,7 +298,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `DOLA_PUBLIC_BASE` | `http://127.0.0.1:8000` | 生成 `video_url` 的对外地址 |
 | `DOLA_TASK_DEADLINE` | `600` | 单个任务总时限（秒），期间持续换号，超时判失败 |
 | `DOLA_VIDEO_MAX_ATTEMPTS` | `0` | 单任务最多尝试次数，`0` 表示不限、只受总时限约束 |
-| `DOLA_MAX_CONCURRENCY` | `3` | 全局并发出片数 |
+| `DOLA_MAX_CONCURRENCY` | `0` | 全局并发初始值，0 = 不限；后台保存的值优先 |
 | `DOLA_MAX_PENDING_TASKS` | `100` | 待处理任务上限，超过返回 429 |
 | `DOLA_DAILY_LIMIT` | `4` | 每账号每日额度点数 |
 | `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `Asia/Tokyo` / `0` | 每日额度重置时区与时刻 |

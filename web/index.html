@@ -233,6 +233,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
     <label class="sw-row"><input type="checkbox" id="autoCk" checked onchange="autoRefresh=this.checked">自动刷新</label>
     <span id="lastUpdate"></span>
     <button class="btn" onclick="refresh()">刷新</button>
+    <button class="btn" onclick="openConcurrencySettings()">全局并发</button>
     <button class="btn btn-p" onclick="openStress()">压力测试</button>
     <button class="btn btn-danger" onclick="logout()" title="清除面板密码">注销</button>
     <select class="lang-sel" data-i18n-switcher aria-label="Language"></select>
@@ -474,6 +475,50 @@ async function refresh(){
     q('#lastUpdate').textContent='更新于 '+new Date().toLocaleTimeString();
   }catch(e){if(e.message!=='unauthorized')q('#lastUpdate').textContent='刷新失败，请重试';}
   finally{refreshingTabs.delete(tab);}
+}
+
+/* ---- 全局并发：输入不会被后台自动刷新覆盖 ---- */
+async function openConcurrencySettings(){
+  showDlg(`<h2>全局并发</h2><p class="hint">正在读取并发设置…</p>`);
+  const epoch=dialogEpoch;
+  try{
+    const data=await api('/api/admin/settings/concurrency');
+    if(epoch!==dialogEpoch)return;
+    showDlg(`<h2>全局并发</h2>
+      <p class="hint">所有客户共用的生成任务上限，包含准备、生成和下载阶段。每个账号仍同时只处理一个任务。</p>
+      <p class="hint">当前上限：<strong id="concurrencyCurrent" translate="no">${data.max_concurrency===0?'∞':data.max_concurrency}</strong> · 占用名额：<strong id="concurrencyActive" translate="no">${data.active}</strong> · 等待名额：<strong id="concurrencyWaiting" translate="no">${data.waiting}</strong></p>
+      <label for="globalConcurrency">同时处理上限（0 = 不限）</label>
+      <input id="globalConcurrency" type="number" min="0" max="1000" step="1" required value="${data.max_concurrency}" aria-describedby="concurrencyHint">
+      <p class="hint" id="concurrencyHint">保存后立即生效，重启后保留。调低上限不会中断正在运行的任务；API Key 限制、账号占用和出口隔离仍然有效。浏览器模式建议先从 2 开始观察资源占用。</p>
+      <p id="concurrencyFeedback" class="hint" role="status" aria-live="polite"></p>
+      <div class="row"><button class="btn" onclick="hide('dlg')">关闭</button><button id="saveConcurrency" class="btn btn-p" onclick="saveConcurrencySettings()">保存并生效</button></div>`);
+  }catch(e){
+    if(epoch===dialogEpoch&&e.message!=='unauthorized')showDlg(`<h2>全局并发</h2><p role="alert">${esc(e.message)}</p><button class="btn" onclick="openConcurrencySettings()">重试</button>`);
+  }
+}
+
+async function saveConcurrencySettings(){
+  const input=q('#globalConcurrency'),button=q('#saveConcurrency'),feedback=q('#concurrencyFeedback');
+  if(!input||!button||button.disabled)return;
+  const value=Number(input.value);
+  if(!input.value.trim()||!Number.isInteger(value)||value<0||value>1000){
+    feedback.textContent='请输入 0～1000 的整数，0 表示不限。';input.focus();return;
+  }
+  const epoch=dialogEpoch;
+  button.disabled=true;input.disabled=true;feedback.textContent='正在保存…';
+  try{
+    const data=await api('/api/admin/settings/concurrency',{method:'PATCH',body:{max_concurrency:value}});
+    if(epoch!==dialogEpoch)return;
+    input.value=data.max_concurrency;
+    q('#concurrencyCurrent').textContent=data.max_concurrency===0?'∞':data.max_concurrency;
+    q('#concurrencyActive').textContent=data.active;
+    q('#concurrencyWaiting').textContent=data.waiting;
+    feedback.textContent=data.max_concurrency>0&&data.active>data.max_concurrency
+      ?'已保存并生效；当前任务继续运行，空位释放后再接下一条。'
+      :'已保存并生效，无需重启服务。';
+    refresh();
+  }catch(e){if(epoch===dialogEpoch&&e.message!=='unauthorized')feedback.textContent='保存失败：'+e.message;}
+  finally{if(epoch===dialogEpoch){button.disabled=false;input.disabled=false;}}
 }
 
 /* ---- 仪表盘 ---- */

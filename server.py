@@ -102,7 +102,7 @@ app.add_middleware(
 )
 
 store = TaskStore(config.DB_PATH)
-pool = BrowserPool(max_concurrency=config.MAX_CONCURRENCY)
+pool = BrowserPool(max_concurrency=store.get_global_concurrency(config.MAX_CONCURRENCY))
 
 app.mount("/videos", StaticFiles(directory=config.DOWNLOAD_DIR), name="videos")
 # 参考图缩略图（任务结束后唯一能回看的副本）；文件名 = <task_id>_<index>.jpg
@@ -390,13 +390,17 @@ def _eta_text(seconds: int) -> str:
     return f"约 {minutes} 分钟"
 
 
+def _global_concurrency_limit() -> int:
+    return int(getattr(pool, 'max_concurrency', config.MAX_CONCURRENCY))
+
+
 def _progress_payload(*, status: str, created_at: float | None, duration: int | None) -> dict:
     """把排队情况翻译成客户端能直接显示的一句话 + 结构化字段。"""
     info = store.queue_progress(created_at=created_at, duration=duration)
     ahead = info["ahead"]
     running = info["running"]
     typical = max(30, int(info["typical_seconds"]))
-    workers = int(config.MAX_CONCURRENCY or 0)   # 0 = 不限并发
+    workers = _global_concurrency_limit()   # 0 = 不限并发
     if status == "queued":
         # 有并发槽时按槽位折算等待；不限并发时任务之间不互相排队
         batches = (ahead // workers) + 1 if workers > 0 else 1
@@ -1723,7 +1727,7 @@ async def health():
     storage["downloads_bytes"] = downloads
     storage["retention_days"] = config.TASK_RETENTION_DAYS
     queue_info = store.queue_progress(created_at=None, duration=None)
-    workers = int(config.MAX_CONCURRENCY or 0)   # 0 = 不限并发
+    workers = _global_concurrency_limit()   # 0 = 不限并发
     queue = {
         "queued": store.pending_task_count() - queue_info["running"],
         "running": queue_info["running"],
@@ -3088,6 +3092,36 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
 async def admin_jobs(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     return {"jobs": JOBS}
+
+
+class ConcurrencySettings(BaseModel):
+    max_concurrency: int = Field(..., ge=0, le=1000, strict=True)
+
+
+def _concurrency_settings():
+    return {
+        "max_concurrency": pool.max_concurrency,
+        "active": pool.semaphore.active,
+        "waiting": pool.semaphore.waiting,
+        "environment_default": max(0, config.MAX_CONCURRENCY),
+    }
+
+
+@app.get("/api/admin/settings/concurrency")
+async def admin_get_concurrency(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return _concurrency_settings()
+
+
+@app.patch("/api/admin/settings/concurrency")
+async def admin_set_concurrency(body: ConcurrencySettings,
+                                x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    # Persist first. A failed write must not silently change the live limit.
+    # No await between persistence and application: requests see one consistent value.
+    store.set_global_concurrency(body.max_concurrency)
+    pool.set_max_concurrency(body.max_concurrency)
+    return _concurrency_settings()
 
 
 @app.get("/api/admin/tasks")

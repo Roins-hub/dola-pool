@@ -628,5 +628,18 @@
  "个浏览器": "trình duyệt",
  "压测失败：": "Kiểm tra tải thất bại:",
  "压测已开始：1→": "Đã bắt đầu kiểm tra tải: 1→",
- "个浏览器逐级同时拉起…": "trình duyệt lần lượt được khởi chạy đồng thời…"
+ "个浏览器逐级同时拉起…": "trình duyệt lần lượt được khởi chạy đồng thời…",
+ "全局并发": "Giới hạn đồng thời toàn hệ thống",
+ "正在读取并发设置…": "Đang tải cấu hình đồng thời…",
+ "所有客户共用的生成任务上限，包含准备、生成和下载阶段。每个账号仍同时只处理一个任务。": "Giới hạn tác vụ dùng chung cho mọi khách hàng, gồm chuẩn bị, tạo và tải xuống. Mỗi tài khoản vẫn chỉ xử lý một tác vụ tại một thời điểm.",
+ "当前上限：": "Giới hạn hiện tại:",
+ " · 占用名额：": " · Đang sử dụng:",
+ " · 等待名额：": " · Đang chờ:",
+ "同时处理上限（0 = 不限）": "Số tác vụ đồng thời tối đa (0 = không giới hạn)",
+ "保存后立即生效，重启后保留。调低上限不会中断正在运行的任务；API Key 限制、账号占用和出口隔离仍然有效。浏览器模式建议先从 2 开始观察资源占用。": "Có hiệu lực ngay sau khi lưu và được giữ sau khi khởi động lại. Giảm giới hạn không ngắt tác vụ đang chạy; giới hạn API Key, tài khoản bận và cách ly kết nối vẫn áp dụng. Với chế độ trình duyệt, nên bắt đầu từ 2 và theo dõi tài nguyên.",
+ "保存并生效": "Lưu và áp dụng",
+ "请输入 0～1000 的整数，0 表示不限。": "Nhập số nguyên từ 0 đến 1000; 0 nghĩa là không giới hạn.",
+ "正在保存…": "Đang lưu…",
+ "已保存并生效；当前任务继续运行，空位释放后再接下一条。": "Đã lưu và áp dụng; tác vụ hiện tại tiếp tục chạy, tác vụ tiếp theo sẽ bắt đầu khi có chỗ trống.",
+ "已保存并生效，无需重启服务。": "Đã lưu và áp dụng, không cần khởi động lại dịch vụ."
 }

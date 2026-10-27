@@ -127,7 +127,7 @@ def _gated(bp, gate, calls, fail_with=TimeoutError):
 # --------------------------------------------------------------------------- #
 
 def test_unlimited_concurrency_lets_every_task_start(tmp_path, monkeypatch):
-    """DOLA_MAX_CONCURRENCY=0：闸门换成 _UnlimitedSemaphore，3 个任务同时开跑。"""
+    """DOLA_MAX_CONCURRENCY=0：3 个任务同时开跑，并保留动态调低能力。"""
     import browser_pool
 
     async def scenario():
@@ -135,7 +135,7 @@ def test_unlimited_concurrency_lets_every_task_start(tmp_path, monkeypatch):
         gate, calls = asyncio.Event(), []
         _gated(bp, gate, calls)
 
-        assert isinstance(bp.semaphore, browser_pool._UnlimitedSemaphore)
+        assert bp.max_concurrency == 0
 
         ids = [_submit(server, i) for i in range(3)]
         await asyncio.sleep(0.3)
@@ -225,6 +225,51 @@ def test_limited_concurrency_keeps_waiting_tasks_queued(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 # started_at 只记首次尝试
 # --------------------------------------------------------------------------- #
+
+def test_live_increase_dispatches_waiting_tasks_to_distinct_accounts(tmp_path, monkeypatch):
+    async def scenario():
+        bp, server = await _build(tmp_path, monkeypatch, 1)
+        gate, calls = asyncio.Event(), []
+        _gated(bp, gate, calls)
+        ids = [_submit(server, i) for i in range(3)]
+        await asyncio.sleep(0.3)
+        assert len(calls) == 1
+        limiter = bp.semaphore
+        bp.set_max_concurrency(2)
+        await asyncio.sleep(0.3)
+        assert bp.semaphore is limiter
+        assert len(calls) == len(set(calls)) == 2
+        assert list(_statuses(server, ids).values()).count('queued') == 1
+        bp.set_max_concurrency(1)
+        await asyncio.sleep(0)
+        assert len(calls) == 2
+        gate.set()
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            if all(v == 'failed' for v in _statuses(server, ids).values()): break
+        assert set(_statuses(server, ids).values()) == {'failed'}
+        assert len(calls) == 3
+    _run(scenario())
+
+
+def test_account_test_generation_obeys_global_limit(tmp_path, monkeypatch):
+    async def scenario():
+        bp, _ = await _build(tmp_path, monkeypatch, 1)
+        started = asyncio.Event()
+        async def fake(*args, **kwargs):
+            started.set()
+            raise TimeoutError('test-only, no upstream call')
+        bp._generate_effective = fake
+        await bp.semaphore.acquire()
+        test_task = asyncio.create_task(bp.test_generate('acc1', 'p', None, 5))
+        await asyncio.sleep(0)
+        assert not started.is_set() and bp.semaphore.waiting == 1
+        bp.semaphore.release()
+        result = await asyncio.wait_for(test_task, 1)
+        assert started.is_set() and not result['ok']
+        assert bp.semaphore.active == 0
+    _run(scenario())
+
 
 def test_started_at_is_not_pushed_back_by_account_switch(tmp_path, monkeypatch):
     """换号重试时 started_at 必须保持首次尝试的时间，否则 ETA 均值被拉长。"""

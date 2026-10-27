@@ -28,6 +28,7 @@ import cred_store
 import failure_text
 import proxy_store
 import sites
+from concurrency import AdjustableConcurrency
 from doubao_gen import DoubaoModelLockedError, DoubaoQuotaError
 from pool import AccountConfig as _PoolAccountConfig, AccountPool as _PoolEngine
 try:
@@ -259,25 +260,21 @@ class AllAccountsGroupEmptyError(RuntimeError):
     """目标额度组（如 seedance-2.0 需要的【满额】组）暂时没有可用账号，排队超时。"""
 
 
-class _UnlimitedSemaphore:
-    """max_concurrency <= 0 时顶替 asyncio.Semaphore：不限制并发。"""
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc_info):
-        return False
-
-
 class BrowserPool:
+    @property
+    def max_concurrency(self):
+        return self.semaphore.limit
+
+    def set_max_concurrency(self, value: int):
+        self.semaphore.set_limit(value)
+
     def __init__(self, accounts_dir: str = "accounts", db_path: str | None = None,
                  max_concurrency: int = 1):
         if not db_path:
             db_path = config.POOL_DB_PATH
         self.accounts_dir = Path(accounts_dir)
         # 0（或负数）= 取消全局并发闸门。
-        self.semaphore = (asyncio.Semaphore(max_concurrency)
-                          if max_concurrency > 0 else _UnlimitedSemaphore())
+        self.semaphore = AdjustableConcurrency(max_concurrency)
         self._locks: dict[str, asyncio.Lock] = {}
         self._browser_probe_lock = asyncio.Lock()
         self._fail_until: dict[str, float] = {}
@@ -1597,7 +1594,7 @@ class BrowserPool:
             model = "doubao-seedance-2.0-mini"
             duration = max(sites.DOUBAO_MIN_DURATION, min(15, int(duration or 5)))
         lock = self._locks.setdefault(account, asyncio.Lock())
-        async with lock:
+        async with self.semaphore, lock:
             cost = self._duration_cost(model, duration)
 
             def on_balance(balance, source=""):
