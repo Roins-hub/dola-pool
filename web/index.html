@@ -199,9 +199,12 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
   .cards{grid-template-columns:repeat(2,1fr)}
   th,td{white-space:nowrap}
 }
+#requestStatus{position:fixed;right:18px;bottom:18px;z-index:120;padding:8px 14px;border:1px solid var(--stroke);border-radius:10px;background:var(--card);color:var(--text);box-shadow:var(--shadow);pointer-events:none;font-size:13px}
+#requestStatus[hidden]{display:none}
 </style>
 </head>
 <body>
+<div id="requestStatus" role="status" aria-live="polite" hidden></div>
 <div id="loginMask" class="mask" style="display:none">
   <div class="box">
     <h2>管理面板登录</h2>
@@ -252,7 +255,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
         <span id="resetHint" class="tiny"></span>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <input type="search" id="search_accounts" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索账号 / 邮箱 / 备注 / 代理" oninput="setSearch('accounts',this.value)">
-          <select id="srcFilter" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)" onchange="srcFilterVal=this.value;accPage=1;loadAccounts()">
+          <select id="srcFilter" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)" onchange="srcFilterVal=this.value;accPage=1;renderAccounts()">
             <option value="all">全部来源</option>
             <option value="login">账号登录</option>
             <option value="cookie">Cookie 载入</option>
@@ -391,8 +394,9 @@ let adminKey=localStorage.getItem(LS_KEY)||'';
 let autoRefresh=true, curTab='dash', timer=null;
 
 function q(s){return document.querySelector(s);}
+let dialogEpoch=0;
 function show(id){document.getElementById(id).style.display='flex';}
-function hide(id){document.getElementById(id).style.display='none';}
+function hide(id){if(id==='dlg')dialogEpoch++;document.getElementById(id).style.display='none';}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 /** 用户 / 上游数据（账号名、代理名、备注、dola 原话…）：转义并标 translate="no"，面板多语言不会把它当文案改写 */
 function noTr(s){return '<span translate="no">'+esc(s)+'</span>';}
@@ -405,13 +409,32 @@ function dialogText(strings,...values){
 function fmt(ts){if(!ts)return '-';const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function fmtHM(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}`;}
 
-async function api(path,opts={}){
-  const r=await fetch(path,{method:opts.method||'GET',headers:{'Content-Type':'application/json','X-Admin-Key':adminKey,...(opts.headers||{})},body:opts.body?JSON.stringify(opts.body):undefined});
-  if(r.status===401){showLogin();throw new Error('unauthorized');}
-  const text=await r.text();
-  let data={};try{data=text?JSON.parse(text):{};}catch(e){}
-  if(!r.ok)throw new Error(data.detail||(`${r.status} ${text.slice(0,120)}`));
-  return data;
+let pendingRequests=0;
+const pendingReads=new Map();
+function requestStatus(delta){
+  pendingRequests=Math.max(0,pendingRequests+delta);
+  const status=q('#requestStatus');
+  if(status){status.hidden=pendingRequests===0;status.textContent=pendingRequests?'正在处理，请稍候…':'';}
+}
+function api(path,opts={}){
+  const method=(opts.method||'GET').toUpperCase();
+  const key=JSON.stringify([adminKey,path,opts.headers||{}]);
+  if(method==='GET'&&pendingReads.has(key))return pendingReads.get(key);
+  const work=(async()=>{
+    requestStatus(1);
+    try{
+      const r=await fetch(path,{method,headers:{'Content-Type':'application/json','X-Admin-Key':adminKey,...(opts.headers||{})},body:opts.body?JSON.stringify(opts.body):undefined});
+      if(r.status===401){showLogin();throw new Error('unauthorized');}
+      const text=await r.text();
+      let data={};try{data=text?JSON.parse(text):{};}catch(e){}
+      if(!r.ok)throw new Error(data.detail||(`${r.status} ${text.slice(0,120)}`));
+      return data;
+    }finally{requestStatus(-1);}
+  })();
+  if(method!=='GET')return work;
+  const shared=work.finally(()=>{if(pendingReads.get(key)===shared)pendingReads.delete(key);});
+  pendingReads.set(key,shared);
+  return shared;
 }
 
 function showLogin(){hide('dlg');show('loginMask');q('#loginErr').style.display='none';}
@@ -434,9 +457,12 @@ function switchTab(t){
   refresh();
 }
 
+const refreshingTabs=new Set();
 async function refresh(){
   if(q('#loginMask').style.display!=='none')return;
-  q('#lastUpdate').textContent='更新于 '+new Date().toLocaleTimeString();
+  const tab=curTab;
+  if(refreshingTabs.has(tab))return;
+  refreshingTabs.add(tab);
   try{
     if(curTab==='dash')await loadDash();
     else if(curTab==='accounts')await loadAccounts();
@@ -445,7 +471,9 @@ async function refresh(){
     else if(curTab==='videos')await loadVideos();
     else if(curTab==='keys')await loadKeys();
     else if(curTab==='users')await loadUsers();
-  }catch(e){if(e.message!=='unauthorized'){/* 静默 */}}
+    q('#lastUpdate').textContent='更新于 '+new Date().toLocaleTimeString();
+  }catch(e){if(e.message!=='unauthorized')q('#lastUpdate').textContent='刷新失败，请重试';}
+  finally{refreshingTabs.delete(tab);}
 }
 
 /* ---- 仪表盘 ---- */
@@ -509,6 +537,7 @@ let accPage=1;
 let filteredAccounts=[];
 let filteredNames=[];
 let allAccounts=[];
+let accountSnapshot=null,accountLoad=null;
 let proxyCache=[];
 /** 模型显示名：dola 的 2.0 在网页上叫 Seedance 2.0 Fast，老记录里存的 seedance-2.0 也按新名显示 */
 function pubModel(m){return m==='seedance-2.0'?'seedance-2.0-fast':(m||'-');}
@@ -516,12 +545,13 @@ let srcFilterVal='all';
 /* ---- 各页搜索：空格分隔的每个词都要命中（不区分大小写）。自动刷新时保留搜索词。
    账号 / 代理 / 密钥 / 用户在前端过滤（列表本来就是全量）；任务 / 视频交给服务端查整个历史。 */
 const SEARCH={accounts:'',proxies:'',tasks:'',videos:'',keys:'',users:''};
-const SEARCH_RELOAD={accounts:()=>{accPage=1;return loadAccounts();},proxies:()=>loadProxies(),
+const SEARCH_RELOAD={accounts:()=>{accPage=1;renderAccounts();return Promise.resolve();},proxies:()=>loadProxies(),
   tasks:()=>loadTasks(),videos:()=>loadVideos(),keys:()=>loadKeys(),users:()=>loadUsers()};
 const searchTimers={};
 function setSearch(kind,v){
   SEARCH[kind]=String(v||'').trim();
   clearTimeout(searchTimers[kind]);
+  if(kind==='accounts'){accPage=1;renderAccounts();return;}
   searchTimers[kind]=setTimeout(()=>SEARCH_RELOAD[kind]().catch(()=>{}),300);
 }
 function searchHit(kind,...fields){
@@ -610,7 +640,7 @@ function egressWarnToggle(el){
   try{localStorage.setItem('egressWarnOpen',el.open?'1':'0');}catch(e){}
   const hint=el.querySelector('summary .tiny');if(hint)hint.textContent='（点击'+(el.open?'收起':'展开明细')+'）';
 }
-function setGroupFilter(key){groupFilterVal=key;accPage=1;loadAccounts();}
+function setGroupFilter(key){groupFilterVal=key;accPage=1;renderAccounts();}
 function setGroupFilterGo(key){groupFilterVal=key;accPage=1;switchTab('accounts');}
 function matchGroup(x){
   if(groupFilterVal==='all')return true;
@@ -638,8 +668,16 @@ function quotaCell(x,unit){
   return `<b>${x.remaining}</b> / ${x.limit}`+(unit?'<span class="tiny">（点数/上限）</span>':'')+
     (x.credit_balance==null?'':`<div class="tiny">上游余额 ${x.credit_balance}${x.credit_balance<2?'（已用完）':''}</div>`);
 }
-async function loadAccounts(){
-  const [a,j]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]);
+function loadAccounts(){
+  if(accountLoad)return accountLoad;
+  accountLoad=Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]).then(([a,j])=>{
+    accountSnapshot={a,j};renderAccounts();
+  }).finally(()=>{accountLoad=null;});
+  return accountLoad;
+}
+function renderAccounts(){
+  if(!accountSnapshot)return;
+  const {a,j}=accountSnapshot;
   const jobs=j.jobs||{};
   allAccountNames=a.accounts.map(x=>x.name);
   allAccounts=a.accounts;
@@ -751,7 +789,7 @@ function toggleAll(on){
   selAccounts.clear();
   // 「全选」= 当前筛选结果的全部（不是全库，也不是当前页），跨页保持勾选状态
   if(on)filteredNames.forEach(n=>selAccounts.add(n));
-  loadAccounts();
+  renderAccounts();
   updateSelButtons();
 }
 
@@ -759,9 +797,9 @@ function pageSlice(){
   const start=(accPage-1)*ACC_PAGE_SIZE;
   return filteredAccounts.slice(start,start+ACC_PAGE_SIZE);
 }
-function accGo(p){accPage=Math.max(1,Math.floor(p)||1);loadAccounts();}
-function selPage(){pageSlice().forEach(x=>selAccounts.add(x.name));loadAccounts();updateSelButtons();}
-function clearSel(){selAccounts.clear();loadAccounts();updateSelButtons();}
+function accGo(p){accPage=Math.max(1,Math.floor(p)||1);renderAccounts();}
+function selPage(){pageSlice().forEach(x=>selAccounts.add(x.name));renderAccounts();updateSelButtons();}
+function clearSel(){selAccounts.clear();renderAccounts();updateSelButtons();}
 function accPager(totalPages){
   const total=filteredAccounts.length;
   const start=total?(accPage-1)*ACC_PAGE_SIZE+1:0;
@@ -1151,12 +1189,33 @@ function cookieHowto(){
       导出后<b>不要点退出登录</b>（Cookie 会当场作废），直接关窗口。导入后绑定代理 → 点「你好探测」激活。
     </div></details>`;
 }
+let addProxyLoading=false,addProxyError=false;
 let addProxyChoices=[],singleAddProxy='',batchAddProxyIds=[];
 async function loadAddProxyChoices(){
   const r=await api('/api/admin/proxies');
   addProxyChoices=(r.proxies||[]).filter(p=>p.enabled);
 }
+async function finishAddProxyChoices(epoch){
+  try{await loadAddProxyChoices();if(epoch!==dialogEpoch)return;addProxyError=false;}
+  catch(e){if(epoch!==dialogEpoch)return;addProxyError=true;}
+  if(epoch!==dialogEpoch)return;
+  addProxyLoading=false;updateAddProxySection();
+}
+function updateAddProxySection(){
+  const slot=q('#dlg [data-add-proxy]');if(!slot)return;
+  slot.innerHTML=addProxyPickerContent(slot.dataset.addProxy==='multiple');
+  q('#dlg .row .btn-p').disabled=addProxyLoading||addProxyError;
+}
+function retryAddProxyChoices(){
+  addProxyLoading=true;addProxyError=false;updateAddProxySection();
+  finishAddProxyChoices(dialogEpoch);
+}
 function addProxyPicker(multiple){
+  return `<div data-add-proxy="${multiple?'multiple':'single'}">${addProxyPickerContent(multiple)}</div>`;
+}
+function addProxyPickerContent(multiple){
+  if(addProxyLoading)return '<div class="hint" role="status">正在加载代理列表…</div>';
+  if(addProxyError)return '<div class="hint">代理列表加载失败，请重试</div><button class="btn" onclick="retryAddProxyChoices()">重新加载代理</button>';
   if(multiple)return `<label style="margin-top:12px">添加时绑定代理（可多选）</label>
     <div style="max-height:150px;overflow:auto;margin:6px 0">${addProxyChoices.map(p=>
       `<label style="display:flex;align-items:center;gap:8px;margin:6px 0"><input type="checkbox" class="add-proxy-choice" style="width:auto;margin:0" value="${esc(p.id)}" ${batchAddProxyIds.includes(p.id)?'checked':''} onchange="batchAddProxyIds=Array.from(document.querySelectorAll('.add-proxy-choice:checked')).map(x=>x.value)">${noTr(p.name)}</label>`).join('')||'<span class="tiny">暂无已启用代理，请先到代理管理添加</span>'}</div>
@@ -1177,10 +1236,11 @@ function batchAddModeSwitch(){
   </div>`;
 }
 async function openBatchAdd(){
-  try{await loadAddProxyChoices();}catch(e){return alert(dialogText`${e.message}`);}
+  addProxyLoading=true;addProxyError=false;
   batchAddMode='text';batchAddProxyIds=[];renderBatchAddForm();
+  await finishAddProxyChoices(dialogEpoch);
 }
-function setBatchAddMode(mode){batchAddMode=mode;renderBatchAddForm();}
+function setBatchAddMode(mode){batchAddMode=mode;renderBatchAddForm();if(addProxyLoading)finishAddProxyChoices(dialogEpoch);}
 function renderBatchAddForm(){
   const sw=batchAddModeSwitch();
   if(batchAddMode==='cookie'){
@@ -1195,7 +1255,7 @@ function renderBatchAddForm(){
       <div id="batchCookieInfo" class="tiny" style="margin:6px 0;white-space:pre-wrap"></div>
       ${addProxyPicker(true)}
       <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
-      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitBatchCookieAdd()">开始批量导入</button></div>`);
+      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" ${addProxyLoading||addProxyError?'disabled':''} onclick="submitBatchCookieAdd()">开始批量导入</button></div>`);
     return;
   }
   if(batchAddMode==='cookieHeader'){
@@ -1218,7 +1278,7 @@ passport_csrf_token=bbb; sessionid=sid-two"></textarea>
       </label>
       ${addProxyPicker(true)}
       <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
-      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitBatchCookieHeader()">开始导入</button></div>`);
+      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" ${addProxyLoading||addProxyError?'disabled':''} onclick="submitBatchCookieHeader()">开始导入</button></div>`);
     return;
   }
   showDlg(`<h2>批量添加账号</h2>${sw}
@@ -1235,7 +1295,7 @@ acc2 user2@xx.com pass456
     <div class="hint" style="margin-top:6px">字段分隔支持 空格 / | / ---；多个账号会排队逐个登录（内存限制，避免同时开多个浏览器），请耐心等待</div>
     ${addProxyPicker(true)}
       <div id="batchResult" class="tiny" style="margin-top:8px;white-space:pre-wrap;max-height:150px;overflow:auto"></div>
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitBatchAdd()">开始批量添加</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" ${addProxyLoading||addProxyError?'disabled':''} onclick="submitBatchAdd()">开始批量添加</button></div>`);
 }
 function fileBaseName(fileName){
   const name=(fileName||'').replace(/\.json$/i,'').trim();
@@ -1266,6 +1326,7 @@ async function previewCookieBatchFiles(){
   info.textContent=lines.join('\n')||'未选择可导入的文件';
 }
 async function submitBatchCookieAdd(){
+  if(addProxyLoading||addProxyError)return;
   const btn=q('#dlg .row .btn-p');const res=q('#batchResult');const info=q('#batchCookieInfo');
   if(!batchCookieFiles.length)return alert('请先选择 Cookie JSON 文件');
   const skip=q('#f_cookieSkip').checked;
@@ -1300,6 +1361,7 @@ async function submitBatchCookieAdd(){
 }
 
 async function submitBatchCookieHeader(){
+  if(addProxyLoading||addProxyError)return;
   const btn=q('#dlg .row .btn-p');const res=q('#batchResult');
   const text=q('#f_cookieHeader').value.trim();
   if(!text)return alert('请粘贴 Cookie 头文本或 Cookie JSON（一个账号一份）');
@@ -1376,6 +1438,7 @@ function parseBatchInput(text){
 }
 
 async function submitBatchAdd(){
+  if(addProxyLoading||addProxyError)return;
   const accounts=parseBatchInput(q('#f_batch').value);
   const proxies=[...batchAddProxyIds];
   if(!accounts.length)return alert('未解析到任何账号，请检查格式（账号名 邮箱 密码 [TOTP]）');
@@ -1446,10 +1509,11 @@ function addModeSwitch(){
     <button class="btn ${addMode==='cookie'?'btn-p':''}" onclick="setAddMode('cookie')">Cookie 导入</button>
   </div>`;
 }
-function setAddMode(m){addMode=m;renderAddAccountForm();}
+function setAddMode(m){addMode=m;renderAddAccountForm();if(addProxyLoading)finishAddProxyChoices(dialogEpoch);}
 async function openAddAccount(){
-  try{await loadAddProxyChoices();}catch(e){return alert(dialogText`${e.message}`);}
+  addProxyLoading=true;addProxyError=false;
   addMode='google';singleAddProxy='';renderAddAccountForm();
+  await finishAddProxyChoices(dialogEpoch);
 }
 function renderAddAccountForm(){
   const def=nextAccName();
@@ -1465,7 +1529,7 @@ function renderAddAccountForm(){
         <input type="checkbox" id="f_skip" style="margin-top:2px;width:auto">
         <span>跳过在线验证：服务器没有 JP/KR 代理时 dola 会地区限制；勾选后可先导入账号，配好代理后在账号列表点“验证”。</span>
       </label>
-      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitAddCookie()">导入账号</button></div>`);
+      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" ${addProxyLoading||addProxyError?'disabled':''} onclick="submitAddCookie()">导入账号</button></div>`);
     return;
   }
   showDlg(`<h2>添加账号</h2>${sw}
@@ -1474,15 +1538,17 @@ function renderAddAccountForm(){
     <label>Google 邮箱</label><input id="f_email" placeholder="xxx@yy.asia">
     <label>密码</label><input id="f_pass" type="password">
     <label>TOTP 密钥</label><input id="f_totp" placeholder="2FA secret">
-    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitAddAccount()">开始登录</button></div>`);
+    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" ${addProxyLoading||addProxyError?'disabled':''} onclick="submitAddAccount()">开始登录</button></div>`);
 }
 async function submitAddAccount(){
+  if(addProxyLoading||addProxyError)return;
   const body={name:q('#f_name').value.trim(),email:q('#f_email').value.trim(),password:q('#f_pass').value,totp:q('#f_totp').value.trim(),proxy_id:singleAddProxy||null};
   if(!body.name||!body.email||!body.password)return alert('请填写账号名/邮箱/密码');
   try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   hide('dlg');refresh();
 }
 async function submitAddCookie(){
+  if(addProxyLoading||addProxyError)return;
   const body={name:q('#f_name').value.trim(),email:'',password:'',totp:'',cookies:q('#f_cookies').value.trim(),cookie_skip_verify:q('#f_skip').checked,proxy_id:singleAddProxy||null};
   if(!body.name)return alert('请填写账号名');
   if(!body.cookies)return alert('请粘贴 Cookie JSON');
@@ -2395,7 +2461,7 @@ async function copy(text){
   }
 }
 
-function showDlg(html){q('#dlgBox').innerHTML=html;show('dlg');}
+function showDlg(html){dialogEpoch++;q('#dlgBox').innerHTML=html;show('dlg');}
 
 /* ---- 压力测试 ---- */
 let stressPollTimer=null;
