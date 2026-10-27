@@ -118,7 +118,8 @@ def test_prepare_upload_business_error_is_not_counted_as_http_success():
         def locator(self, selector): return self
         first = property(lambda self: self)
         async def wait_for(self, **kw): pass
-        def on(self, event, fn): self.callback = fn
+        def on(self, event, fn):
+            if event == "response": self.callback = fn
         def remove_listener(self, event, fn): self.removed = True
         async def count(self): return 1
         async def wait_for_timeout(self, ms): await asyncio.sleep(0)
@@ -129,6 +130,58 @@ def test_prepare_upload_business_error_is_not_counted_as_http_success():
     with pytest.raises(TimeoutError, match="710010703"):
         run(load_worker_function("attach_reference_images")(page, ["synthetic.png"]))
     assert page.removed
+
+
+def test_apply_upload_network_failure_preserves_stage_and_redacts_url():
+    class Page:
+        callbacks = {}
+        def locator(self, selector): return self
+        first = property(lambda self: self)
+        async def wait_for(self, **kw): pass
+        def on(self, event, fn): self.callbacks[event] = fn
+        def remove_listener(self, event, fn): self.callbacks.pop(event)
+        async def count(self): return 9
+        async def wait_for_timeout(self, ms): await asyncio.sleep(0)
+        async def set_input_files(self, paths):
+            self.callbacks["requestfailed"](SimpleNamespace(
+                url="https://imagex.example.invalid/?Action=ApplyImageUpload&token=PRIVATE",
+                failure="net::ERR_EMPTY_RESPONSE", method="GET"))
+    page = Page()
+    with pytest.raises(TimeoutError) as error:
+        run(load_worker_function("attach_reference_images")(page, ["synthetic.png"]))
+    assert "ApplyImageUpload" in str(error.value) and "net::ERR_EMPTY_RESPONSE" in str(error.value)
+    assert "PRIVATE" not in str(error.value) and "token" not in str(error.value)
+    assert not page.callbacks
+
+
+def test_upload_options_is_not_counted_as_a_file_upload():
+    class Stop(Exception): pass
+    class Page:
+        callbacks = {}
+        waits = 0
+        def locator(self, selector): return self
+        first = property(lambda self: self)
+        async def wait_for(self, **kw): pass
+        def on(self, event, fn): self.callbacks[event] = fn
+        def remove_listener(self, event, fn): self.callbacks.pop(event)
+        async def count(self): return 9
+        async def wait_for_timeout(self, ms):
+            assert ms != 800, "OPTIONS must not complete the upload"
+            self.waits += 1
+            if self.waits > 2: raise Stop()
+            await asyncio.sleep(0)
+        async def set_input_files(self, paths):
+            async def data(): return {"code": 0}
+            self.callbacks["response"](SimpleNamespace(status=200,
+                url="https://www.dola.com/alice/resource/prepare_upload", json=data,
+                request=SimpleNamespace(method="POST")))
+            self.callbacks["response"](SimpleNamespace(status=200,
+                url="https://storage.example.invalid/upload/v1/private", json=data,
+                request=SimpleNamespace(method="OPTIONS")))
+    page = Page()
+    with pytest.raises(Stop):
+        run(load_worker_function("attach_reference_images")(page, ["synthetic.png"]))
+    assert not page.callbacks
 
 
 def test_browser_assistant_reply_reaches_task_callback():

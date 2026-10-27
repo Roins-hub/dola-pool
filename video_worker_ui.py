@@ -424,7 +424,9 @@ async def fetch_higher_bitrate_url(video_model_str: str, account: str | None = N
 
 
 async def attach_reference_images(page, image_paths: list[str]) -> None:
-    """通过 Dola 原生文件 input 上传参考图片，等待 prepare_upload/TOS 完成。"""
+    """通过浏览器上传，记录 prepare / Apply / TOS / Commit 各阶段的失败。"""
+    import re
+    from urllib.parse import parse_qs, urlsplit
     if not image_paths:
         return
     file_input = page.locator('input[type="file"]').first
@@ -432,6 +434,44 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
     events = []
     checks = set()
     errors = []
+
+    def stage_of(url):
+        parts = urlsplit(url)
+        action = parse_qs(parts.query).get("Action", [""])[0]
+        if "/alice/resource/prepare_upload" in parts.path:
+            return "prepare_upload"
+        if action in ("ApplyImageUpload", "CommitImageUpload"):
+            return action
+        if "/upload/v1/" in parts.path:
+            return "TOS"
+        return None
+
+    async def inspect_storage_api(response, stage):
+        try:
+            data = await response.json()
+            error = (data.get("ResponseMetadata") or {}).get("Error") or {}
+            if error:
+                errors.append(f"{stage} 返回 {str(error.get('Code') or '服务错误')[:80]}")
+            elif stage == "TOS" and data.get("code") not in (None, 0, "0", 2000, "2000"):
+                errors.append(f"TOS 返回 {data.get('code')}")
+            elif stage == "TOS":
+                events.append((response.status, response.url))
+        except Exception:
+            errors.append(f"{stage} 返回无法解析的响应")
+
+    def watch(coro):
+        task = asyncio.create_task(coro)
+        checks.add(task)
+        task.add_done_callback(checks.discard)
+
+    def on_request_failed(request):
+        stage = stage_of(request.url)
+        if not stage:
+            return
+        # Only expose the host and Chromium error code, never signed URLs/credentials.
+        code = re.search(r"net::ERR_[A-Z0-9_]+", str(request.failure or ""))
+        reason = code.group(0) if code else "网络连接失败"
+        errors.append(f"{stage} 网络失败：{urlsplit(request.url).hostname} {reason}")
 
     async def inspect_prepare(response):
         try:
@@ -445,19 +485,22 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
 
     def on_response(response):
         url = response.url
-        if "/alice/resource/prepare_upload" in url:
+        stage = stage_of(url)
+        if not stage or getattr(getattr(response, "request", None), "method", "") == "OPTIONS":
+            return
+        if stage == "prepare_upload":
             if response.status >= 400:
                 errors.append(f"prepare_upload HTTP {response.status}")
             else:
-                task = asyncio.create_task(inspect_prepare(response))
-                checks.add(task)
-                task.add_done_callback(checks.discard)
-        elif "/upload/v1/" in url:
+                watch(inspect_prepare(response))
+        else:
             if response.status >= 400:
-                errors.append(f"图片存储上传 HTTP {response.status}")
-            events.append((response.status, url))
+                errors.append(f"{stage} HTTP {response.status}")
+            else:
+                watch(inspect_storage_api(response, stage))
 
     page.on("response", on_response)
+    page.on("requestfailed", on_request_failed)
     try:
         await file_input.set_input_files(image_paths)
         expected = len(image_paths)
@@ -480,10 +523,11 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
             await page.wait_for_timeout(250)
         raise TimeoutError(
             f"参考图片上传超时: prepare={prepare_count}/{expected}, "
-            f"tos={tos_count}/{expected}, 缩略图={thumb_count}/{expected}"
+            f"tos={tos_count}/{expected}, 页面图片={thumb_count}（页面图片数不代表上传成功）"
         )
     finally:
         page.remove_listener("response", on_response)
+        page.remove_listener("requestfailed", on_request_failed)
         pending = list(checks)
         for task in pending:
             task.cancel()
