@@ -109,15 +109,17 @@ def test_config_defaults():
     assert config.VIDEO_MAX_ATTEMPTS == 0
 
 
-def test_upload_failure_before_submission_tries_next_account(tmp_path, monkeypatch):
-    from generation_errors import PreSubmissionUploadError
+@pytest.mark.parametrize('stage', ['upload', 'parameters'])
+def test_upload_failure_before_submission_tries_next_account(tmp_path, monkeypatch, stage):
+    from generation_errors import PreSubmissionUploadError, PreSubmissionParametersError
+    error_class = PreSubmissionUploadError if stage == 'upload' else PreSubmissionParametersError
     _, bp = _pool(tmp_path, monkeypatch)
     calls, notes = [], []
 
     async def generate(account, *args, **kwargs):
         calls.append(account)
         if len(calls) == 1:
-            raise PreSubmissionUploadError("ApplyImageUpload 网络失败（尚未提交生成）")
+            raise error_class("ApplyImageUpload / 参数设置失败（尚未提交生成）")
         return {"account": account, "local_path": "synthetic.mp4"}
 
     bp._generate_effective = generate

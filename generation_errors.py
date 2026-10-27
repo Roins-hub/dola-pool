@@ -7,3 +7,7 @@ class PreSubmissionUploadError(TimeoutError):
     The scheduler may try another account; generic TimeoutError remains ambiguous
     and must not cause resubmission.
     """
+
+
+class PreSubmissionParametersError(TimeoutError):
+    """Requested video settings could not be confirmed before sending the prompt."""

@@ -877,27 +877,9 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 await page.wait_for_timeout(500)
             except Exception as e:
                 print(f"  (设置模型失败，用 Dola 默认: {str(e)[:100]})", flush=True)
-            if ratio:
-                try:
-                    await page.click("text=比率", timeout=3000)
-                    await page.wait_for_timeout(500)
-                    await page.click(f"text={ratio}", timeout=3000)
-                except Exception as e:
-                    print(f"  (设置比例失败，用默认: {str(e)[:80]})", flush=True)
-            if duration:
-                try:
-                    await page.click(f"text={duration}s", timeout=3000)
-                except Exception:
-                    try:  # 先点开时长下拉（当前值按钮如「10s」）再选
-                        await page.get_by_text(re.compile(r"^\d+s$")).first.click(timeout=3000)
-                        await page.wait_for_timeout(500)
-                        await page.click(f"text={duration}s", timeout=3000)
-                    except Exception as e:
-                        # Never submit the webpage's default duration while charging
-                        # and recording the explicitly requested duration.
-                        raise TimeoutError(
-                            f"设置视频时长失败：未能选择 {duration} 秒，尚未提交生成；请检查网页时长选项"
-                        ) from e
+            # Confirm both settings in the current combined slider panel (or legacy UI).
+            from browser_video_params import select_video_parameters
+            await select_video_parameters(page, duration, ratio)
             await dismiss_popups(page)
             box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')
             try:

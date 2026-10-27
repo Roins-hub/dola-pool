@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from dola_client import CreditError
-from generation_errors import PreSubmissionUploadError
+from generation_errors import PreSubmissionUploadError, PreSubmissionParametersError
 from video_worker_ui import (
     AccountLimitedError, CreditInsufficientError, LoginExpiredError, RiskControlError,
     generate_video, resume_video,
@@ -2139,8 +2139,8 @@ class BrowserPool:
                                 (time.time() + COOLDOWN_SEC, account))
                             self._conn.commit()
                             last_err = e
-                        except PreSubmissionUploadError as e:
-                            # Upload failed before the browser sent the generation prompt.
+                        except (PreSubmissionUploadError, PreSubmissionParametersError) as e:
+                            # Upload or parameter selection failed before the browser sent the generation prompt.
                             # Safe to try another account using its own profile/proxy.
                             # Do not consume quota or mark the account as risk-controlled.
                             last_err = e

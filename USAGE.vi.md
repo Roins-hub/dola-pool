@@ -626,3 +626,8 @@ Khi thêm tài khoản Google hoặc Cookie, có thể chọn một proxy đang 
 ### Kiểm tra lời chào bằng trình duyệt Cloak
 
 Kiểm tra thủ công dùng profile, seed vân tay đã lưu và proxy của chính tài khoản. Chỉ công nhận phản hồi trợ lý của yêu cầu vừa gửi khi có dấu hiệu đăng nhập từ upstream. Không chuyển sang API thuần hoặc kết nối trực tiếp. Kiểm tra trình duyệt chạy lần lượt và không đồng thời với tạo video/xác thực cùng tài khoản. Hết thời gian hoặc lỗi mạng là chưa xác nhận, không đánh dấu rủi ro. Kiểm tra tự động trước khi giao tác vụ vẫn bỏ qua Cloak như trước. Profile riêng không có nghĩa là hệ điều hành hay IP riêng.
+
+
+### Bảng tham số video mới của Dola
+
+Giao diện mới gộp tỷ lệ và thời lượng trong một nút, ví dụ “自動 · 10秒”. Công cụ điều khiển thanh trượt bằng bàn phím rồi đọc lại số giây và tỷ lệ trên giao diện trước khi gửi. Chỉ số 0–6 của thanh trượt không phải số giây. Nếu thời lượng không có trên trang của tài khoản hiện tại, tác vụ dừng trước khi gửi; không tự dùng mặc định 10 giây. Tác vụ pool có thể thử tài khoản khác trong giới hạn thời gian; tạo thử theo tài khoản không đổi tài khoản. Đã kiểm tra chọn tham số và tải ảnh tổng hợp, chưa kiểm tra tạo video thật.
