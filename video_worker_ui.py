@@ -28,6 +28,7 @@ from gap import find_gap_x
 import config
 import proxy_store
 from browser import cookie_value, launch_account_context
+from browser_feedback import BrowserReplies, emit as emit_feedback
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
 from video_worker import POLL_JS, RiskControlError, _download, extract_unwatermarked_url
 
@@ -429,10 +430,31 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
     file_input = page.locator('input[type="file"]').first
     await file_input.wait_for(state="attached", timeout=10000)
     events = []
+    checks = set()
+    errors = []
+
+    async def inspect_prepare(response):
+        try:
+            data = await response.json()
+            if data.get("code") not in (None, 0, "0", 2000, "2000"):
+                errors.append(f"prepare_upload 返回 {data.get('code')}：{str(data.get('msg') or data.get('message') or '')[:180]}")
+                return
+            events.append((response.status, response.url))
+        except Exception:
+            errors.append("prepare_upload 返回无法解析的响应")
 
     def on_response(response):
         url = response.url
-        if "/alice/resource/prepare_upload" in url or "/upload/v1/" in url:
+        if "/alice/resource/prepare_upload" in url:
+            if response.status >= 400:
+                errors.append(f"prepare_upload HTTP {response.status}")
+            else:
+                task = asyncio.create_task(inspect_prepare(response))
+                checks.add(task)
+                task.add_done_callback(checks.discard)
+        elif "/upload/v1/" in url:
+            if response.status >= 400:
+                errors.append(f"图片存储上传 HTTP {response.status}")
             events.append((response.status, url))
 
     page.on("response", on_response)
@@ -441,6 +463,8 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
         expected = len(image_paths)
         deadline = time.time() + max(60, expected * 20)
         while time.time() < deadline:
+            if errors:
+                raise TimeoutError("参考图片上传未完成（尚未提交生成）：" + errors[0])
             prepare_count = sum("/alice/resource/prepare_upload" in url and 200 <= status < 300
                                 for status, url in events)
             tos_count = sum("/upload/v1/" in url and 200 <= status < 300
@@ -460,6 +484,11 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
         )
     finally:
         page.remove_listener("response", on_response)
+        pending = list(checks)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
 
 def _gen_track(distance: float):
@@ -587,6 +616,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     start = time.time()
     deadline = start + timeout  # 出片超时上限（默认 30 分钟，dola.env DOLA_VIDEO_TIMEOUT）
     last_callback = 0.0
+    last_note = ""
     terminal_hits = 0
     hard_error_hits = 0
     last_terminal_text = ""
@@ -605,10 +635,12 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             print(f"  轮询异常: {e}", flush=True)
             continue
         now = time.time()
-        if on_poll and now - last_callback >= 30:
-            on_poll(now)
-            last_callback = now
         texts = poll.get("texts") or []
+        note = "\n".join(dict.fromkeys(poll.get("assistantTexts") or []))[:4000]
+        if on_poll and (note != last_note or now - last_callback >= 30):
+            emit_feedback(on_poll, note=note or None)
+            last_callback = now
+            last_note = note
         videos = poll.get("videos") or []
         # ---- 新版 Dola：提交后要求 A/B/C 选择时长，不回复则永远不出片 ----
         if duration and not choice_replied:
@@ -741,7 +773,9 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         context = await launch_account_context(
             p, account, headless=False if use_extension else None,
             use_extension=use_extension)
+        replies = None
         try:
+            emit_feedback(on_poll, progress="正在打开账号浏览器并检查登录态")
             page = context.pages[0] if context.pages else await context.new_page()
             await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
             await page.wait_for_timeout(5000)
@@ -759,6 +793,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 await page.wait_for_timeout(500)
             await page.wait_for_timeout(1500)
             if reference_image_paths:
+                emit_feedback(on_poll, progress="正在上传参考图（尚未提交生成）")
                 await attach_reference_images(page, reference_image_paths)
             # 选择模型（尽力而为）：扩展/当前网页端文案 モデル 2.0高速/2.5；
             # 部分账号 UI 变体没有该按钮，找不到就沿用 Dola 默认模型，不阻塞出片。
@@ -813,7 +848,11 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                         await page.wait_for_timeout(500)
                         await page.click(f"text={duration}s", timeout=3000)
                     except Exception as e:
-                        print(f"  (设置时长失败，用默认: {str(e)[:80]})", flush=True)
+                        # Never submit the webpage's default duration while charging
+                        # and recording the explicitly requested duration.
+                        raise TimeoutError(
+                            f"设置视频时长失败：未能选择 {duration} 秒，尚未提交生成；请检查网页时长选项"
+                        ) from e
             await dismiss_popups(page)
             box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')
             try:
@@ -822,7 +861,10 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 await box.evaluate("(el) => el.focus()")
             await page.keyboard.type(prompt, delay=100)
             await page.wait_for_timeout(600)
+            replies = BrowserReplies(page, on_poll)
+            replies.start()
             await page.keyboard.press("Enter")
+            emit_feedback(on_poll, progress="已发送生成请求，等待上游会话确认")
             print(f"[{account}] UI 已发送: {prompt[:40]}", flush=True)
 
             # ---- 滑块求解（最多 3 次）----
@@ -871,7 +913,11 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 account, page, context, conv_id, timeout, on_poll, on_balance,
                 duration, ratio)
         finally:
-            await context.close()
+            try:
+                if replies is not None:
+                    await replies.close()
+            finally:
+                await context.close()
 
 
 async def _main():

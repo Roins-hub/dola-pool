@@ -220,7 +220,7 @@ def test_model_point_table(tmp_path):
 
     assert pool._duration_cost("seedance-2.5", 5) == 2
     assert pool._duration_cost("seedance-2.5", 10) == 4
-    assert pool._duration_cost("seedance-2.0", 10) == 2
+    assert pool._duration_cost("seedance-2.0", 10) == 3
     assert pool._duration_cost("seedance-2.0", 15) == 3
 
 

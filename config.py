@@ -155,7 +155,7 @@ DEFAULT_CREDIT_COST = 3
 # 2026-10-14 两台线上日志里上游回执的报价（「将消耗 N 个视频生成额度」）按任务时长对齐：
 #   seedance-2.5：5 秒 = 2（多次）、10 秒 = 4（5 次，配合上面注释「实测扣满一天 4 点」）、
 #                 15 秒 = 12（实测：普通 15 秒请求被回「需要消耗 12 个…今日剩余 4 个，无法生成」）
-#   seedance-2.0：5 秒 = 1（实测：受理时回「今日剩余 3 个」，号原有 4 点）、10 秒 = 2
+#   seedance-2.0：2026-10-27 按用户确认的记账规则，5/10/15 秒统一 3 点。
 # 注意 2.5 不是按秒线性涨价（15 秒一档跳到 12）：免费号每日 4 点，2.5 最长只能出 10 秒。
 # 上游余额不够报价时直接拒绝（「需要消耗 N 个，今日剩余 M 个，无法生成」），所以派号必须按报价算。
 # 表里没有的时长：取表里比它长的最短一档；比表里都长就按最长一档的每秒单价外推（向上取整）；
@@ -164,7 +164,7 @@ DEFAULT_CREDIT_COST = 3
 DURATION_COSTS: dict[str, dict[int, int]] = {
     # 30 = 请求 30 秒：上游压成 15 秒出片、按 2 点扣（线上 4 次报价 + 网页截图），pair 模式每段就这么请求
     "seedance-2.5": {5: 2, 10: 4, 15: 12, 30: 2},
-    "seedance-2.0": {5: 1, 10: 2},
+    "seedance-2.0": {5: 3, 10: 3, 15: 3},
 }
 
 
@@ -189,6 +189,8 @@ for _model, _costs in _parse_duration_costs(os.getenv("DOLA_DURATION_COSTS", "")
 
 def credit_cost(version: str, duration: int | None) -> int:
     """某个 seedance 版本出一条 duration 秒视频，上游要扣（报价）多少点。"""
+    if version == "seedance-2.0-fast":
+        version = "seedance-2.0"
     base = MODEL_COSTS.get(version, DEFAULT_CREDIT_COST)
     table = DURATION_COSTS.get(version) or {}
     try:

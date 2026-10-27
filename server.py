@@ -707,16 +707,21 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             # 30 秒每次出片最多等 LONG_VIDEO_TIMEOUT_MAX；只出了半截还要补后半段：最多等两次
             last_attempt_wait = 2 * max(last_attempt_wait, config.LONG_VIDEO_TIMEOUT_MAX)
         overall_timeout = config.TASK_DEADLINE + last_attempt_wait + 60
+        timeout_scope = asyncio.timeout(overall_timeout)
         try:
-            result = await asyncio.wait_for(pool.generate_video(
-                prompt, ratio, duration, model,
-                on_conversation_id=on_conversation_id, on_poll=on_poll,
-                reference_image_paths=reference_paths,
-                on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
-                deadline=task_deadline,
-                on_wait=lambda note: store.set_queue_note(task_id, note)),
-                timeout=overall_timeout)
-        except asyncio.TimeoutError:
+            async with timeout_scope:
+                result = await pool.generate_video(
+                    prompt, ratio, duration, model,
+                    on_conversation_id=on_conversation_id, on_poll=on_poll,
+                    reference_image_paths=reference_paths,
+                    on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
+                    deadline=task_deadline,
+                    on_wait=lambda note: store.set_queue_note(task_id, note))
+        except TimeoutError:
+            # TimeoutError is also raised by upload/navigation/polling. Preserve that
+            # stage-specific error unless THIS outer timeout actually expired.
+            if not timeout_scope.expired():
+                raise
             chain = "、".join(tried_accs) or "无"
             raise RuntimeError(
                 f"等待出片超过 {overall_timeout // 60} 分钟仍未完成，任务失败（已尝试账号: {chain}）")

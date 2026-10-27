@@ -74,6 +74,7 @@ async ({conversationId, msToken, fp}) => {
   const messages =
     (((data.downlink_body || {}).pull_singe_chain_downlink_body) || {}).messages || [];
   const texts = [];
+  const assistantTexts = [];
   const videos = [];
   const videoModels = [];
   for (const msg of messages) {
@@ -84,7 +85,11 @@ async ({conversationId, msToken, fp}) => {
     if (!Array.isArray(content)) continue;
     for (const block of content) {
       const text = (((block.content || {}).text_block) || {}).text || "";
-      if (text) texts.push(text.slice(0, 120));
+      if (text) {
+        texts.push(text.slice(0, 2000));
+        // Only explicitly marked assistant messages are used as upstream notes.
+        if (msg.role === 'assistant' || (msg.sender || {}).role === 'assistant') assistantTexts.push(text.slice(0, 2000));
+      }
       if (block.block_type !== 2074) continue;
       const creations = (((block.content || {}).creation_block) || {}).creations || [];
       for (const cre of creations) {
@@ -97,7 +102,7 @@ async ({conversationId, msToken, fp}) => {
       }
     }
   }
-  return {ok: true, status: resp.status, texts, videos, videoModels};
+  return {ok: true, status: resp.status, texts, assistantTexts, videos, videoModels};
 }
 """
 

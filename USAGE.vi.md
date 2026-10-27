@@ -73,7 +73,7 @@ Mỗi tài khoản mỗi ngày có **4 điểm** hạn mức (`DOLA_DAILY_LIMIT`
 | Mô hình | Thời lượng → điểm trừ mỗi video | Một tài khoản một ngày (4 điểm) tạo được |
 |---|---|---|
 | `seedance-2.5` | 5 giây = 2 điểm, 10 giây = 4 điểm, **15 giây = 12 điểm (không tạo được)**, **30 giây = 2 điểm** (cần bật `pair`; nếu chỉ ra nửa đầu và phải bù nửa sau thì tổng cộng 4 điểm) | 2 video 5 giây, 1 video 10 giây, hoặc 2 video 30 giây |
-| `seedance-2.0-fast` | 5 giây = 1 điểm, 10 giây = 2 điểm, 15 giây ≈ 3 điểm (ước tính, chưa đo thực tế) | 4 video 5 giây, 2 video 10 giây, hoặc 1 video 15 giây |
+| `seedance-2.0-fast` | 5 / 10 / 15 giây đều dùng 3 điểm | 1 video 5 / 10 / 15 giây (còn 1 điểm) |
 
 - Điểm bị trừ **theo «mô hình + thời lượng»**, khớp với mức giá trong câu trả lời của dola «将消耗 N 个视频生成额度» (sẽ tiêu tốn N hạn mức tạo video) (đo thực tế 2026-10-14).
 - Tổ hợp có giá vượt quá hạn mức một ngày của một tài khoản (ví dụ 15 giây của 2.5) sẽ bị từ chối ngay khi gửi, kèm lý do; muốn 15 giây hãy dùng seedance-2.0-fast.

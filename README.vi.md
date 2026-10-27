@@ -22,11 +22,11 @@ Gom một nhóm tài khoản [dola.com](https://www.dola.com) (bản quốc tế
 | Mô hình | Độ phân giải | Thời lượng | Tư liệu tham chiếu | Số điểm trừ mỗi lần (mặc định mỗi tài khoản 4 điểm/ngày) |
 |---|---|---|---|---|
 | `seedance-2.5` | 720p | 5 / 10 / 30 giây (15 giây không tạo được, 30 giây cần bật `pair`, xem bên dưới) | Tối đa 10 ảnh; không hỗ trợ âm thanh, video tham chiếu | 5 giây = 2, 10 giây = 4, 15 giây = 12 (vượt hạn mức ngày), **30 giây = 2** (khi chỉ ra được nửa đầu và phải bù nửa sau thì tổng là 4) |
-| `seedance-2.0-fast` | 720p | 5 / 10 / 15 giây | Tối đa 10 ảnh; không hỗ trợ âm thanh, video tham chiếu | 5 giây = 1, 10 giây = 2, 15 giây ≈ 3 (suy ra, chưa đo thực tế) |
+| `seedance-2.0-fast` | 720p | 5 / 10 / 15 giây | Tối đa 10 ảnh; không hỗ trợ âm thanh, video tham chiếu | 5 / 10 / 15 giây đều dùng 3 điểm |
 
 - Số điểm trừ dựa theo **báo giá** trong phản hồi của dola, thay đổi theo «mô hình + thời lượng» (đo thực tế ngày 2026-10-14, xem `config.DURATION_COSTS`, có thể ghi đè bằng `DOLA_DURATION_COSTS`).
   Những tổ hợp có báo giá vượt hạn mức một ngày của một tài khoản (mặc định 4 điểm) sẽ bị trả về 422 ngay khi tiếp nhận: **15 giây của seedance-2.5 cần 12 điểm, tài khoản miễn phí không tạo được**, hãy dùng 10 giây, 30 giây hoặc seedance-2.0-fast.
-- Một tài khoản mỗi ngày (4 điểm) tạo được: 2.5 —— 5 giây 2 video / 10 giây 1 video / 30 giây 2 video; 2.0 —— 5 giây 4 video / 10 giây 2 video / 15 giây 1 video.
+- Một tài khoản mỗi ngày (4 điểm) tạo được: 2.5 —— 5 giây 2 video / 10 giây 1 video / 30 giây 2 video; 2.0 —— 5 / 10 / 15 giây: 1 video (còn 1 điểm).
 
 - **30 giây**: từ 2026-10-12, dola trả lời các yêu cầu 30 giây là «chỉ hỗ trợ 4～15 giây, sẽ tạo theo 15 giây», nhưng **thực tế vẫn tạo video 30 giây** ([issue #4](https://github.com/Roins-hub/dola-pool/issues/4)). Hành vi do `DOLA_30S_MODE` quyết định:
   `reject` (mặc định, trả về 422 ngay khi tiếp nhận kèm lý do) / `pair` (**khuyến nghị**): **trước tiên gửi nguyên yêu cầu 30 giây một lần** —— dola ngoài miệng trả lời «sẽ tạo theo thời lượng hỗ trợ gần nhất là 15 giây, tiêu tốn 2», nhưng **thực tế đa số ra đủ 30 giây** (đo ngày 2026-10-14, cả 4 đơn đều 30.08 giây), chỉ trừ **2 điểm**; chỉ khi ra được nửa đầu (～15 giây) mới bù thêm một lần «nửa sau» rồi ghép cục bộ (trừ thêm 2 điểm). Số giây trong phản hồi không được tính, chỉ căn cứ vào thời lượng thực tế của file nhận về; khi dola hỏi lại «có tạo theo 15 giây không» thì tự động trả lời «xác nhận tạo»; chỉ phân cho tài khoản nhập bằng Cookie; khi có bù nửa sau thì hình ảnh giữa hai đoạn có thể không hoàn toàn liền mạch / `native` (logic cũ, gửi nguyên 30 giây; sau khi dola nói «chỉ hỗ trợ 4～15 giây» sẽ chờ thêm tối đa 10 phút, không khuyến nghị).

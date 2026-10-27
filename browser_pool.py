@@ -104,7 +104,7 @@ def group_of(a: dict, now: float, *, busy: bool = False,
     if remaining <= 1:
         return GROUP_COOLING, f"剩余 {remaining} 点（额度日 23:00 重置）"
     if remaining < limit:
-        return GROUP_HALF, f"剩余 {remaining} 点，只够 seedance-2.5"
+        return GROUP_HALF, f"剩余 {remaining} 点，按模型和时长所需额度派发"
     return GROUP_FULL, f"剩余 {remaining} 点"
 WAIT_FREE_ACCOUNT_STEP = 2  # 等待重扫间隔（秒）
 

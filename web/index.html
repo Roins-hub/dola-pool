@@ -257,7 +257,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
             <option value="login">账号登录</option>
             <option value="cookie">Cookie 载入</option>
           </select>
-          <button class="btn btn-danger" id="btnDelSel" onclick="delSelected()" disabled>删除选中</button>
+          <button class="btn btn-danger" id="btnDelSel" onclick="deleteSelectedAccounts()" disabled>删除选中</button>
           <button class="btn" id="btnVerifySel" onclick="batchVerifySelected()" disabled>一键验证</button>
           <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="按账号模式探测：Cloak 使用独立浏览器，超时未确认不判风控；不勾选则探测当前筛选账号">你好探测</button>
           <button class="btn" id="btnBatchRecover" onclick="batchRecover()" title="批量把选中的号从【风控】/【异常】组放出来（风控恢复后回到【待激活】，建议接着探测一次）">批量恢复</button>
@@ -1105,7 +1105,7 @@ async function resetAllQuotas(){
   refresh();
 }
 
-async function delSelected(){
+async function deleteSelectedAccounts(){
   const list=[...selAccounts];
   if(!list.length)return;
   if(!confirm(`确定删除选中的 ${list.length} 个账号？将同时删除其 profile。`))return;
