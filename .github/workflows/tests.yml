@@ -27,8 +27,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Install system packages
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Ensure FFmpeg is available
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null &&
+             ffmpeg -version >/dev/null 2>&1 && ffprobe -version >/dev/null 2>&1; then
+            echo "Using FFmpeg and ffprobe already installed on the runner"
+          else
+            echo "Installing missing FFmpeg with bounded network and lock waits"
+            apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=30)
+            sudo timeout --kill-after=10s 120s apt-get "${apt_options[@]}" update
+            sudo timeout --kill-after=10s 120s apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
       - name: Install Python packages
         run: pip install -r requirements-dev.txt
       - name: Run tests
