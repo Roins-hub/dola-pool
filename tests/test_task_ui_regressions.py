@@ -102,7 +102,7 @@ def test_poll_reports_upstream_note_before_quota_error():
     worker = load_worker_function("poll_conversation", cookie_value=lambda *a: "",
         asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for),
         POLL_JS="", emit_feedback=emit, _parse_balance_texts=lambda a: (None, None, ""),
-        DAILY_LIMIT_PATTERN=re.compile("daily quota"), AccountLimitedError=QuotaError)
+        DAILY_LIMIT_PATTERN=re.compile("今日视频额度已用完"), AccountLimitedError=QuotaError)
     with pytest.raises(QuotaError):
         run(worker("acc1", Page(), Context(), "c1", 60,
                    on_poll=on_poll))

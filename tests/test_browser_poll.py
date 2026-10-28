@@ -36,6 +36,32 @@ def text_block(text):
     return {'block_type': 10000, 'content': {'text_block': {'text': text}}}
 
 
+def test_latest_assistant_uses_message_index_not_array_order_or_user_echo():
+    result = poll_messages([
+        {'user_type': 2, 'index_in_conv': '9007199254740994', 'content_block': [text_block('最新回复')]},
+        {'user_type': 1, 'index_in_conv': '9007199254740992', 'content_block': [text_block('请选择 5 秒')]},
+        {'user_type': 2, 'index_in_conv': '9007199254740993', 'content_block': [text_block('旧回复')]},
+    ])
+    assert result['latestAssistant']['text'] == '最新回复'
+
+
+def test_new_user_turn_prevents_replaying_previous_assistant_question():
+    result = poll_messages([
+        {'user_type': 2, 'index_in_conv': 1, 'content_block': [text_block('请选择时长：A. 5秒 B. 10秒')]},
+        {'user_type': 1, 'index_in_conv': 2, 'content_block': [text_block('A. 5秒')]},
+    ])
+    assert result['latestAssistant'] is None
+
+
+def test_unordered_or_empty_latest_message_cannot_reuse_old_question():
+    assert poll_messages([{'user_type': 2, 'content_block': [text_block('旧时长问题')]}])['latestAssistant'] is None
+    result = poll_messages([
+        {'user_type': 2, 'index_in_conv': 1, 'content_block': [text_block('旧时长问题')]},
+        {'user_type': 2, 'index_in_conv': 2, 'content_block': []},
+    ])
+    assert result['latestAssistant']['text'] == ''
+
+
 @pytest.mark.parametrize('message', [
     {'user_type': 2, 'content_block': [text_block('正在生成，预计等待 3 分钟')]},
     {'user_type': '2', 'content': '', 'content_block': [text_block('正在生成，预计等待 3 分钟')]},

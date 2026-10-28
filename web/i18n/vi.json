@@ -641,5 +641,15 @@
  "请输入 0～1000 的整数，0 表示不限。": "Nhập số nguyên từ 0 đến 1000; 0 nghĩa là không giới hạn.",
  "正在保存…": "Đang lưu…",
  "已保存并生效；当前任务继续运行，空位释放后再接下一条。": "Đã lưu và áp dụng; tác vụ hiện tại tiếp tục chạy, tác vụ tiếp theo sẽ bắt đầu khi có chỗ trống.",
- "已保存并生效，无需重启服务。": "Đã lưu và áp dụng, không cần khởi động lại dịch vụ."
+ "已保存并生效，无需重启服务。": "Đã lưu và áp dụng, không cần khởi động lại dịch vụ.",
+ "验证中": "Đang xác minh",
+ "探测中": "Đang kiểm tra",
+ "准备 / 生成中": "Đang chuẩn bị / tạo",
+ "恢复查询中": "Đang truy vấn khôi phục",
+ "账号占用中": "Tài khoản đang bận",
+ "准备生成": "Chuẩn bị tạo",
+ "等待上游结果": "Đang chờ kết quả từ dịch vụ",
+ "上传参考图": "Đang tải ảnh tham chiếu",
+ "下载 / 处理中": "Đang tải xuống / xử lý",
+ "尝试记录（{0}）": "Lịch sử thử ({0})"
 }

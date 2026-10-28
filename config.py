@@ -42,6 +42,8 @@ MAX_PENDING_TASKS = int(os.getenv("DOLA_MAX_PENDING_TASKS", "100"))
 
 # 视频生成超时（秒）
 VIDEO_TIMEOUT = int(os.getenv("DOLA_VIDEO_TIMEOUT", "300"))
+# Navigation/login/upload/settings before the upstream acknowledges a conversation.
+PREPARE_TIMEOUT = max(1, int(os.getenv("DOLA_PREPARE_TIMEOUT", "180")))
 # 单个任务的总时限（秒）：在此时间内持续换号调度，超时即判定生成失败。
 TASK_DEADLINE = int(os.getenv("DOLA_TASK_DEADLINE", "600"))
 # 单个任务最多尝试的账号次数；0 表示不限次数，只受 TASK_DEADLINE 约束。

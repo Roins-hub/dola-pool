@@ -112,6 +112,7 @@ input::placeholder,textarea::placeholder{color:#6d7c90}
 select option{background:#111827;color:var(--text)}
 input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
 #accountsTable,#proxiesTable,#tasksTable,#videosTable,#keysTable,#usersTable,#perAccount{overflow-x:auto}
+.task-attempt-history{min-width:280px;max-width:420px;overflow-wrap:anywhere}
 /* ptabs：添加代理弹窗的「标准添加 / 快捷添加」标签 */
 .ptabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:-4px 0 14px}
 .ptab{background:none;border:none;border-bottom:2px solid transparent;padding:8px 14px;margin-bottom:-1px;
@@ -559,7 +560,10 @@ function accLabel(x){return x.email?`<div translate="no">${esc(x.email)}</div>`:
     风控、冷却、待激活、异常这些「状态」已经由分组列表达，不在这里重复；
     「限流」「失败(待全池重置)」两个概念已于 2.1.0 P3 删除。 */
 function statusBadge(a){
-  if(a.busy)return '<span class="badge b-blue">出片中</span>';
+  if(a.busy){
+    const labels={verifying:'验证中',probing:'探测中',generating:'准备 / 生成中',recovering:'恢复查询中',occupied:'账号占用中'};
+    return '<span class="badge b-blue">'+esc(a.operation_phase||labels[a.operation]||'账号占用中')+'</span>';
+  }
   if(a.login_ok===0)return '<span class="badge b-red">登录失效</span>';
   return '<span class="tiny">—</span>';
 }
@@ -2189,7 +2193,7 @@ function noteToggle(el){if(el.open)OPEN_NOTES.add(el.dataset.k);else OPEN_NOTES.
 function foldText(k,label,text,limit){
   text=String(text||'').replace(/\*\*/g,'');   // dola 回执带 Markdown 粗体标记
   if(text.length<=limit)return '<div class="tiny note-line">'+label+noTr(text)+'</div>';
-  return '<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
+  return '<details class="tiny note-line task-attempt-history" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
     +'<summary>'+label+noTr(text.slice(0,limit))+'<span class="ell">…</span></summary>'+noTr(text.slice(limit))+'</details>';
 }
 /** dola 回执原话：当前号的在前（长了折叠），前面换过的号收进「前面 N 个号的回复」。
@@ -2210,6 +2214,17 @@ function upstreamNote(t){
       +prev.map(n=>'<div>'+noTr(n.account||'?')+'：'+noTr(String(n.note||'').replace(/\*\*/g,''))+'</div>').join('')+'</details>';
   }
   return html;
+}
+function attemptHistory(t){
+  let rows=[];try{rows=JSON.parse(t.attempt_history||'[]');}catch(e){}
+  if(!Array.isArray(rows)||!rows.length)return '';
+  const k=t.id+':attempts';
+  return '<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
+    +'<summary>尝试记录（'+rows.length+'）</summary>'
+    +rows.map(r=>'<div style="margin:8px 0">'+noTr(r.account||'')+' · '+esc(r.stage||'准备生成')
+      +' · '+fmtDur(Math.max(0,(r.finished_at||Date.now()/1000)-(r.started_at||Date.now()/1000)))
+      +(r.error?'<div style="color:var(--red)">'+noTr(r.error)+'</div>':'')
+      +(r.stages||[]).map(s=>'<div>'+fmt(s.at)+' · '+esc(s.stage)+'</div>').join('')+'</div>').join('')+'</details>';
 }
 /** 排队 / 换号原因（含 dola 原话）：只在任务还没结束时显示。 */
 function queueNote(t){
@@ -2282,7 +2297,7 @@ async function loadTasks(){
       :'—',
     // 报错原文完整展示（含换行）：不再 slice(0,30)，上游「内容审核不合规 / 肖像保护 / 侵权」
     // 这类话术要能一眼看全。
-    queueNote(t)+recoverNote(t)+upstreamNote(t)+(t.error
+    queueNote(t)+recoverNote(t)+upstreamNote(t)+attemptHistory(t)+(t.error
       ?'<span class="err" title="'+esc(t.error)+'">'+esc(t.error)+'</span>'
       :((t.recover_state||t.upstream_note||queueNote(t))?'':'<span class="tiny">—</span>'))
   ]);

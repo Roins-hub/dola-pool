@@ -84,24 +84,8 @@ DURATION_CHOICE_QUESTION_RE = re.compile(
 
 
 def _build_duration_reply(text: str, duration: int | None, ratio: str | None) -> str | None:
-    """构造时长选择的回复：
-    格式1（A. 5 秒で生成 / B. 10 秒で生成 / C. 15 秒で生成）→ 回完整选项文本（实测裸 "B" 会报错，
-    "B. 10秒" 才被接受）；
-    格式2（例：・16:9、10秒）→ 回「比例、N秒」。
-    """
-    if not text or not duration:
-        return None
-    letter_matches = list(DURATION_CHOICE_RE.finditer(text))
-    if letter_matches:
-        for m in letter_matches:
-            if int(m.group(2)) == duration:
-                return f"{m.group(1).upper()}. {duration}秒"
-        return None  # 有字母选项但没有匹配时长 → 无法满足，交给终结检测快速失败
-    # 新格式（2026-09-01）：「動画生成は現在4～15秒に対応しています。…別の秒数をご希望でしたら指定してください。」
-    # 没有字母选项也没有「例：16:9、10秒」，直接回「N秒」即可。
-    if re.search(r"対応しています|別の秒数|秒数をご希望|秒数を指定", text, re.IGNORECASE):
-        return f"{duration}秒"
-    return f"{ratio or '16:9'}、{duration}秒"
+    from upstream_reply import duration_reply
+    return duration_reply(text, duration, ratio)
 
 
 class AccountLimitedError(Exception):
@@ -277,7 +261,7 @@ def find_captcha_frame(page):
 
 
 async def _fetch_bytes(url: str, account: str | None = None) -> bytes:
-    proxy = proxy_store.account_proxy_url(account) if account else (config.PROXY or None)
+    proxy = __import__("account_transport").http_proxy(account) if account else (config.PROXY or None)
     async with aiohttp.ClientSession() as s:
         async with s.get(url, proxy=proxy or None) as r:
             return await r.read()
@@ -388,9 +372,9 @@ async def fetch_higher_bitrate_url(video_model_str: str, account: str | None = N
         url = urlunsplit((parts.scheme, parts.netloc, parts.path,
                           urlencode(q), parts.fragment))
         async with aiohttp.ClientSession() as s:
-            proxies = ([proxy_store.account_proxy_url(account)] if account
+            proxies = ([__import__("account_transport").http_proxy(account)] if account
                        else ([config.PROXY] if config.PROXY else []))
-            for proxy in proxies + [None]:
+            for proxy in proxies:
                 try:
                     async with s.get(url, proxy=proxy or None,
                                      timeout=aiohttp.ClientTimeout(total=30)) as r:
@@ -406,7 +390,7 @@ async def fetch_higher_bitrate_url(video_model_str: str, account: str | None = N
                             if not mu:
                                 continue
                             dec = _decode_main_token(mu, vm.get("key_seed") or "")
-                            if not dec.startswith("http"):
+                            if not dec or not dec.startswith("http"):
                                 continue
                             rate = int(v.get("bitrate") or v.get("real_bitrate") or 0)
                             if best is None or rate > best[0]:
@@ -414,8 +398,7 @@ async def fetch_higher_bitrate_url(video_model_str: str, account: str | None = N
                         if best:
                             return best[1]
                 except Exception:
-                    import traceback
-                    traceback.print_exc()
+                    # Do not log signed URLs or retry through a direct connection.
                     continue
     except Exception:
         pass
@@ -427,7 +410,7 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
     """通过浏览器上传，记录 prepare / Apply / TOS / Commit 各阶段的失败。"""
     import re
     from urllib.parse import parse_qs, urlsplit
-    from generation_errors import PreSubmissionUploadError
+    from generation_errors import PreSubmissionUploadError, UploadRouteError
     if not image_paths:
         return
     file_input = page.locator('input[type="file"]').first
@@ -472,7 +455,7 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
         # Only expose the host and Chromium error code, never signed URLs/credentials.
         code = re.search(r"net::ERR_[A-Z0-9_]+", str(request.failure or ""))
         reason = code.group(0) if code else "网络连接失败"
-        errors.append(f"{stage} 网络失败：{urlsplit(request.url).hostname} {reason}")
+        errors.append(UploadRouteError(urlsplit(request.url).hostname or "unknown", reason, stage))
 
     async def inspect_prepare(response):
         try:
@@ -508,6 +491,8 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
         deadline = time.time() + max(60, expected * 20)
         while time.time() < deadline:
             if errors:
+                if isinstance(errors[0], UploadRouteError):
+                    raise errors[0]
                 raise PreSubmissionUploadError("参考图片上传未完成（尚未提交生成）：" + errors[0])
             prepare_count = sum("/alice/resource/prepare_upload" in url and 200 <= status < 300
                                 for status, url in events)
@@ -663,11 +648,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     deadline = start + timeout  # 出片超时上限（默认 30 分钟，dola.env DOLA_VIDEO_TIMEOUT）
     last_callback = 0.0
     last_note = ""
-    terminal_hits = 0
-    hard_error_hits = 0
-    last_terminal_text = ""
-    last_hard_error_text = ""
     choice_replied = False
+    failure_seen = (None, 0)
+    poll_errors = 0
     while True:
         await asyncio.sleep(5)
         if time.time() > deadline:
@@ -677,12 +660,24 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
         try:
             poll = await asyncio.wait_for(page.evaluate(
                 POLL_JS, {"conversationId": conversation_id, "msToken": ms_token, "fp": fp}), timeout=30)
+            if poll.get("ok") is False:
+                raise ConnectionError(f"上游会话查询 HTTP {poll.get('status', 'unknown')}")
         except Exception as e:
-            print(f"  轮询异常: {e}", flush=True)
+            from generation_errors import UpstreamReplyError
+            poll_errors += 1
+            if poll_errors >= 3:
+                raise UpstreamReplyError("网络失败", "连续三次查询上游会话失败；未重新提交生成，请检查账号代理后查询原会话") from e
             continue
+        poll_errors = 0
         now = time.time()
-        texts = poll.get("texts") or []
-        note = "\n".join(dict.fromkeys(poll.get("assistantTexts") or []))[:4000]
+        from upstream_reply import reply_failure, duration_reply
+        from generation_errors import UpstreamReplyError
+        latest = poll.get("latestAssistant")
+        latest_text = (latest or {}).get("text", "")
+        # Older test doubles may only expose assistantTexts; real ordered polls never
+        # fall back to historical replies when the latest turn is empty/unknown.
+        texts = ([latest_text] if latest_text else []) if "latestAssistant" in poll else (poll.get("assistantTexts") or [])
+        note = (latest_text if "latestAssistant" in poll else "\n".join(dict.fromkeys(poll.get("assistantTexts") or [])))[:4000]
         if on_poll and (note != last_note or now - last_callback >= 30):
             emit_feedback(on_poll, note=note or None)
             last_callback = now
@@ -691,8 +686,8 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
         # ---- 新版 Dola：提交后要求 A/B/C 选择时长，不回复则永远不出片 ----
         if duration and not choice_replied:
             joined = "\n".join(texts)
-            if DURATION_CHOICE_QUESTION_RE.search(joined):
-                reply = _build_duration_reply(joined, duration, ratio)
+            if latest and not videos:
+                reply = duration_reply(joined, duration, ratio)
                 if reply:
                     box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')
                     if box:
@@ -705,56 +700,28 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                             print(f"[{account}] 已回复时长选择: {reply}（{duration}s）", flush=True)
                         except Exception as e:
                             print(f"[{account}] 回复时长选择失败: {str(e)[:100]}", flush=True)
-        terminal_now = False
-        acceptance_now = False
-        hard_error_now = False
-        for text in texts:
-            balance, _, source = _parse_balance_texts([text])
+        joined = "\n".join(texts)
+        if not videos and joined:
+            category = reply_failure(joined)
+            if DAILY_LIMIT_PATTERN.search(joined):
+                raise AccountLimitedError(f"账号每日生成上限: {joined[:1000]}")
+            if category == "额度不足":
+                raise CreditError(f"额度不足: {joined[:1000]}")
+            if category:
+                previous, hits = failure_seen
+                failure_seen = (joined, hits + 1 if previous == joined else 1)
+                if failure_seen[1] >= 2:
+                    raise UpstreamReplyError(category, joined)
+            else:
+                failure_seen = (None, 0)
+            balance, _, source = _parse_balance_texts(texts)
             if balance is not None and on_balance:
                 on_balance(balance, source)
-            if DAILY_LIMIT_PATTERN.search(text):
-                raise AccountLimitedError(f"账号每日生成上限: {text[:120]}")
-            if CREDIT_FAIL_PATTERN.search(text):
-                raise CreditError(f"额度不足: {text[:80]}")
-            if ACCEPTANCE_TEXT_PATTERN.search(text):
-                acceptance_now = True
-            if not terminal_now and any(p.search(text) for p in TERMINAL_TEXT_PATTERNS):
-                terminal_now = True
-                last_terminal_text = text
-            if not hard_error_now and any(p.search(text) for p in HARD_ERROR_TEXT_PATTERNS):
-                hard_error_now = True
-                last_hard_error_text = text
-        # 已回复时长选择后，同一段时长提问文字会一直在对话里，不能把它继续当失败信号；
-        # 真失败会走硬错误识别或 30 分钟出片超时。
-        if not videos and terminal_now and not acceptance_now:
-            if not (choice_replied and DURATION_CHOICE_QUESTION_RE.search(last_terminal_text)):
-                terminal_hits += 1
-            else:
-                terminal_hits = 0
         else:
-            terminal_hits = 0
-        if terminal_hits >= TERMINAL_TEXT_MAX_HITS:
-            raise RuntimeError(
-                f"Dola 未真正出片（连续收到终结性文字回复且无视频，疑似提交失败）: "
-                f"{last_terminal_text[:150]}"
-            )
-        if not videos and hard_error_now and not acceptance_now:
-            hard_error_hits += 1
-        else:
-            hard_error_hits = 0
-        if hard_error_hits >= HARD_ERROR_TEXT_MAX_HITS:
-            raise RuntimeError(
-                f"Dola 返回错误（连续 {HARD_ERROR_TEXT_MAX_HITS} 次且无视频）: "
-                f"{last_hard_error_text[:150]}"
-            )
+            failure_seen = (None, 0)
         if videos:
             emit_feedback(on_poll, progress="上游已返回视频，正在获取下载地址")
             video_models = poll.get("videoModels", [])
-            if video_models:
-                print(
-                    f"[{account}] videoModels={str(video_models[0])[:2000]}",
-                    flush=True,
-                )
             vm_str = video_models[0] if video_models else ""
             # 优先用 fallback_api 的 H.264 original 高码率源（约 3Mbps），
             # 失败再回退默认 bytevc1 低码率源。
@@ -832,6 +799,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             await ensure_login_stable(page, account)
             cookies = await context.cookies("https://www.dola.com")
             ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
+            emit_feedback(on_poll, progress="登录检查完成，正在检查额度")
             await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
 
             # ---- UI 发送 ----
@@ -883,6 +851,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 print(f"  (设置模型失败，用 Dola 默认: {str(e)[:100]})", flush=True)
             # Confirm both settings in the current combined slider panel (or legacy UI).
             from browser_video_params import select_video_parameters
+            emit_feedback(on_poll, progress="正在确认视频模型、时长和比例（尚未提交生成）")
             await select_video_parameters(page, duration, ratio)
             await dismiss_popups(page)
             box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')

@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 import config
 import cred_store
 import failure_text
+from account_transport import redact_error
 import proxy_store
 import sites
 from add_account import add_account_flow
@@ -642,7 +643,11 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         if key_limiter.is_full(api_key_hash, key_limit):
             store.set_queue_note(task_id, f"排队中：这个客户（API Key）同时最多跑 {key_limit} 个任务，"
                                           "前面的还没跑完")
-        await key_limiter.acquire(api_key_hash, key_limit)
+        try:
+            await asyncio.wait_for(key_limiter.acquire(api_key_hash, key_limit),
+                                   timeout=max(1, config.MAX_QUEUE_WAIT_SECONDS))
+        except TimeoutError:
+            raise RuntimeError("客户并发名额排队超时，尚未提交生成")
         acquired = True
         # 这里不能急着标 processing：接下来 pool.generate_video 还可能在全局并发槽 /
         # 账号锁上等待，那段等待必须让客户端看到 queued（排队中）。真正拿到账号
@@ -656,12 +661,36 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
 
         # 每个号的 dola 回执原话（按尝试顺序），面板把当前号显示在前、其它号折叠
         note_state: dict = {"account": None, "notes": []}
+        try:
+            history = json.loads((store.get(task_id) or {}).get("attempt_history") or "[]")
+        except (ValueError, TypeError):
+            history = []
+        current_attempt = None
+
+        def save_history():
+            del history[:-100]
+            payload = json.dumps(history, ensure_ascii=False)
+            while len(payload.encode('utf-8')) > 65536 and len(history) > 1:
+                history.pop(0)
+                payload = json.dumps(history, ensure_ascii=False)
+            store.update(task_id, attempt_history=payload)
+
+        def on_attempt_end(account, attempt, started, error):
+            if current_attempt is not None:
+                current_attempt.update(finished_at=time.time(), error=redact_error(error),
+                                       outcome="failed" if error else "completed")
+                save_history()
 
         def on_poll(now, note=None, wait_seconds=None, progress=None):
             fields = {"last_poll_at": now}
             if progress:
                 # 号池自己的进度说明（如「30 秒：等第 1 段出片」）：进「⏳」行，不当成 dola 原话
                 store.set_queue_note(task_id, progress)
+                if current_attempt is not None and current_attempt.get("stage") != progress:
+                    current_attempt["stage"] = redact_error(progress)[:240]
+                    current_attempt.setdefault("stages", []).append({"at": now, "stage": redact_error(progress)[:240]})
+                    current_attempt["stages"] = current_attempt["stages"][-12:]
+                    save_history()
             if note:
                 fields["upstream_note"] = note        # dola 回执原话（含「预计等待 N 分钟」）
                 acc = note_state["account"] or ""
@@ -678,9 +707,14 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         tried_accs: list[str] = []
 
         def on_account_try(account, attempt):
+            nonlocal current_attempt
             # 拿到账号即拿到并发槽 —— 此刻才算真正开始生成（等待期间保持 queued）。
             tried_accs.append(account)
             note_state["account"] = account
+            current_attempt = {"account": account, "attempt": attempt, "started_at": time.time(),
+                               "stage": "准备生成", "outcome": "running", "stages": []}
+            history.append(current_attempt)
+            save_history()
             fields = dict(status="processing", account=account, attempt=attempt, queue_note="",
                           conversation_id=None,
                           attempted_accounts=json.dumps(tried_accs, ensure_ascii=False),
@@ -702,7 +736,6 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                 store.update(task_id, reference_thumbs=json.dumps(thumbs))
         # 任务总时限内持续换号；到点不再派发新尝试。兜底超时额外留一次完整出片的等待时间，
         # 避免把已经在 Dola 端生成中的那一次强行中断（会白扣额度）。
-        task_deadline = time.time() + config.TASK_DEADLINE
         # 兜底总超时要容得下「最后一次出片」的完整等待：纯 API 会跟着上游「预计等待」
         # 放长到 DOLA_PURE_TIMEOUT_MAX，这里若只留 VIDEO_TIMEOUT（300 秒）会把它半路掐断。
         # 出片等待跟着 dola 的预计动态放长，最长 WAIT_HARD_MAX：兜底总超时要容得下
@@ -712,7 +745,15 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             # 30 秒每次出片最多等 LONG_VIDEO_TIMEOUT_MAX；只出了半截还要补后半段：最多等两次
             last_attempt_wait = 2 * max(last_attempt_wait, config.LONG_VIDEO_TIMEOUT_MAX)
         overall_timeout = config.TASK_DEADLINE + last_attempt_wait + 60
-        timeout_scope = asyncio.timeout(overall_timeout)
+        # Global-slot waiting has its own clock. Dispatch starts the attempt budget.
+        timeout_scope = asyncio.timeout(max(1, config.MAX_QUEUE_WAIT_SECONDS))
+        dispatched = False
+        def on_dispatch():
+            nonlocal dispatched
+            if (store.get(task_id) or {}).get("status") not in ("queued", "processing"):
+                raise RuntimeError("任务已结束，不再提交生成")
+            dispatched = True
+            timeout_scope.reschedule(asyncio.get_running_loop().time() + overall_timeout)
         try:
             async with timeout_scope:
                 result = await pool.generate_video(
@@ -720,13 +761,16 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                     on_conversation_id=on_conversation_id, on_poll=on_poll,
                     reference_image_paths=reference_paths,
                     on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
-                    deadline=task_deadline,
+                    attempt_timeout=config.TASK_DEADLINE, on_dispatch=on_dispatch,
+                    on_attempt_end=on_attempt_end,
                     on_wait=lambda note: store.set_queue_note(task_id, note))
         except TimeoutError:
             # TimeoutError is also raised by upload/navigation/polling. Preserve that
             # stage-specific error unless THIS outer timeout actually expired.
             if not timeout_scope.expired():
                 raise
+            if not dispatched and not tried_accs:
+                raise RuntimeError(f"排队等待超过 {config.MAX_QUEUE_WAIT_SECONDS // 60} 分钟，尚未提交生成")
             chain = "、".join(tried_accs) or "无"
             raise RuntimeError(
                 f"等待出片超过 {overall_timeout // 60} 分钟仍未完成，任务失败（已尝试账号: {chain}）")
@@ -764,6 +808,11 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         except Exception as exc:  # noqa: BLE001 - 取回只是补救，不能影响失败落库
             print(f"[recover] {task_id} 启动自动取回失败: {exc}", flush=True)
     finally:
+        if 'current_attempt' in locals() and current_attempt is not None and current_attempt.get("outcome") == "running":
+            final_row = store.get(task_id) or {}
+            current_attempt.update(finished_at=time.time(), outcome=final_row.get("status", "interrupted"),
+                                   error=redact_error(final_row.get("error") or ""))
+            save_history()
         if reference_root:
             shutil.rmtree(reference_root, ignore_errors=True)
         # 落盘的参考图只在任务**走到终态**时清理：任务被取消/服务重启时它还要留给
@@ -2138,22 +2187,22 @@ async def _verify_account_once(name: str) -> dict:
         creds = cred_store.load(name)
         if creds and creds.get("password"):
             try:
-                async with ADD_ACCOUNT_SEM:
+                async with ADD_ACCOUNT_SEM, pool._use_account(name, "verifying"):
                     ADD_SEM_HOLDER["what"] = f"{name} 验证重登"
                     try:
                         await add_account_flow(
                             name, creds["email"], creds["password"], creds.get("totp") or "",
                             force_login=True)
+                        pool.set_email(name, creds["email"])
+                        pool.set_login_status(name, True)
+                        ok, reason = await pool._verify_account_detail_locked(name)
                     finally:
                         ADD_SEM_HOLDER["what"] = ""
-                pool.set_email(name, creds["email"])
-                pool.set_login_status(name, True)
-                ok, reason = await pool.verify_account_detail(name)
                 refreshed = True
             except Exception as exc:
                 ok = False
                 refreshed = False
-                reason = f"自动重登失败: {str(exc)[:160]}"
+                reason = f"自动重登失败: {redact_error(exc)[:160]}"
     return {"ok": ok, "refreshed": refreshed, "reason": reason}
 
 

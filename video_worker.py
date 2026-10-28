@@ -75,6 +75,8 @@ async ({conversationId, msToken, fp}) => {
     (((data.downlink_body || {}).pull_singe_chain_downlink_body) || {}).messages || [];
   const texts = [];
   const assistantTexts = [];
+  const assistantMessages = [];
+  const userIndices = [];
   const videos = [];
   const videoModels = [];
   const addText = (target, text) => {
@@ -86,8 +88,10 @@ async ({conversationId, msToken, fp}) => {
     if (!msg || typeof msg !== 'object') continue;
     // Chain messages use user_type (1=user, 2=assistant), unlike SSE roles.
     const userType = Number(msg.user_type);
+    if (userType === 1 && /^\d+$/.test(String(msg.index_in_conv))) userIndices.push(BigInt(msg.index_in_conv));
     const isAssistant = userType === 2 || (userType !== 1 &&
       (msg.role === 'assistant' || (msg.sender || {}).role === 'assistant'));
+    const messageTexts = [];
     let legacy = msg.content;
     if (typeof legacy === 'string') {
       try { legacy = JSON.parse(legacy); } catch (e) { legacy = []; }
@@ -104,7 +108,7 @@ async ({conversationId, msToken, fp}) => {
       if (typeof text === 'string' && text.trim()) {
         hasText = true;
         addText(texts, text);
-        if (isAssistant) addText(assistantTexts, text);
+        if (isAssistant) { addText(assistantTexts, text); addText(messageTexts, text); }
       }
       if (block.block_type !== 2074) continue;
       const creations = (((block.content || {}).creation_block) || {}).creations || [];
@@ -121,9 +125,22 @@ async ({conversationId, msToken, fp}) => {
       const brief = msg.brief || (msg.ext || {}).brief;
       addText(texts, brief);
       addText(assistantTexts, brief);
+      addText(messageTexts, brief);
     }
+    if (isAssistant) assistantMessages.push({
+      id: String(msg.message_id || ''),
+      index: /^\d+$/.test(String(msg.index_in_conv)) ? String(msg.index_in_conv) : null,
+      text: messageTexts.join('\n'),
+    });
   }
-  return {ok: true, status: resp.status, texts, assistantTexts, videos, videoModels};
+  // Only an explicitly ordered latest assistant turn may drive automated actions.
+  const ordered = assistantMessages.filter(m => m.index !== null);
+  ordered.sort((a,b) => BigInt(a.index) < BigInt(b.index) ? -1 : BigInt(a.index) > BigInt(b.index) ? 1 : 0);
+  let latestAssistant = ordered.length === assistantMessages.length && ordered.length
+    ? ordered[ordered.length - 1] : null;
+  // A newer user turn means the earlier assistant question/refusal is stale.
+  if (latestAssistant && userIndices.some(index => index >= BigInt(latestAssistant.index))) latestAssistant = null;
+  return {ok: true, status: resp.status, texts, assistantTexts, latestAssistant, videos, videoModels};
 }
 """
 
@@ -191,12 +208,22 @@ async def _download(url: str, account: str) -> Path:
     dl_dir.mkdir(parents=True, exist_ok=True)
     fname = dl_dir / f"{account}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
     timeout = aiohttp.ClientTimeout(total=300)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, proxy=proxy_store.account_proxy_url(account)) as resp:
-            resp.raise_for_status()
-            with open(fname, "wb") as f:
-                async for chunk in resp.content.iter_chunked(1 << 16):
-                    f.write(chunk)
+    from account_transport import http_proxy
+    from generation_errors import UpstreamReplyError
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, proxy=http_proxy(account)) as resp:
+                resp.raise_for_status()
+                with open(fname, "wb") as f:
+                    async for chunk in resp.content.iter_chunked(1 << 16):
+                        f.write(chunk)
+    except asyncio.CancelledError:
+        fname.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        fname.unlink(missing_ok=True)
+        raise UpstreamReplyError("网络失败",
+            f"视频已生成但下载失败（{type(exc).__name__}）；已保留原会话，未换号重新生成") from None
     return fname
 
 

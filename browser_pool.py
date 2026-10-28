@@ -4,6 +4,7 @@ v2：accounts_meta 元数据表（调度开关/备注/登录态缓存/风控冷�
 配额计数落 SQLite（pool_usage.db），保守计数：出片成功或额度报错才记 1 次。
 """
 import asyncio
+from contextlib import asynccontextmanager
 import logging
 import shutil
 import sqlite3
@@ -14,7 +15,8 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from dola_client import CreditError
-from generation_errors import PreSubmissionUploadError, PreSubmissionParametersError
+from generation_errors import PreSubmissionUploadError, PreSubmissionParametersError, UploadRouteError, UpstreamReplyError
+from account_transport import diagnose_upload_route, redact_error
 from video_worker_ui import (
     AccountLimitedError, CreditInsufficientError, LoginExpiredError, RiskControlError,
     generate_video, resume_video,
@@ -261,6 +263,17 @@ class AllAccountsGroupEmptyError(RuntimeError):
 
 
 class BrowserPool:
+    @asynccontextmanager
+    async def _use_account(self, account, operation):
+        lock = self._locks.setdefault(account, asyncio.Lock())
+        async with lock:
+            self._activities[account] = operation
+            try:
+                yield
+            finally:
+                self._activities.pop(account, None)
+                self._phases.pop(account, None)
+
     @property
     def max_concurrency(self):
         return self.semaphore.limit
@@ -276,6 +289,9 @@ class BrowserPool:
         # 0（或负数）= 取消全局并发闸门。
         self.semaphore = AdjustableConcurrency(max_concurrency)
         self._locks: dict[str, asyncio.Lock] = {}
+        self._activities = {}
+        self._phases = {}
+        self._upload_routes = {}
         self._browser_probe_lock = asyncio.Lock()
         self._fail_until: dict[str, float] = {}
         self._fail_streak: dict[str, int] = {}   # 连续失败计数（内存，成功即清零）
@@ -741,6 +757,8 @@ class BrowserPool:
                 "limit": limit,
                 "remaining": max(0, limit - used),
                 "busy": bool(lock and lock.locked()),
+                "operation": self._activities.get(a, "occupied" if lock and lock.locked() else ""),
+                "operation_phase": self._phases.get(a, ""),
                 "risk_since": m["risk_since"] if m else 0,
                 "abnormal_until": m["abnormal_until"] if m else 0,
                 "abnormal_reason": m["abnormal_reason"] if m else "",
@@ -750,7 +768,7 @@ class BrowserPool:
             })
         for a in out:
             a["group"], a["group_reason"] = group_of(
-                a, now, busy=a["busy"], processing_accounts=processing_accounts)
+                a, now, busy=a["busy"] and a["operation"] not in ("verifying", "probing", "occupied"), processing_accounts=processing_accounts)
         return out
 
     def _derive_status(self, m, now: float) -> str:
@@ -948,7 +966,7 @@ class BrowserPool:
                     return pending("账号已被其他任务占用，本次未启动浏览器")
                 if self.egress_throttle_remaining(name) > 0:
                     return pending("账号出口仍在限流退避，本次未发送问候")
-                async with lock:
+                async with self._use_account(name, "probing"):
                     from browser_hello_probe import probe_browser_hello
                     result = await probe_browser_hello(name, timeout=config.HELLO_PROBE_TIMEOUT)
                     if result.get("status") == "unconfirmed":
@@ -1078,8 +1096,8 @@ class BrowserPool:
             raise FileNotFoundError(f"profile 不存在: {name}")
         lock = self._locks.setdefault(name, asyncio.Lock())
         if lock.locked():
-            raise RuntimeError("账号正在出片，稍后再验证")
-        async with lock:
+            raise RuntimeError("账号正在生成、验证或探测，稍后再验证")
+        async with self._use_account(name, "verifying"):
             return await self._verify_account_detail_locked(name)
 
     async def _verify_account_detail_locked(self, name: str) -> tuple[bool, str]:
@@ -1493,6 +1511,23 @@ class BrowserPool:
         浏览器 profile 对 cookie 号不可靠（导入的浏览器会话常显示已登出），
         所以 cookie 号只用纯 API；login 号走浏览器出片。
         """
+        original_poll = on_poll
+        def report_poll(now, **fields):
+            progress = fields.get("progress")
+            if progress:
+                if "下载" in progress:
+                    phase = "下载 / 处理中"
+                elif "查询视频" in progress or "等待上游" in progress:
+                    phase = "等待上游结果"
+                elif "上传" in progress:
+                    phase = "上传参考图"
+                else:
+                    phase = "准备生成"
+                self._phases[account] = phase
+            if original_poll:
+                original_poll(now, **fields)
+        on_poll = report_poll
+
         pure_state = self._pure_state(account)
         site = self.site_of(account)
         if site == sites.DOUBAO or sites.is_doubao_model(model):
@@ -1594,7 +1629,7 @@ class BrowserPool:
             model = "doubao-seedance-2.0-mini"
             duration = max(sites.DOUBAO_MIN_DURATION, min(15, int(duration or 5)))
         lock = self._locks.setdefault(account, asyncio.Lock())
-        async with self.semaphore, lock:
+        async with self.semaphore, self._use_account(account, "generating"):
             cost = self._duration_cost(model, duration)
 
             def on_balance(balance, source=""):
@@ -1678,7 +1713,7 @@ class BrowserPool:
                     await asyncio.sleep(WAIT_FREE_ACCOUNT_STEP)      # 能接的号都在出片：等一会儿再挑
                     continue
                 account = free[0]["name"]
-                async with self._locks[account]:
+                async with self._use_account(account, "generating"):
                     tried.append(account)
                     probe = await self.probe_hello_async(account)
                     if not probe.get("ok"):
@@ -1886,7 +1921,7 @@ class BrowserPool:
         """恢复已受理会话；不参与选号，也不因账号当前额度状态跳过。"""
         async with self.semaphore:
             lock = self._locks.setdefault(account, asyncio.Lock())
-            async with lock:
+            async with self._use_account(account, "recovering"):
                 def on_balance(balance, source=""):
                     self._set_credit_balance(account, balance, source)
                 try:
@@ -1916,7 +1951,9 @@ class BrowserPool:
                              on_poll=None, on_balance=None,
                              reference_image_paths: list[str] | None = None,
                              on_account_try=None, max_attempts: int = 3,
-                             deadline: float | None = None, on_wait=None) -> dict:
+                             deadline: float | None = None, on_wait=None,
+                             attempt_timeout: float | None = None, on_dispatch=None,
+                             on_attempt_end=None) -> dict:
         """挑一个可调度且空闲的号出片；失败自动换号重试（最多 max_attempts 次）。
 
         on_wait(note)：排队 / 换号时回传一句给人看的原因（含 dola 原话），面板「报错/备注」显示。
@@ -1931,7 +1968,12 @@ class BrowserPool:
         - max_attempts <= 0 表示不限次数：在 deadline（任务总时限）之前一轮轮换号重试，
           到点仍未出片才判失败。
         """
+        if on_wait:
+            on_wait("排队中：等待全局并发名额")
         async with self.semaphore:
+            dispatched = False
+            if attempt_timeout is not None:
+                deadline = time.time() + max(1, config.MAX_QUEUE_WAIT_SECONDS)
             self._sync_engine()
             cost = self._duration_cost(model, duration)
             allowed_groups = self._allowed_quota_groups(model, duration)
@@ -2027,15 +2069,26 @@ class BrowserPool:
                     if config.ISOLATE_SHARED_EGRESS and self._egress_blocked(a["name"]):
                         continue
                     account = a["name"]
+                    route = self._upload_routes.get(self._safe_egress(account))
+                    if reference_image_paths and route and route["until"] > time.time():
+                        last_err = PreSubmissionUploadError(route["reason"])
+                        say(f"上传线路暂时暂停：{route['reason']}；请选择可用代理或等待恢复")
+                        continue
                     lock = self._locks.setdefault(account, asyncio.Lock())
                     # 并发任务跳过已占用账号，避免多个请求排队到同一个 profile。
                     if lock.locked():
                         waiting_possible = True
                         busy_names.append(account)
                         continue
-                    async with lock:
+                    async with self._use_account(account, "generating"):
                         if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                             continue  # 等待期间状态变化
+                        if not dispatched:
+                            dispatched = True
+                            if attempt_timeout is not None:
+                                deadline = time.time() + attempt_timeout
+                            if on_dispatch:
+                                on_dispatch()
                         # 派发前先发一句「你好」：被登出/没回复 → 该号进【风控】组，换下一个号。
                         probe = await self.probe_hello_async(account)
                         if not probe.get("ok"):
@@ -2059,15 +2112,35 @@ class BrowserPool:
                         attempt += 1
                         if on_account_try:
                             on_account_try(account, attempt)
+                        attempt_started = time.time()
+                        attempt_error = None
+                        last_err = None
                         try:
                             def on_balance(balance, source=""):
                                 self._set_credit_balance(account, balance, source)
 
-                            result = await self._generate_effective(
-                                account, prompt, ratio, duration, model=model,
-                                on_conversation_id=on_conversation_id, on_poll=on_poll,
-                                on_balance=on_balance,
-                                reference_image_paths=reference_image_paths)
+                            # Synchronous pure-API workers own their network timeouts;
+                            # cancelling to_thread would not stop their submission.
+                            browser_preparation = not self.is_pure_account(account) and want_site == sites.DOLA
+                            preparation = asyncio.timeout(config.PREPARE_TIMEOUT if browser_preparation else None)
+                            def acknowledged(*args):
+                                if browser_preparation and not preparation.expired():
+                                    preparation.reschedule(None)
+                                if on_conversation_id:
+                                    on_conversation_id(*args)
+                            try:
+                                async with preparation:
+                                    result = await self._generate_effective(
+                                        account, prompt, ratio, duration, model=model,
+                                        on_conversation_id=acknowledged, on_poll=on_poll,
+                                        on_balance=on_balance,
+                                        reference_image_paths=reference_image_paths)
+                            except TimeoutError:
+                                if preparation.expired():
+                                    raise TimeoutError(
+                                        f"提交准备超时：{config.PREPARE_TIMEOUT}s 内未确认上游会话；"
+                                        "提交结果不确定，未自动换号重提")
+                                raise
                             self._claim_for(account, cost, result)
                             self._conn.execute(
                                 "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
@@ -2101,6 +2174,7 @@ class BrowserPool:
                             self._mark_quota_blocked(account, str(e))
                             last_err = e
                         except UnsupportedDurationError as e:
+                            attempt_error = e
                             # 上游明确说这个时长不支持：换号也是同样回答，直接失败、别再挨个号白撞
                             print(f"[pool] {account} 时长不支持，任务直接失败: {e}", flush=True)
                             raise RuntimeError(str(e)) from e
@@ -2136,12 +2210,27 @@ class BrowserPool:
                                 (time.time() + COOLDOWN_SEC, account))
                             self._conn.commit()
                             last_err = e
+                        except UpstreamReplyError as e:
+                            attempt_error = e
+                            raise
                         except (PreSubmissionUploadError, PreSubmissionParametersError) as e:
                             # Upload or parameter selection failed before the browser sent the generation prompt.
                             # Safe to try another account using its own profile/proxy.
                             # Do not consume quota or mark the account as risk-controlled.
                             last_err = e
+                            if isinstance(e, UploadRouteError):
+                                route_key = self._safe_egress(account)
+                                # Pause first so concurrent dispatches do not stampede the same route.
+                                record = {"until": time.time() + 300, "reason": redact_error(e)}
+                                self._upload_routes[route_key] = record
+                                diagnostic = await asyncio.to_thread(diagnose_upload_route, account, e.host)
+                                record["reason"] += "；" + diagnostic["detail"]
+                                record["until"] = time.time() + (300 if diagnostic['reachable'] is False else 30)
+                                if on_poll:
+                                    from browser_feedback import emit
+                                    emit(on_poll, progress=record["reason"])
                         except TimeoutError as e:
+                            attempt_error = e
                             # 请求已拿到 conversation_id 后仍可能在 Dola 端继续生成。
                             # 未成功出片不扣点（2026-09-02 规则）；也绝不能换号重提
                             # （Dola 端可能仍在生成，会重复出片）。
@@ -2169,6 +2258,13 @@ class BrowserPool:
                                 self.note_egress_throttle(account, message)
                                 self.note_account_throttle(account, message)
                             last_err = e
+                        finally:
+                            if on_attempt_end:
+                                import sys
+                                error = attempt_error or sys.exc_info()[1] or last_err
+                                detail = ("任务中断，已保留可恢复的会话" if isinstance(error, asyncio.CancelledError)
+                                          else redact_error(error) if error else "")
+                                on_attempt_end(account, attempt, attempt_started, detail)
                         self._mark_attempt_failed(account)
                         say(f"{account} 没出成（{str(last_err or '')[:150]}）→ 换下一个号")
                         tried.add(account)

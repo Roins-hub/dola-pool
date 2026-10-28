@@ -1,0 +1,51 @@
+"""Conservative classification of assistant replies, never user prompt echoes."""
+import re
+
+QUOTA_RE = re.compile(
+    r'余额不足|餘額不足|额度不足|額度不足|额度耗尽|額度耗盡|残高不足|'
+    r'クレジット(?:が|は)?不足|积分不足|insufficient\s+(?:credits?|balance|quota)|'
+    r'(?:credits?|quota)\s+(?:exhausted|depleted)|한도.*부족|부족.*한도', re.I)
+CONTENT_RE = re.compile(
+    r'肖像保[护護]|肖像权|未认证人脸|実在する人物.*(?:対応していません|対応しておりません)|'
+    r'审核不通过|未通过.{0,8}审核|内容审核.{0,8}(?:失败|拒绝|违规|不通过)|违反社区|'
+    r'copyright.{0,25}(?:infringement|violation|not allowed)|著作権.{0,20}(?:侵害|保護)|portrait protection|'
+    r'(?:real people|real person).*(?:not supported|cannot)', re.I | re.S)
+MISSING_RE = re.compile(
+    r'缺少(?:核心内容|提示词|参考图|必要信息)|请(?:先)?(?:提供|上传|输入).{0,12}(?:提示词|参考图片|主题)|'
+    r'(?:please|need to)\s+(?:provide|upload|enter).{0,25}(?:prompt|reference image|subject)|'
+    r'内容を入力してください|画像をアップロードしてください', re.I)
+FAILED_RE = re.compile(
+    r'無法生成|无法生成|不能生成|无法完成|無法完成|生成できません|'
+    r'生成することができません|unable to (?:generate|create)|failed to (?:generate|create)|'
+    r'video generation (?:is )?not possible|generation failed|動画生成に失敗|'
+    r'エラーが発生|サーバーエラー|内部エラー|システムエラー|unexpected error|'
+    r'an error occurred|something went wrong|request failed', re.I)
+NETWORK_RE = re.compile(r'通信エラー|ネットワークエラー|network error|connection (?:failed|reset)|网络(?:错误|失败)', re.I)
+
+
+def reply_failure(text):
+    """Return an explicit category; an acceptance phrase cannot override a refusal."""
+    for category, pattern in [('内容拒绝', CONTENT_RE), ('额度不足', QUOTA_RE),
+                              ('需要补充信息', MISSING_RE), ('网络失败', NETWORK_RE),
+                              ('上游生成失败', FAILED_RE)]:
+        if pattern.search(text or ''):
+            return category
+    return None
+
+
+def duration_reply(text, duration, ratio=None):
+    """Reply only to an explicit duration question/options in the latest assistant turn."""
+    if not text or not duration or reply_failure(text):
+        return None
+    clean = text.replace('**', '')
+    options = list(re.finditer(r'(?<!\w)([A-D])\s*[.．、)）]\s*(\d+)\s*(?:秒|s\b|seconds?\b)', clean, re.I))
+    asks = re.search(r'選んで|選択|指定|请选择|选择|确认|choose|select|which|何秒|几秒|時長|时长|秒数', clean, re.I)
+    if options and asks:
+        for option in options:
+            if int(option[2]) == duration:
+                return f'{option[1].upper()}. {duration}秒'
+        return None
+    if re.search(r'(?:秒数|時長|时长|duration).{0,35}(?:指定|選択|選んで|请选择|选择|确认|choose|select)|'
+                 r'(?:choose|select|specify).{0,20}duration|何秒(?:に|で)|需要几秒', clean, re.I):
+        return f'{ratio or "16:9"}、{duration}秒'
+    return None
