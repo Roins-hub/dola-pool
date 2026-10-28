@@ -281,6 +281,11 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 
 ## 主要配置
 
+参考图片单文件默认上限为 **20 MiB（20,971,520 字节）**，对齐 2026-10-28
+[Dola 官网聊天页脚本](https://sf-flow-web-cdn.ciciai.com/obj/ocean-flow-web-sg/dola_web/static/js/chat.d5d9e59a68.js)
+中的 `uploadMultiEntityConf.maxImageSize = 0x1400000`。这是原图接收配置，
+不是所有模型的永久上限；Dola 网页后续仍可能压缩图片或执行模型专属校验。
+
 ### 后台调整全局并发
 
 在管理后台左侧点击 **全局并发**，输入同时处理的任务数并点击 **保存并生效**。
@@ -300,6 +305,8 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `DOLA_VIDEO_MAX_ATTEMPTS` | `0` | 单任务最多尝试次数，`0` 表示不限、只受总时限约束 |
 | `DOLA_MAX_CONCURRENCY` | `0` | 全局并发初始值，0 = 不限；后台保存的值优先 |
 | `DOLA_MAX_PENDING_TASKS` | `100` | 待处理任务上限，超过返回 429 |
+| `DOLA_REFERENCE_IMAGE_MAX_BYTES` | `20971520` | 每张原始参考图最多 20 MiB；URL 下载和 Base64 输入使用同一限制 |
+| `DOLA_REFERENCE_TOTAL_MAX_BYTES` | `62914560` | Base64 参考图落盘时的单次累计限制，60 MiB |
 | `DOLA_DAILY_LIMIT` | `4` | 每账号每日额度点数 |
 | `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `Asia/Tokyo` / `0` | 每日额度重置时区与时刻 |
 | `DOUBAO_ALLOW_PAID` | `1` | 豆包号免费额度用完后是否自动确认走付费额度；`0` = 换号 |

@@ -236,7 +236,9 @@ ALL_DURATIONS = all_durations()
 
 
 # 公网参考图片下载限制
-REFERENCE_IMAGE_MAX_BYTES = int(os.getenv("DOLA_REFERENCE_IMAGE_MAX_BYTES", str(15 * 1024 * 1024)))
+# Dola web chat uploadMultiEntityConf.maxImageSize = 0x1400000 (2026-10-28).
+# This is the incoming original-image limit; the website may compress it later.
+REFERENCE_IMAGE_MAX_BYTES = int(os.getenv("DOLA_REFERENCE_IMAGE_MAX_BYTES", str(20 * 1024 * 1024)))
 REFERENCE_DOWNLOAD_TIMEOUT = int(os.getenv("DOLA_REFERENCE_DOWNLOAD_TIMEOUT", "60"))
 REFERENCE_IMAGE_MAX_COUNT = int(os.getenv("DOLA_REFERENCE_IMAGE_MAX_COUNT", "30"))
 # 内联参考图（data: URL）落盘目录：几 MB 的 base64 绝不写进 tasks.db（会把库撑到几百 MB）

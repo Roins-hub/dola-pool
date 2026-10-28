@@ -18,6 +18,11 @@ _ALLOWED_IMAGE_FORMATS = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}
 _DATA_URL_RE = "data:image/"
 
 
+def _image_size_error() -> ValueError:
+    limit = config.REFERENCE_IMAGE_MAX_BYTES
+    return ValueError(f"参考图片超过单文件大小限制：每张最多 {limit / (1024 * 1024):g} MiB（{limit:,} 字节）")
+
+
 def _is_data_image(url: str) -> bool:
     return isinstance(url, str) and url.startswith(_DATA_URL_RE) and ";base64," in url
 
@@ -157,7 +162,7 @@ def _decode_data_image(url: str) -> tuple[bytes, str]:
     except Exception as exc:
         raise ValueError("参考图片 data URL base64 无效") from exc
     if len(data) > config.REFERENCE_IMAGE_MAX_BYTES:
-        raise ValueError("参考图片超过单文件大小限制")
+        raise _image_size_error()
     try:
         with Image.open(BytesIO(data)) as image:
             image.verify()
@@ -270,13 +275,13 @@ async def validate_reference_urls(urls: list[str]) -> list[str]:
 async def _read_response_image(resp: aiohttp.ClientResponse) -> tuple[bytes, str]:
     content_length = resp.headers.get("Content-Length")
     if content_length and int(content_length) > config.REFERENCE_IMAGE_MAX_BYTES:
-        raise ValueError("参考图片超过单文件大小限制")
+        raise _image_size_error()
     chunks = []
     total = 0
     async for chunk in resp.content.iter_chunked(64 * 1024):
         total += len(chunk)
         if total > config.REFERENCE_IMAGE_MAX_BYTES:
-            raise ValueError("参考图片超过单文件大小限制")
+            raise _image_size_error()
         chunks.append(chunk)
     data = b"".join(chunks)
     try:
