@@ -661,5 +661,8 @@
  "正在读取当前会话的登录确认": "Đang đọc xác nhận đăng nhập của phiên hiện tại",
  "未收到快速确认，正在检查登录稳定性": "Chưa nhận được xác nhận nhanh, đang kiểm tra độ ổn định đăng nhập",
  "正在关闭验证浏览器": "Đang đóng trình duyệt xác minh",
- "登录已失效，正在自动重新登录": "Phiên đăng nhập đã hết hạn, đang tự động đăng nhập lại"
+ "登录已失效，正在自动重新登录": "Phiên đăng nhập đã hết hạn, đang tự động đăng nhập lại",
+ "历史加号失败（之后验证已通过）": "Lần thêm tài khoản trước thất bại (đã xác minh thành công sau đó)",
+ "查看加号失败原因": "Xem lý do thêm tài khoản thất bại",
+ "未记录原因": "Không ghi nhận lý do"
 }

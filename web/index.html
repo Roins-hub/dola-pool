@@ -572,6 +572,24 @@ function statusBadge(a){
   if(a.login_ok===0)return '<span class="badge b-red">登录失效</span>';
   return '<span class="tiny">—</span>';
 }
+function addJobRecovered(account,job){
+  return !!(job&&job.kind==='add'&&job.status==='failed'
+    &&account.login_ok===1&&Number(job.finished_at)>0
+    &&Number(account.login_checked_at)>Number(job.finished_at));
+}
+function accountRunBadge(account,job){
+  if(pendingVerifications.has(account.name)||account.busy)return statusBadge(account);
+  if(job&&job.kind==='add'&&job.status==='running')return '<span class="badge b-blue">加号中</span>';
+  if(job&&job.kind==='add'&&job.status==='failed'&&!addJobRecovered(account,job))
+    return '<span class="badge b-red">加号失败</span>';
+  return statusBadge(account);
+}
+function accountJobNote(account,job){
+  if(!job||job.status!=='failed')return '';
+  const recovered=addJobRecovered(account,job);
+  return '<details class="tiny"><summary>'+(recovered?'历史加号失败（之后验证已通过）':'查看加号失败原因')
+    +'</summary>'+noTr(job.error||'未记录原因')+'</details>';
+}
 
 function table(heads,rows){
   return `<table><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
@@ -753,16 +771,14 @@ function renderAccounts(){
   if(accPage<1)accPage=1;
   const rows=pageSlice().map(x=>{
     const jb=jobs[x.name];
-    const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">加号中</span>'
-      :(jb&&jb.kind==='add'&&jb.status==='failed')?'<span class="badge b-red">加号失败</span>'
-      :statusBadge(x);
+    const badge=accountRunBadge(x,jb);
     // 动态代理账号：显示当前出口 IP，并提供换IP/探测
     const ipInfo=x.proxy_mode==='dynamic'
       ?`<div class="tiny">出口 ${x.exit_ip?esc(x.exit_ip):'未探测'}
          <a href="javascript:;" onclick="rotateIp('${x.name}')">换IP</a>
          <a href="javascript:;" onclick="probeIp('${x.name}')">探测</a></div>`
       :'';
-    const warn=(jb&&jb.status==='failed')?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
+    const warn=accountJobNote(x,jb);
     return [
       `<input type="checkbox" data-name="${esc(x.name)}" ${selAccounts.has(x.name)?'checked':''} onchange="toggleSel('${x.name}',this.checked)">`,
       `<span class="account-id" translate="no">${esc(x.name)}</span>`,
