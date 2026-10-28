@@ -5,8 +5,8 @@
 
 # dola-pool
 
-**当前版本：v2.6.1** — 修复历史加号失败覆盖当前验证/生成状态，保留可展开的历史错误；
-包含 v2.6.0 的全局并发、任务诊断与验证提速。完整改动见 [更新日志](CHANGELOG.md)。
+**当前版本：v2.6.2** — 修复共享出口排队误报失败，任务列表适配宽屏；
+支持按任务声明纯 AI 参考图来源，提交时附加说明并保留用户原始提示词。完整改动见 [更新日志](CHANGELOG.md)。
 
 把一组 [dola.com](https://www.dola.com)（字节 Seedance 视频模型国际版）和 [豆包 doubao.com](https://www.doubao.com)（国内版）账号组成号池，对外提供 **OpenAI 兼容的视频生成 / 生图 API**，并兼容火山方舟（Ark）任务式协议，可直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
 
