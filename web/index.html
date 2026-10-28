@@ -888,7 +888,7 @@ async function recoverAccount(name,kind){
 async function verify(name,btn){
   btn.disabled=true;const old=btn.textContent;btn.textContent='验证中…';
   try{const r=await api('/api/admin/accounts/'+name+'/verify',{method:'POST'});
-    alert(dialogText`${name} 登录态：${r.ok?'有效✓':('失效✗'+(r.reason?'\n原因：'+r.reason:''))}`);
+    alert(dialogText`${name} 登录态：${r.ok?'有效✓（仅确认登录状态，不代表一定能出片）':('失效✗'+(r.reason?'\n原因：'+r.reason:''))}`);
   }catch(e){alert(dialogText`${e.message}`);}
   btn.disabled=false;btn.textContent=old;refresh();
 }
@@ -2193,7 +2193,7 @@ function noteToggle(el){if(el.open)OPEN_NOTES.add(el.dataset.k);else OPEN_NOTES.
 function foldText(k,label,text,limit){
   text=String(text||'').replace(/\*\*/g,'');   // dola 回执带 Markdown 粗体标记
   if(text.length<=limit)return '<div class="tiny note-line">'+label+noTr(text)+'</div>';
-  return '<details class="tiny note-line task-attempt-history" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
+  return '<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
     +'<summary>'+label+noTr(text.slice(0,limit))+'<span class="ell">…</span></summary>'+noTr(text.slice(limit))+'</details>';
 }
 /** dola 回执原话：当前号的在前（长了折叠），前面换过的号收进「前面 N 个号的回复」。
@@ -2219,7 +2219,7 @@ function attemptHistory(t){
   let rows=[];try{rows=JSON.parse(t.attempt_history||'[]');}catch(e){}
   if(!Array.isArray(rows)||!rows.length)return '';
   const k=t.id+':attempts';
-  return '<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
+  return '<details class="tiny note-line task-attempt-history" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
     +'<summary>尝试记录（'+rows.length+'）</summary>'
     +rows.map(r=>'<div style="margin:8px 0">'+noTr(r.account||'')+' · '+esc(r.stage||'准备生成')
       +' · '+fmtDur(Math.max(0,(r.finished_at||Date.now()/1000)-(r.started_at||Date.now()/1000)))

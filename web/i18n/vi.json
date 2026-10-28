@@ -651,5 +651,6 @@
  "等待上游结果": "Đang chờ kết quả từ dịch vụ",
  "上传参考图": "Đang tải ảnh tham chiếu",
  "下载 / 处理中": "Đang tải xuống / xử lý",
- "尝试记录（{0}）": "Lịch sử thử ({0})"
+ "尝试记录（{0}）": "Lịch sử thử ({0})",
+ "有效✓（仅确认登录状态，不代表一定能出片）": "Hợp lệ✓ (chỉ xác nhận đăng nhập, không đảm bảo tạo được video)"
 }
