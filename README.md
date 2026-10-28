@@ -244,6 +244,31 @@ curl -o out.mp4 https://your-domain/v1/videos/video_xxx/content -H "Authorizatio
 
 参考图可用 `reference_images`、`image_url`、`image`、`input_image(s)` 任一字段传公网 URL；时长字段兼容 `duration` / `seconds` / `duration_seconds`。
 
+### 纯 AI 参考图来源说明（按任务选择）
+
+只有确认本次全部参考图中的人物均为纯 AI 生成的虚构角色时，才传
+`"reference_source": "ai_generated"`。服务在提交视频生成时附加来源说明，
+任务列表、提示词弹窗、复制和 API 返回的 `prompt` 仍保留用户原文。
+来源标记和附加说明分别保存在任务的 `reference_source`、`prompt_supplement` 字段，
+后台参考图旁显示“AI 素材”，重启恢复时沿用这条任务的说明。
+
+```json
+{
+  "model": "seedance-2.0-fast",
+  "prompt": "人物缓缓抬眸，花瓣飘落，镜头缓慢推进",
+  "duration": 10,
+  "ratio": "16:9",
+  "reference_images": ["https://your-domain/fictional-character.png"],
+  "reference_source": "ai_generated"
+}
+```
+
+默认值为 `unspecified`，省略时不会附加说明，也不会根据图片外观或提示词猜测素材来源。
+无参考图却选择 `ai_generated`、或传入其他来源值会返回 422。
+OpenAI JSON、multipart（`-F reference_source=ai_generated`）和 Ark 任务接口均支持该字段；
+经 new-api 转发时需要调用方和中间渠道保留这个顶层字段，未透传则不启用。
+这只是如实说明素材来源，不是解除肖像保护的开关，不保证通过上游审核；内容拒绝仍正常结束任务。
+
 豆包号的视频把模型换成 `doubao-seedance-*` 即可（时长 4～15 秒任意整数，2.5 到 30 秒）：
 
 ```bash

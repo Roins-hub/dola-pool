@@ -22,7 +22,7 @@ import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +35,7 @@ import failure_text
 from account_transport import redact_error
 import proxy_store
 import sites
+from prompt_context import reference_supplement, submission_prompt
 from add_account import add_account_flow
 from cookie_login import import_cookie_account, import_cookie_accounts_from_text
 from cookie_export import CookieExportError, build_export
@@ -356,6 +357,7 @@ class VideoGenRequest(BaseModel):
     duration_seconds: int | None = Field(None, ge=4, le=30)
     # 参考图：兼容各画布工具的常见字段形态（字符串/数组/{"url": ...}）
     reference_images: list[str] = Field(default_factory=list)
+    reference_source: Literal["unspecified", "ai_generated"] = "unspecified"
     image_url: Any = None
     image: Any = None
     input_image: Any = None
@@ -757,7 +759,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         try:
             async with timeout_scope:
                 result = await pool.generate_video(
-                    prompt, ratio, duration, model,
+                    submission_prompt(prompt, (store.get(task_id) or {}).get("prompt_supplement") or ""),
+                    ratio, duration, model,
                     on_conversation_id=on_conversation_id, on_poll=on_poll,
                     reference_image_paths=reference_paths,
                     on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
@@ -1316,7 +1319,8 @@ async def create_video(request: Request, authorization: str | None = Header(defa
     refs = list(dict.fromkeys(refs + _deep_image_urls(raw)))
     if refs:
         print(f"[api] 收到参考图 {len(refs)} 张: {refs[0][:80]}", flush=True)
-    return await _submit_task(client, req.model, req.prompt, ratio, duration, refs)
+    return await _submit_task(client, req.model, req.prompt, ratio, duration, refs,
+                              reference_source=req.reference_source)
 
 
 def _data_url_from_upload(filename: str, data: bytes) -> str:
@@ -1349,7 +1353,7 @@ async def _raw_from_multipart(request: Request) -> dict[str, Any]:
                 break
             except ValueError:
                 continue
-    for key in ("size", "ratio", "aspect_ratio", "response_format"):
+    for key in ("size", "ratio", "aspect_ratio", "response_format", "reference_source"):
         value = form.get(key)
         if isinstance(value, str) and value.strip():
             raw[key] = value.strip()
@@ -1421,8 +1425,15 @@ def _check_doubao_model(model, duration) -> str:
     return sites.canonical_doubao_model(model)
 
 
-async def _submit_task(client, model, prompt, ratio, duration, reference_images):
+async def _submit_task(client, model, prompt, ratio, duration, reference_images,
+                       reference_source="unspecified"):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
+    try:
+        supplement = reference_supplement(reference_source, bool(reference_images))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if len(submission_prompt(prompt or "", supplement)) > config.MAX_PROMPT_CHARS:
+        raise HTTPException(422, f"提交提示词（含素材来源说明）超过 {config.MAX_PROMPT_CHARS} 字符上限")
     if sites.is_doubao_model(model):
         resolved = _check_doubao_model(model, duration)
     else:
@@ -1486,6 +1497,8 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images)
             daily_limit=client["daily_limit"],
             concurrency_limit=client["concurrency_limit"],
             max_pending=config.MAX_PENDING_TASKS,
+            reference_source=reference_source,
+            prompt_supplement=supplement,
         )
     except TaskQuotaExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
@@ -1697,7 +1710,8 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
             seconds = int(body.get("duration") or body.get("seconds") or 5)
         except (TypeError, ValueError):
             seconds = 5
-        resp = await _submit_task(client, requested_model, prompt, ratio, seconds, reference_images)
+        resp = await _submit_task(client, requested_model, prompt, ratio, seconds, reference_images,
+                                  reference_source=body.get("reference_source", "unspecified"))
         return {"id": resp.id, "status": resp.status}
     version = _model_version(requested_model)
     if version is not None:
@@ -1723,7 +1737,8 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
             f"（seedance-2.5 支持 {_supported_durations_for('seedance-2.5')} 秒，"
             f"seedance-2.0-fast 仅支持 {list(config.V20_DURATIONS)} 秒）",
         )
-    resp = await _submit_task(client, model, prompt, ratio, duration, reference_images)
+    resp = await _submit_task(client, model, prompt, ratio, duration, reference_images,
+                              reference_source=body.get("reference_source", "unspecified"))
     return {"id": resp.id, "status": resp.status}
 
 

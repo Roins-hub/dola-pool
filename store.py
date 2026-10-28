@@ -74,6 +74,8 @@ class TaskStore:
                 ("failure_code", "TEXT"),
                 ("reference_images", "TEXT"),
                 ("reference_thumbs", "TEXT"),
+                ("reference_source", "TEXT DEFAULT 'unspecified'"),
+                ("prompt_supplement", "TEXT DEFAULT ''"),
                 ("api_key_hash", "TEXT"),
                 ("api_key_name", "TEXT"),
                 ("started_at", "REAL"),
@@ -177,6 +179,8 @@ class TaskStore:
         "error": 2000,
         "reference_images": 8000,
         "reference_thumbs": 4000,
+        "reference_source": 32,
+        "prompt_supplement": 1000,
         "attempted_accounts": 4000,
         "conversation_id": 200,
         "video_url": 4000,
@@ -211,6 +215,8 @@ class TaskStore:
         daily_limit=0,
         concurrency_limit=0,
         max_pending=0,
+        reference_source="unspecified",
+        prompt_supplement="",
     ):
         now = time.time()
         clamped = self._clamp_fields({
@@ -219,6 +225,8 @@ class TaskStore:
             "ratio": ratio,
             "reference_images": reference_images or "[]",
             "api_key_name": api_key_name,
+            "reference_source": reference_source,
+            "prompt_supplement": prompt_supplement,
         })
         with _LOCK:
             if max_pending > 0:
@@ -244,8 +252,9 @@ class TaskStore:
                 "INSERT INTO tasks ("
                 "id,model,prompt,ratio,duration,status,account,created_at,updated_at,"
                 "conversation_id,deadline_at,last_poll_at,failure_code,reference_images,"
-                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit"
-                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?)",
+                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,"
+                "reference_source,prompt_supplement"
+                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?)",
                 (
                     task_id,
                     clamped["model"],
@@ -261,6 +270,8 @@ class TaskStore:
                     None,
                     None,
                     max(0, int(concurrency_limit or 0)),
+                    clamped["reference_source"],
+                    clamped["prompt_supplement"],
                 ),
             )
             self._conn.commit()

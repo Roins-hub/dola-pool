@@ -47,6 +47,7 @@ a{color:var(--accent);text-decoration:none}
 #lastUpdate{font-size:11.5px;color:var(--sub);text-align:center}
 #lastUpdate:empty{display:none}
 main{padding:26px 30px 44px;margin-left:262px;max-width:1320px}
+main.wide-tasks{max-width:none;min-width:0}
 .card{background:var(--glass);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
   border:1px solid var(--stroke);border-radius:var(--r);padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
 .card h3{font-size:14px;margin-bottom:14px;font-weight:600}
@@ -113,6 +114,26 @@ select option{background:#111827;color:var(--text)}
 input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
 #accountsTable,#proxiesTable,#tasksTable,#videosTable,#keysTable,#usersTable,#perAccount{overflow-x:auto}
 .task-attempt-history{min-width:280px;max-width:420px;overflow-wrap:anywhere}
+#tasksTable table{min-width:1450px;table-layout:fixed}
+#tasksTable th:nth-child(1){width:34px}
+#tasksTable th:nth-child(2){width:90px}
+#tasksTable th:nth-child(3){width:20%}
+#tasksTable th:nth-child(4){width:60px}
+#tasksTable th:nth-child(5){width:85px}
+#tasksTable th:nth-child(6){width:100px}
+#tasksTable th:nth-child(7){width:50px}
+#tasksTable th:nth-child(8){width:74px}
+#tasksTable th:nth-child(9){width:110px}
+#tasksTable th:nth-child(10){width:116px}
+#tasksTable th:nth-child(11){width:110px}
+#tasksTable td{overflow-wrap:anywhere;white-space:normal}
+#tasksTable td:nth-child(7),#tasksTable td:nth-child(8),#tasksTable td:nth-child(9),#tasksTable td:nth-child(10){white-space:nowrap}
+#tasksTable td:nth-child(12){min-width:280px}
+#tasksTable .prompt{max-width:100%}
+#tasksTable .err,#tasksTable .note,#tasksTable .task-attempt-history{max-width:none;min-width:0}
+#tasksTable .video-wrap{white-space:nowrap}
+#tasksTable td:nth-child(5) .notranslate{white-space:nowrap}
+#tasksTable .task-source{margin-top:6px}
 /* ptabs：添加代理弹窗的「标准添加 / 快捷添加」标签 */
 .ptabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:-4px 0 14px}
 .ptab{background:none;border:none;border-bottom:2px solid transparent;padding:8px 14px;margin-bottom:-1px;
@@ -365,7 +386,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
 
 <div id="dlg" class="dialog" style="display:none"><div class="box" id="dlgBox"></div></div>
 <div id="promptModal" class="dialog" style="display:none">
-  <div class="box" style="width:720px">
+  <div class="box" style="width:1040px">
     <h2>任务提示词</h2>
     <div class="tiny" id="promptMeta" style="margin-bottom:10px"></div>
     <div class="prompt-body" id="promptBody" translate="no"></div>
@@ -454,6 +475,7 @@ function logout(){adminKey='';localStorage.removeItem(LS_KEY);showLogin();}
 
 function switchTab(t){
   curTab=t;
+  q('main').classList.toggle('wide-tasks',t==='tasks');
   document.querySelectorAll('.side-nav .nav-item').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
   ['dash','accounts','proxies','tasks','videos','keys','users'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
   refresh();
@@ -2328,7 +2350,7 @@ async function loadTasks(){
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
     '<span class="prompt" translate="no" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>'
       +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">查看</button>',
-    refCell(t),
+    refCell(t)+(t.reference_source==='ai_generated'?'<div class="tiny task-source" title="调用方已声明参考图人物完全由 AI 生成；提交时附加来源说明">AI 素材</div>':''),
     accChain(t),
     t.api_key_name?noTr(t.api_key_name):'—',
     (t.duration||10)+'秒',
