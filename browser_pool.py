@@ -2008,6 +2008,8 @@ class BrowserPool:
             throttle_announced = False
             busy_announced = False
             busy_timeout = False
+            temporary_wait_deadline = time.time() + max(1, config.MAX_QUEUE_WAIT_SECONDS)
+            last_temporary_reason = ""
             non_pure_announced = False
             # max_attempts <= 0：不限次数，只要没到 deadline 就一轮轮换号重试。
             unlimited = max_attempts <= 0
@@ -2031,6 +2033,8 @@ class BrowserPool:
 
             while attempts_left() and time_left():
                 picked = False
+                temporary_reason = ""
+                temporary_delay = WAIT_FREE_ACCOUNT_STEP
                 waiting_possible = False
                 group_wait = False
                 throttle_wait = False
@@ -2040,7 +2044,7 @@ class BrowserPool:
                 non_pure: list[str] = []   # pair 单跳过的浏览器登录号（拼接只走纯 API）
                 busy_names: list[str] = []  # 能接单、但正被别的任务占着出片的号
                 for a in self._ordered_candidates(allowed_groups):
-                    if a["name"] in tried or self._recently_failed(a["name"]):
+                    if a["name"] in tried:
                         continue
                     # 站点要对上：dola 模型只派 dola 号，豆包模型只派豆包号
                     if a.get("site", sites.DOLA) != want_site:
@@ -2074,12 +2078,17 @@ class BrowserPool:
                         throttle_min = min(throttle_min, throttled)
                         continue
                     if config.ISOLATE_SHARED_EGRESS and self._egress_blocked(a["name"]):
+                        temporary_reason = "共享代理出口正在被其他任务占用或暂时暂停，等待释放（保持同出口隔离）"
                         continue
                     account = a["name"]
                     route = self._upload_routes.get(self._safe_egress(account))
                     if reference_image_paths and route and route["until"] > time.time():
-                        last_err = PreSubmissionUploadError(route["reason"])
-                        say(f"上传线路暂时暂停：{route['reason']}；请选择可用代理或等待恢复")
+                        remaining = route["until"] - time.time()
+                        temporary_reason = f"上传线路暂时暂停，约 {max(1, int(remaining))} 秒后重新检查；线路诊断：{route['reason']}"
+                        temporary_delay = min(temporary_delay, max(.05, remaining))
+                        continue
+                    if self._recently_failed(account):
+                        temporary_reason = "可用账号刚有失败尝试，等待短时冷却结束"
                         continue
                     lock = self._locks.setdefault(account, asyncio.Lock())
                     # 并发任务跳过已占用账号，避免多个请求排队到同一个 profile。
@@ -2278,7 +2287,7 @@ class BrowserPool:
                         tried_order.append(account)
                         if not attempts_left() or not time_left():
                             break
-                if (not picked and short_seen and not throttle_wait and not waiting_possible
+                if (not picked and short_seen and not throttle_wait and not waiting_possible and not temporary_reason
                         and not tried_order):
                     # 号都在、只是今日余额都不够这一单：等下去要等到明天额度重置，直接说清楚
                     best = max((a["remaining"] for a in self.list_accounts()
@@ -2292,7 +2301,7 @@ class BrowserPool:
                     non_pure_announced = True
                     print(f"[pool] 30 秒两段拼接只走纯 API（Cookie 导入的号），跳过浏览器登录号："
                           f"{'、'.join(non_pure)}", flush=True)
-                if (not picked and pair_job and not waiting_possible and not throttle_wait
+                if (not picked and pair_job and not waiting_possible and not throttle_wait and not temporary_reason
                         and not group_wait and not self._has_pure_candidate(cost)):
                     # 以前这里会静默空转到任务时限（2026-10-14 HK：只剩 Google 登录号，30 秒单卡在排队）
                     raise RuntimeError(
@@ -2300,6 +2309,17 @@ class BrowserPool:
                         f"现在没有这样的号可派"
                         + (f"（{'、'.join(non_pure)} 是浏览器登录号，不能接）" if non_pure else "")
                         + "；可改用 15 秒以内，或等每日额度重置")
+                if not picked and temporary_reason:
+                    # A borrowed route failure is a queue reason, not this task's attempt.
+                    # Never disable isolation or repeatedly reset the queue deadline.
+                    last_temporary_reason = temporary_reason
+                    limit = deadline if deadline is not None else temporary_wait_deadline
+                    remaining = limit - time.time()
+                    if remaining <= 0:
+                        break
+                    say(f"排队中：{temporary_reason}")
+                    await asyncio.sleep(min(max(.05, temporary_delay), remaining))
+                    continue
                 if not picked and throttle_wait:
                     # 还有号，只是它们的出口都在被上游限流：原地排队等出口恢复，
                     # 而不是换号硬撞（越撞限得越久），也不是立刻判失败。
@@ -2382,8 +2402,13 @@ class BrowserPool:
                 raise RuntimeError(
                     "可用账号的出口 IP 都被上游限流（710022002 当前服务访问频繁）且等待超时，"
                     "请稍后重试；长期出现请给账号绑定更多不同出口的代理")
+            if attempt == 0 and last_temporary_reason:
+                raise RuntimeError(
+                    f"排队等待超时，未分配账号、尚未提交生成：{last_temporary_reason}")
             if last_err is not None:
-                chain = "、".join(tried_order) if tried_order else str(last_err)
+                if attempt == 0:
+                    raise RuntimeError(f"尚未提交生成，未能取得可用账号：{redact_error(last_err)}")
+                chain = "、".join(tried_order) if tried_order else "无"
                 timed_out = deadline is not None and time.time() >= deadline
                 prefix = "超过任务时限仍未生成成功，" if timed_out else ""
                 raise RuntimeError(
