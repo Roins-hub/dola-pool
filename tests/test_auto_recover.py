@@ -49,6 +49,14 @@ def _run(coro):
     try:
         return loop.run_until_complete(coro)
     finally:
+        # The recovered status is stored before background pruning finishes.
+        # Closing the loop at that instant leaked RECOVERING into the next test.
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.run_until_complete(loop.shutdown_default_executor())
         loop.close()
 
 
@@ -140,8 +148,9 @@ def _server(tmp_path, monkeypatch, pool):
     monkeypatch.setattr(config, "RECOVER_TIMEOUT_SECONDS", 600)
     monkeypatch.setattr(config, "RECOVER_INTERVAL_SECONDS", 0)
     (tmp_path / "dl").mkdir(exist_ok=True)
-    server_mod.pool = pool
-    server_mod.store = store_mod.TaskStore(str(tmp_path / "tasks.db"))
+    monkeypatch.setattr(server_mod, "pool", pool)
+    monkeypatch.setattr(server_mod, "store", store_mod.TaskStore(str(tmp_path / "tasks.db")))
+    monkeypatch.setattr(server_mod, "RECOVERING", set())
     server_mod.store.create("video_t1", "seedance-2.5", "p", "9:16", 5)
     server_mod.store.update("video_t1", status="failed", account="acc1",
                             conversation_id="conv1", error="等待出片超时：已等 59 分钟仍未出片")
@@ -169,6 +178,7 @@ def test_timeout_failure_recovers_video(tmp_path, monkeypatch):
     assert not row["error"]
     assert pool.calls == 2                          # 第一次还没好，第二次取回
     assert pool.claimed == [("acc1", "seedance-2.5", 5)]   # 按正常出片记账
+    assert not server.RECOVERING
 
 
 def test_stops_when_upstream_says_final(tmp_path, monkeypatch):
