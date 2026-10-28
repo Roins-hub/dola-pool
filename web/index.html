@@ -560,6 +560,11 @@ function accLabel(x){return x.email?`<div translate="no">${esc(x.email)}</div>`:
     风控、冷却、待激活、异常这些「状态」已经由分组列表达，不在这里重复；
     「限流」「失败(待全池重置)」两个概念已于 2.1.0 P3 删除。 */
 function statusBadge(a){
+  if(pendingVerifications.has(a.name)){
+    const seconds=Math.max(0,Math.floor((Date.now()-pendingVerifications.get(a.name))/1000));
+    const stage=a.operation==='verifying'?(a.operation_phase||'正在检查登录状态'):'等待服务器开始验证';
+    return '<span class="badge b-blue">验证中 · '+seconds+' 秒</span><div class="tiny">'+esc(stage)+'</div>';
+  }
   if(a.busy){
     const labels={verifying:'验证中',probing:'探测中',generating:'准备 / 生成中',recovering:'恢复查询中',occupied:'账号占用中'};
     return '<span class="badge b-blue">'+esc(a.operation_phase||labels[a.operation]||'账号占用中')+'</span>';
@@ -771,7 +776,7 @@ function renderAccounts(){
       fmt(x.created_at),
       noteCell(x),
       `<button class="btn" style="margin-right:6px" onclick="openRenameAccount('${x.name}')">改名</button>`+
-      `<button class="btn" style="margin-right:6px" onclick="verify('${x.name}',this)">验证</button>`+
+      `<button class="btn" style="margin-right:6px" ${(pendingVerifications.has(x.name)||x.busy)?'disabled':''} onclick="verify('${x.name}',this)">${pendingVerifications.has(x.name)||x.operation==='verifying'?'验证中…':'验证'}</button>`+
       `<button class="btn" style="margin-right:6px" onclick="openTestGen('${x.name}')">测试生成</button>`+
       `<button class="btn" style="margin-right:6px" onclick="exportAccountCookies('${x.name}')">导出 Cookie</button>`+
       `<button class="btn" style="margin-right:6px" onclick="openSetAccountProxy('${x.name}','${x.proxy_id||''}')">${x.proxy_name?noTr(x.proxy_name):'代理(默认)'}</button>`+
@@ -885,12 +890,34 @@ async function recoverAccount(name,kind){
   refresh();
 }
 
+const pendingVerifications=new Map();
+let verificationRefreshTimer=null;
+function updateVerificationRefresh(){
+  if(pendingVerifications.size&&!verificationRefreshTimer){
+    verificationRefreshTimer=setInterval(()=>{
+      if(curTab==='accounts'){renderAccounts();loadAccounts().catch(()=>{});}
+    },1000);
+  }else if(!pendingVerifications.size&&verificationRefreshTimer){
+    clearInterval(verificationRefreshTimer);verificationRefreshTimer=null;
+  }
+}
 async function verify(name,btn){
-  btn.disabled=true;const old=btn.textContent;btn.textContent='验证中…';
-  try{const r=await api('/api/admin/accounts/'+name+'/verify',{method:'POST'});
-    alert(dialogText`${name} 登录态：${r.ok?'有效✓（仅确认登录状态，不代表一定能出片）':('失效✗'+(r.reason?'\n原因：'+r.reason:''))}`);
-  }catch(e){alert(dialogText`${e.message}`);}
-  btn.disabled=false;btn.textContent=old;refresh();
+  if(pendingVerifications.has(name))return;
+  pendingVerifications.set(name,Date.now());
+  btn.disabled=true;btn.textContent='验证中…';
+  renderAccounts();updateVerificationRefresh();
+  let result,error;
+  try{
+    result=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/verify',{method:'POST'});
+  }catch(e){error=e;}
+  finally{
+    pendingVerifications.delete(name);updateVerificationRefresh();
+    const row=allAccounts.find(a=>a.name===name);
+    if(row&&row.operation==='verifying'){row.busy=false;row.operation='';row.operation_phase='';}
+    renderAccounts();refresh();
+  }
+  if(error){if(error.message!=='unauthorized')alert(dialogText`${error.message}`);return;}
+  alert(dialogText`${name} 登录态：${result.ok?'有效✓（仅确认登录状态，不代表一定能出片）':('失效✗'+(result.reason?'\n原因：'+result.reason:''))}`);
 }
 
 let testGenPollTimer=null;

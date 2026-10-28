@@ -1098,12 +1098,17 @@ class BrowserPool:
         if lock.locked():
             raise RuntimeError("账号正在生成、验证或探测，稍后再验证")
         async with self._use_account(name, "verifying"):
-            return await self._verify_account_detail_locked(name)
+            try:
+                async with asyncio.timeout(90):
+                    return await self._verify_account_detail_locked(name)
+            except TimeoutError as exc:
+                raise RuntimeError("验证超时：启动浏览器或代理连接过慢；请重试，未将账号标记为失效") from exc
 
     async def _verify_account_detail_locked(self, name: str) -> tuple[bool, str]:
         reason = ""
         pure_state = self._pure_state(name)
         if pure_state is not None and self._is_cookie_source(name) and not is_cloak_cookie_account(name):
+            self._phases[name] = "正在检查登录接口"
             if self.site_of(name) == sites.DOUBAO:
                 from doubao_gen import probe_login as login_probe
             else:
@@ -1116,8 +1121,10 @@ class BrowserPool:
                 print(f"[verify] {name} pure_probe -> ok=False reason={reason}", flush=True)
         else:
             from browser import check_login_state, chat_liveness_probe
-            ok = await check_login_state(name)
+            self._phases[name] = "正在启动账号浏览器"
+            ok = await check_login_state(name, on_progress=lambda stage: self._phases.__setitem__(name, stage))
             if ok and config.VERIFY_CHAT_PROBE:
+                self._phases[name] = "登录已确认，正在进行聊天探活"
                 ok, chat_reason = await chat_liveness_probe(name)
                 print(f"[verify] {name} chat_probe -> ok={ok} reason={chat_reason}", flush=True)
                 if not ok:

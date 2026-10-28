@@ -652,5 +652,14 @@
  "上传参考图": "Đang tải ảnh tham chiếu",
  "下载 / 处理中": "Đang tải xuống / xử lý",
  "尝试记录（{0}）": "Lịch sử thử ({0})",
- "有效✓（仅确认登录状态，不代表一定能出片）": "Hợp lệ✓ (chỉ xác nhận đăng nhập, không đảm bảo tạo được video)"
+ "有效✓（仅确认登录状态，不代表一定能出片）": "Hợp lệ✓ (chỉ xác nhận đăng nhập, không đảm bảo tạo được video)",
+ "等待服务器开始验证": "Đang chờ máy chủ bắt đầu xác minh",
+ "正在检查登录状态": "Đang kiểm tra trạng thái đăng nhập",
+ "验证中 · {0} 秒": "Đang xác minh · {0} giây",
+ "正在启动账号浏览器": "Đang khởi chạy trình duyệt tài khoản",
+ "正在加载 Dola 登录页面": "Đang tải trang đăng nhập Dola",
+ "正在读取当前会话的登录确认": "Đang đọc xác nhận đăng nhập của phiên hiện tại",
+ "未收到快速确认，正在检查登录稳定性": "Chưa nhận được xác nhận nhanh, đang kiểm tra độ ổn định đăng nhập",
+ "正在关闭验证浏览器": "Đang đóng trình duyệt xác minh",
+ "登录已失效，正在自动重新登录": "Phiên đăng nhập đã hết hạn, đang tự động đăng nhập lại"
 }

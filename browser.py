@@ -384,21 +384,30 @@ async def chat_liveness_probe(account: str, prompt: str | None = None,
         finally:
             await context.close()
 
-async def check_login_state(account: str) -> bool:
+async def check_login_state(account: str, on_progress=None) -> bool:
     """无头打开 dola，返回登录态是否有效。
 
     Dola 对失效会话不是立即显示“ログイン”：实测匿名/失效会话在页面加载
-    约 12-25 秒后才把头部登录按钮渲染出来。因此这里必须做“稳定窗口”轮询：
-    持续 ~30 秒内都没有出现任何登录入口、且输入框已就绪，才判定登录有效。
+    约 12-25 秒后才把头部登录按钮渲染出来。收到同一浏览器第一方用户接口的
+    明确登录标记、Cookie 和输入框同时有效时可提前结束；缺少标记时保留稳定窗口。
     供 verify_login.py CLI 与面板「验证」按钮共用。
     """
     from patchright.async_api import async_playwright
+    from login_verification import LoginEvidence
+    def report(stage):
+        if on_progress:
+            on_progress(stage)
+    report("正在启动账号浏览器")
     async with async_playwright() as p:
         context = await launch_account_context(p, account)
+        evidence = None
         try:
             page = context.pages[0] if context.pages else await context.new_page()
+            evidence = LoginEvidence(page)
+            evidence.start()
+            report("正在加载 Dola 登录页面")
             await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
-            await page.wait_for_timeout(3000)
+            report("正在读取当前会话的登录确认")
             for _ in range(4):
                 try:
                     ok = page.get_by_text("OK", exact=True).first
@@ -437,27 +446,38 @@ async def check_login_state(account: str) -> bool:
 
             # 已出现登录入口/无 sessionid → 立即判失效
             first = await snapshot()
-            if not first["has_sid"] or first["region"]:
+            if evidence.logged_out or not first["has_sid"] or first["region"]:
                 return False
             if first["hits"] or first["modal"]:
                 return False
 
             # 未失效则继续观察，直到 ~30s 稳定窗口内确认一直没有登录入口
             clean_since = None
-            start = time.time()
-            while time.time() - start < 34:
-                await page.wait_for_timeout(2500)
+            start = time.monotonic()
+            while time.monotonic() - start < 34:
+                await page.wait_for_timeout(500)
                 s = await snapshot()
-                if not s["has_sid"] or s["region"] or s["hits"] or s["modal"]:
+                if evidence.logged_out or not s["has_sid"] or s["region"] or s["hits"] or s["modal"]:
                     return False
                 if s["has_chat"]:
-                    now = time.time()
+                    now = time.monotonic()
                     if clean_since is None:
                         clean_since = now
+                    elif evidence.confirmed and now - clean_since >= 1:
+                        report("已取得上游登录确认")
+                        return True
                     elif now - clean_since >= 6 and now - start >= 24:
+                        report("登录稳定性检查完成")
                         return True
                 else:
                     clean_since = None
-            return False
+                if not evidence.confirmed and time.monotonic() - start >= 3:
+                    report("未收到快速确认，正在检查登录稳定性")
+            raise RuntimeError("验证未确认：页面未就绪，请检查代理后重试；未将账号标记为失效")
         finally:
-            await context.close()
+            try:
+                if evidence is not None:
+                    await evidence.close()
+                report("正在关闭验证浏览器")
+            finally:
+                await context.close()

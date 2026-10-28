@@ -85,7 +85,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.5.1"
+APP_VERSION = "2.6.0"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -2189,6 +2189,7 @@ async def _verify_account_once(name: str) -> dict:
             try:
                 async with ADD_ACCOUNT_SEM, pool._use_account(name, "verifying"):
                     ADD_SEM_HOLDER["what"] = f"{name} 验证重登"
+                    pool._phases[name] = "登录已失效，正在自动重新登录"
                     try:
                         await add_account_flow(
                             name, creds["email"], creds["password"], creds.get("totp") or "",
