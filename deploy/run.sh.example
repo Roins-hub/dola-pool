@@ -26,7 +26,7 @@ export DOLA_THREAD_POOL_MAX=512
 
 # --- 号池额度与时长 ---
 export DOLA_DAILY_LIMIT=4
-export DOLA_LIMIT_RESET_TZ=Asia/Tokyo
+export DOLA_LIMIT_RESET_TZ=UTC
 export DOLA_NATIVE_DURATION_MAX=15       # 0 = 只放原生 5/10/15/30
 export DOLA_ALLOW_30S_PAIR=1             # 30 秒被要求拆段时，本地 2×15 秒 + ffmpeg 拼接
 

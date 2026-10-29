@@ -65,7 +65,7 @@ def test_latest_refusal_beats_old_acceptance_and_never_types():
     async def no_wait(*a): pass
     fn = load_worker_function('poll_conversation', cookie_value=lambda *a: '',
         asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for),
-        POLL_JS='', emit_feedback=emit, DAILY_LIMIT_PATTERN=re.compile('daily quota'),
+        POLL_JS='', emit_feedback=emit, DAILY_LIMIT_PATTERN=re.compile('daily quota'), FREE_LIMIT_REPLY=re.compile('x^'),
         _parse_balance_texts=lambda x: (None, None, ''))
     with pytest.raises(UpstreamReplyError, match='肖像保護'):
         _run(fn('acc1', Page(), Context(), 'c1', 60, duration=5,

@@ -206,7 +206,7 @@ curl https://your-domain/v1/images/generations -H "Authorization: Bearer sk-xxx"
 | 待处理任务上限 | `100`（`DOLA_MAX_PENDING_TASKS`） | 满了返回 `429` |
 | 单任务出片截止 | 纯 API 路径 `900` 秒（`DOLA_PURE_TIMEOUT`）／浏览器路径 `300` 秒（`DOLA_VIDEO_TIMEOUT`）；服务重启后续跑的任务，30 秒档放宽到 `1800` 秒 | 超时判 `failed` |
 | 失败重试 | 不限次数，总时限 `600` 秒（`DOLA_TASK_DEADLINE` / `DOLA_VIDEO_MAX_ATTEMPTS`） | 失败自动换号，一轮试完等冷却后再来一轮；超时判 `failed`；已拿到会话的轮询超时不换号；上游会话最终卡片确认失败（无视频）时最多换号重提 `DOLA_GENERATION_FAILURE_RETRIES` 次 |
-| 账号每日额度重置 | `Asia/Tokyo` 每天 `0:00` | `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` |
+| 账号每日额度重置 | `UTC` 每天 `0:00`（北京 8:00） | `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` |
 
 > 排队是**正常现象**：号池越大吞吐越高。提交后拿到 `queued` 就一直轮询即可，不要因为排队就重试提交（会重复扣额度）。
 
@@ -695,7 +695,7 @@ dola 自 2026-10-12 起对 30 秒请求回「只支持 4～15 秒，按 15 秒�
 | `DOLA_30S_MODE` | `reject`（30 秒直接拒绝；`pair` = 两段 15 秒拼接；`native` = 原样提交） |
 | `DOLA_ALLOW_30S_PAIR` | `0`（旧变量；未设 `DOLA_30S_MODE` 时 `1` 等同 `pair`） |
 | `DOLA_NATIVE_DURATION_MAX` | `0`（关闭任意时长；>0 时才允许非原生时长，建议 15 → 20 → 30 分级放开） |
-| `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `Asia/Tokyo` / `0` |
+| `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `UTC` / `0` |
 
 ### 代理与出口
 

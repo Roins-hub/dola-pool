@@ -109,7 +109,7 @@ def test_link_delivery_returns_without_downloading(monkeypatch):
     async def must_not_download(*a): raise AssertionError("link delivery must not download")
     fn = load_worker_function("poll_conversation", cookie_value=lambda *a: "", emit_feedback=emit,
         asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for, to_thread=asyncio.to_thread),
-        POLL_JS="", DAILY_LIMIT_PATTERN=re.compile("x^"), _parse_balance_texts=lambda x: (None, None, ""),
+        POLL_JS="", DAILY_LIMIT_PATTERN=re.compile("x^"), FREE_LIMIT_REPLY=re.compile("x^"), _parse_balance_texts=lambda x: (None, None, ""),
         fetch_higher_bitrate_url=hi, extract_unwatermarked_url=lambda vm, url: url, _download=must_not_download,
         CreditError=RuntimeError, AccountLimitedError=RuntimeError)
     page = Page()

@@ -118,7 +118,7 @@ def test_v25_falls_back_to_full_when_no_half(tmp_path, monkeypatch):
 
 
 def test_v20_only_takes_full_group(tmp_path, monkeypatch):
-    """只有半额号时，2.0 的 15 秒（3 点）不能拿它凑数（2 点 < 3 点）。"""
+    """只有半额号时，2.0 的 15 秒（4 点）不能拿它凑数（2 点 < 4 点）。"""
     browser_pool, bp = _pool(tmp_path, monkeypatch)
     bp._claim("acc1", 2)          # acc1 半额
     bp._claim("acc2", 2)          # acc2 半额
@@ -142,9 +142,9 @@ def test_v20_picks_full_and_leaves_cooling(tmp_path, monkeypatch):
     result = _run(bp.generate_video("p", None, 15, "seedance-2.0"))
 
     assert result["account"] in ("acc1", "acc2")
-    # 2.0 的 15 秒 = 3 点，用掉后只剩 1 点 → 冷却组，当天不再参与派发
+    # 2.0 的 15 秒 = 4 点（2026-10-30 实测 10 秒一天 1 条，15 秒按同价），用完 → 冷却组
     row = next(a for a in bp.list_accounts() if a["name"] == result["account"])
-    assert row["remaining"] == 1
+    assert row["remaining"] == 0
     assert row["group"] == browser_pool.GROUP_COOLING
 
 

@@ -102,7 +102,7 @@ def test_poll_reports_upstream_note_before_quota_error():
     worker = load_worker_function("poll_conversation", cookie_value=lambda *a: "",
         asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for),
         POLL_JS="", emit_feedback=emit, _parse_balance_texts=lambda a: (None, None, ""),
-        DAILY_LIMIT_PATTERN=re.compile("今日视频额度已用完"), AccountLimitedError=QuotaError)
+        DAILY_LIMIT_PATTERN=re.compile("今日视频额度已用完"), FREE_LIMIT_REPLY=re.compile("x^"), AccountLimitedError=QuotaError)
     with pytest.raises(QuotaError):
         run(worker("acc1", Page(), Context(), "c1", 60,
                    on_poll=on_poll))
@@ -278,7 +278,7 @@ def test_browser_assistant_reply_reaches_task_callback():
 
 @pytest.mark.parametrize("model,duration,cost", [
     ("seedance-2.5", 30, 2), ("seedance-2.5", 10, 4), ("seedance-2.5", 5, 2),
-    ("seedance-2.0-fast", 5, 3), ("seedance-2.0-fast", 10, 3), ("seedance-2.0-fast", 15, 3)])
+    ("seedance-2.0-fast", 5, 2), ("seedance-2.0-fast", 10, 4), ("seedance-2.0-fast", 15, 4)])
 def test_confirmed_costs(model, duration, cost):
     import config
     assert config.credit_cost(model, duration) == cost

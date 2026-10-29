@@ -1,7 +1,7 @@
 """2.1.9：按「模型 + 时长」记账；上游嫌贵拒绝时不锁号；没号付得起直接失败。
 
 依据（2026-10-14 两台线上日志 + 实测，上游回执报价对齐任务时长）：
-  seedance-2.5：5 秒 = 2、10 秒 = 4、15 秒 = 12；seedance-2.0：5/10/15 秒统一 3 点（2026-10-27 用户确认）。
+  seedance-2.5：5 秒 = 2、10 秒 = 4、15 秒 = 12；seedance-2.0：5 秒 = 2、10/15 秒 = 4（2026-10-30 实测：每日 5 秒 2 条、10 秒 1 条）。
 pair 测试：一段 15 秒被报 12 点被拒，号还剩 4 点却被锁了一天。
 """
 from __future__ import annotations
@@ -64,10 +64,10 @@ def test_credit_cost_table_and_extrapolation():
     assert c("seedance-2.5", 15) == 12         # 实测：15 秒报价 12（不是线性的 6）
     assert c("seedance-2.5", 12) == 12         # 取比它长的最短一档（15 秒）
     assert c("seedance-2.5", 30) == 2          # 请求 30 秒：上游压成 15 秒、只扣 2 点（网页截图 + 线上报价）
-    assert c("seedance-2.0", 20) == 4          # 比表里都长：按最长一档（10 秒 2 点）的每秒单价外推
-    assert c("seedance-2.0", 5) == 3
-    assert c("seedance-2.0", 10) == 3
-    assert c("seedance-2.0", 15) == 3
+    assert c("seedance-2.0", 20) == 6          # 比表里都长：按最长一档（15 秒 4 点）的每秒单价外推
+    assert c("seedance-2.0", 5) == 2
+    assert c("seedance-2.0", 10) == 4
+    assert c("seedance-2.0", 15) == 4
     assert c("seedance-2.0", 0) == config.MODEL_COSTS["seedance-2.0"]
 
 
@@ -79,7 +79,7 @@ def test_duration_costs_env_override_parsing():
 def test_duration_cost_model_names_and_pair(monkeypatch):
     import browser_pool
     assert browser_pool.duration_cost("seedance_v2.5", 10) == 4
-    assert browser_pool.duration_cost("seedance-2.0", 10) == 3
+    assert browser_pool.duration_cost("seedance-2.0", 10) == 4
     assert browser_pool.duration_cost("???", 5) == config.DEFAULT_CREDIT_COST    # 认不出 → 保守
     monkeypatch.setattr(config, "LONG_VIDEO_MODE", "pair")
     assert browser_pool.duration_cost("seedance-2.5", 30) == 2                # 先原样请求一次 30 秒
@@ -95,7 +95,7 @@ def test_unaffordable_rejected_at_submit():
     assert exc.value.status_code == 422
     assert "12 个额度" in exc.value.detail and "seedance-2.0" in exc.value.detail
     server._reject_unaffordable("seedance-2.5", 10)            # 4 点，满额号付得起
-    server._reject_unaffordable("seedance-2.0", 15)            # 3 点
+    server._reject_unaffordable("seedance-2.0", 15)            # 4 点，满额号付得起
 
 
 # ---------------------------------------------------------------- 号池
@@ -235,9 +235,9 @@ def test_busy_until_deadline_says_busy_not_throttled(tmp_path, monkeypatch):
 
 
 def test_expensive_job_can_use_half_account_with_enough_balance(tmp_path, monkeypatch):
-    """2.0 的 15 秒要 3 点：满额号没有时，剩 3 点的半额号也能接（以前只认满额，任务干等）。"""
+    """2.0 的 5 秒要 2 点：满额号没有时，剩 2 点的半额号也能接（同一个号当天第二条 5 秒）。"""
     browser_pool, bp = _pool(tmp_path, monkeypatch, names=("acc4",))
-    bp._claim("acc4", 1)                           # 剩 3 点 → 半额组
+    bp._claim("acc4", 2)                           # 已出过一条 5 秒，剩 2 点 → 半额组
     gen = []
 
     async def fake_gen(account, *a, **k):
@@ -245,6 +245,6 @@ def test_expensive_job_can_use_half_account_with_enough_balance(tmp_path, monkey
         return {"account": account, "local_path": "x.mp4"}
 
     bp._generate_effective = fake_gen
-    r = _run(bp.generate_video("p", None, 15, "seedance-2.0", deadline=time.time() + 20))
+    r = _run(bp.generate_video("p", None, 5, "seedance-2.0", deadline=time.time() + 20))
     assert r["account"] == "acc4" and gen == ["acc4"]
     assert _row(bp, "acc4")["remaining"] == 0

@@ -38,6 +38,11 @@ DAILY_LIMIT_PATTERN = re.compile(
     r"daily.*(?:limit|quota)|(?:limit|quota).*per\s*day",
     re.IGNORECASE,
 )
+# 2026-10-29 起的话术：「動画生成の無料利用分（1日あたり）の上限に到達しました。…Dola Plus…」。
+# 只用于本次会话的最新回复：生成前的余额预检读的是最近会话里的旧消息、不带时间，
+# 用它会让收到过一次上限提示的号在额度刷新后仍被一直挡住。
+FREE_LIMIT_REPLY = re.compile(
+    r"1日あたり[)）]?\s*の上限に(?:到達|達)|無料利用分.{0,12}上限に(?:到達|達)")
 
 # Dola 提交被拒绝/未真正出片时的终结性文字（2026-08-31 实测：提交后只回文字、永远无视频）：
 # - 时长选择提问："A. 5 秒で生成 B. 10 秒で生成 ..." / "秒数は 4～15 秒から選んでください"
@@ -714,6 +719,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     choice_replied = False
     failure_seen = (None, 0)
     final_seen = (None, 0)
+    limit_seen = 0
     last_wait = 0
     poll_errors = 0
     from upstream_reply import wait_seconds_from_reply
@@ -773,8 +779,20 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
         joined = "\n".join(texts)
         if not videos and (joined or latest):
             category = reply_failure(joined)
-            if DAILY_LIMIT_PATTERN.search(joined):
-                raise AccountLimitedError(f"账号每日生成上限: {joined[:1000]}")
+            if DAILY_LIMIT_PATTERN.search(joined) or FREE_LIMIT_REPLY.search(joined):
+                # 定论条件：它是会话里唯一一条助手回复、已结束、没有生成卡片，并连续两轮不变。
+                # 10-28 acc148「上限提示后仍出片」：提示词被换行拆成两条，第一条已被接单生成，
+                # 第二条才收到上限提示 —— 视频属于更早那条回复。会话里只有这一条回复时，
+                # 没有任何生成在进行，换号重提不会重复出片。
+                if "latestAssistant" not in poll:
+                    raise AccountLimitedError(f"账号每日生成上限: {joined[:1000]}")
+                if (poll.get("assistantCount") == 1 and latest.get("finished")
+                        and not latest.get("tools")):
+                    limit_seen += 1
+                    if limit_seen >= 2:
+                        raise AccountLimitedError(f"账号每日生成上限: {joined[:1000]}")
+                    continue
+            limit_seen = 0
             if category == "额度不足":
                 raise CreditError(f"额度不足: {joined[:1000]}")
             from upstream_reply import final_generation_failure

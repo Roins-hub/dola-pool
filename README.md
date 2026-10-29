@@ -384,7 +384,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `DOLA_REFERENCE_IMAGE_MAX_BYTES` | `20971520` | 每张原始参考图最多 20 MiB；URL 下载和 Base64 输入使用同一限制 |
 | `DOLA_REFERENCE_TOTAL_MAX_BYTES` | `62914560` | Base64 参考图落盘时的单次累计限制，60 MiB |
 | `DOLA_DAILY_LIMIT` | `4` | 每账号每日额度点数 |
-| `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `Asia/Tokyo` / `0` | 每日额度重置时区与时刻 |
+| `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `UTC` / `0` | 每日额度重置时区与时刻（UTC 0 点 = 北京 8 点） |
 | `DOUBAO_ALLOW_PAID` | `1` | 豆包号免费额度用完后是否自动确认走付费额度；`0` = 换号 |
 | `DOUBAO_DAILY_LIMIT` | `999` | 豆包号每天最多派几条（兜底；真实额度看豆包回复） |
 | `DOUBAO_POLL_INTERVAL` | `10` | 豆包出片轮询间隔（秒） |

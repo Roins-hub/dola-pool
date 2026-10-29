@@ -84,6 +84,16 @@ def test_content_refusal_card_is_final_but_not_retryable():
     assert final and final['retryable'] is False and final['category'] == '内容拒绝'
 
 
+def _worker_regex(name):
+    """A module-level regex from the real worker source (no import: tests stub that module)."""
+    import ast
+    tree = ast.parse((ROOT / 'video_worker_ui.py').read_text(encoding='utf-8'))
+    node = next(n for n in tree.body if isinstance(n, ast.Assign) and getattr(n.targets[0], 'id', '') == name)
+    scope = {'re': re}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), 'worker-test', 'exec'), scope)
+    return scope[name]
+
+
 def _poll_fn(responses, downloads=None):
     from browser_feedback import emit
     class Context:
@@ -104,7 +114,7 @@ def _poll_fn(responses, downloads=None):
     async def no_hi(*a): return None
     fn = load_worker_function('poll_conversation', cookie_value=lambda *a: '',
         asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for), POLL_JS='',
-        emit_feedback=emit, DAILY_LIMIT_PATTERN=re.compile('動画生成の\\s*1日あたりの上限'),
+        emit_feedback=emit, FREE_LIMIT_REPLY=_worker_regex('FREE_LIMIT_REPLY'), DAILY_LIMIT_PATTERN=re.compile('動画生成の\\s*1日あたりの上限'),
         _parse_balance_texts=lambda x: (None, None, ''), fetch_higher_bitrate_url=no_hi,
         extract_unwatermarked_url=lambda vm, url: url, _download=download, CreditError=RuntimeError,
         AccountLimitedError=RuntimeError)
@@ -130,11 +140,21 @@ def test_confirmed_failure_needs_two_identical_polls_and_names_conversation():
     assert 'c-38418236963968785' in str(e) and '上游生成失败' in str(e)
 
 
+LIMIT_TEXT = ('動画生成の無料利用分（1日あたり）の上限に到達しました。高速モードで引き続きチャットできます。'
+              '動画生成を使用し続けるには、Dola Plusプランにアップグレードしてください。')
+
+
+def _limit_poll(assistant_count):
+    return {'latestAssistant': {'id': 'm9', 'index': '9', 'finished': True, 'resCode': '', 'tools': [],
+                                'text': LIMIT_TEXT},
+            'videos': [], 'texts': [LIMIT_TEXT], 'assistantTexts': [LIMIT_TEXT], 'assistantCount': assistant_count}
+
+
 def test_interim_failure_or_quota_text_then_video_is_downloaded_not_failed():
-    """2026-10-28 real counterexample: quota wording mid-poll, then a video arrived."""
-    interim = {'latestAssistant': {'id': 'm4', 'index': '4', 'finished': True, 'resCode': '', 'tools': [],
-                                   'text': '動画生成の無料利用分（1日あたり）の上限に到達しました。'},
-               'videos': [], 'texts': ['x'], 'assistantTexts': ['x']}
+    """2026-10-28 acc148 (chain 38418273511151633, re-read 2026-10-30): the prompt was split in two by
+    a typed newline; #4 accepted the first half and spent the day's credit, #9 answered the second half
+    with the daily-limit text, and #12 delivered the video of #4. Two assistant turns -> keep waiting."""
+    interim = _limit_poll(2)
     done = {'latestAssistant': {'id': 'm7', 'index': '7', 'finished': True, 'resCode': '0',
                                 'tools': [{'status': 4, 'failCode': '0'}], 'text': '動画が生成されました。'},
             'videos': ['https://cdn.invalid/v.mp4'], 'videoModels': [''], 'texts': [], 'assistantTexts': []}
@@ -142,6 +162,32 @@ def test_interim_failure_or_quota_text_then_video_is_downloaded_not_failed():
     fn, page = _poll_fn([interim, done], downloads)
     result = _run(fn('acc148', page, page, 'c1', 1800, duration=10))
     assert downloads == ['https://cdn.invalid/v.mp4'] and result['conversation_id'] == 'c1'
+
+
+def test_sole_daily_limit_reply_switches_account_after_two_polls():
+    """2026-10-29 acc13 (chain 38418292307473937): one user turn, one finished limit reply, no tool."""
+    fn, page = _poll_fn([_limit_poll(1), _limit_poll(1)])
+    with pytest.raises(RuntimeError, match='账号每日生成上限'):
+        _run(fn('acc13', page, page, 'c1', 1800, duration=10))
+    assert page.calls == 2
+
+
+def test_daily_limit_text_with_a_creation_card_is_not_final():
+    running = _limit_poll(1)
+    running['latestAssistant'] = {**running['latestAssistant'], 'tools': [{'status': 2, 'failCode': '0'}]}
+    done = {'latestAssistant': {'id': 'm12', 'index': '12', 'finished': True, 'resCode': '0',
+                                'tools': [{'status': 4, 'failCode': '0'}], 'text': '動画が生成されました。'},
+            'videos': ['https://cdn.invalid/v.mp4'], 'videoModels': [''], 'texts': [], 'assistantTexts': []}
+    downloads = []
+    fn, page = _poll_fn([running, running, running, done], downloads)
+    _run(fn('acc1', page, page, 'c1', 1800, duration=10))
+    assert downloads == ['https://cdn.invalid/v.mp4']
+
+
+def test_free_limit_wording_is_recognised_but_credit_notice_is_not():
+    pattern = _worker_regex('FREE_LIMIT_REPLY')
+    assert pattern.search(LIMIT_TEXT)
+    assert not pattern.search(ACCEPTED_TEXT + 'この生成では1日の無料クレジットが使用されます。')
 
 
 def test_failed_card_changing_between_polls_is_not_confirmed_yet():

@@ -56,7 +56,7 @@ FAIL_STREAK_TO_ABNORMAL = 3   # 同号连续失败几次后进【异常】组（
 # ===== 账号分组（2026-09-23 大迭代）=====
 # 满额 = 剩余 == 每日上限（能出 1 条 2.0 / 2 条 2.5）；
 # 半额 = 2 ≤ 剩余 < 上限（只够 1 条 2.5）；
-# 冷却 = 剩余 ≤ 1（0 或 1 点一律如此，1 点是 2.0 用剩的碎片）→ 不参与派发，额度日 23:00 重置后自动回满额。
+# 冷却 = 剩余 ≤ 1（0 或 1 点一律如此，1 点是 2.0 用剩的碎片）→ 不参与派发，额度日重置（默认 UTC 0 点 = 北京 8 点）后自动回满额。
 GROUP_FULL = "满额"
 GROUP_HALF = "半额"
 GROUP_COOLING = "冷却"
@@ -109,7 +109,7 @@ def group_of(a: dict, now: float, *, busy: bool = False,
         tier = {"member": "会员", "free": "免费号"}.get(str(a.get("tier") or ""), "")
         return GROUP_FULL, f"豆包{tier}号，今日已出 {int(a.get('used_today') or 0)} 条"
     if remaining <= 1:
-        return GROUP_COOLING, f"剩余 {remaining} 点（额度日 23:00 重置）"
+        return GROUP_COOLING, f"剩余 {remaining} 点（{reset_clock_text()}重置）"
     if remaining < limit:
         return GROUP_HALF, f"剩余 {remaining} 点，按模型和时长所需额度派发"
     return GROUP_FULL, f"剩余 {remaining} 点"
@@ -246,6 +246,13 @@ def usage_day() -> str:
     「本地还有额度、上游已经用完」。上游回执里的「今日剩余 N 个」会实时回写校正。
     """
     return quota_day_anchor().date().isoformat()
+
+
+def reset_clock_text() -> str:
+    """「每天 UTC 0:00（北京时间 8:00）」：面板和报错里说清额度几点刷新。"""
+    anchor = quota_day_anchor()
+    beijing = anchor.astimezone(timezone(timedelta(hours=8)))
+    return f"每天 {config.LIMIT_RESET_TZ} {anchor.hour}:00（北京时间 {beijing.hour}:00）"
 
 
 def next_quota_reset_at() -> float:
@@ -2371,7 +2378,7 @@ class BrowserPool:
                         f"号池里没有号付得起这一单：{model} {duration} 秒上游要扣 {cost} 点"
                         f"（需要剩余 ≥ {cost} 点的号），"
                         f"可用账号今日最多只剩 {best} 点（每日 {DAILY_LIMIT} 点，"
-                        f"{config.LIMIT_RESET_TZ} 0 点重置）；可改用更短时长或 seedance-2.0-fast")
+                        f"{reset_clock_text()}重置）；可改用更短时长或 seedance-2.0-fast")
                 if non_pure and not non_pure_announced:
                     non_pure_announced = True
                     print(f"[pool] 30 秒两段拼接只走纯 API（Cookie 导入的号），跳过浏览器登录号："

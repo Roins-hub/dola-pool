@@ -151,7 +151,10 @@ async ({conversationId, msToken, fp}) => {
     ? ordered[ordered.length - 1] : null;
   // A newer user turn means the earlier assistant question/refusal is stale.
   if (latestAssistant && userIndices.some(index => index >= BigInt(latestAssistant.index))) latestAssistant = null;
-  return {ok: true, status: resp.status, texts, assistantTexts, latestAssistant, videos, videoModels};
+  // assistantCount: a daily-limit reply is final only when it is the conversation's only
+  // assistant turn (10-28: an earlier turn had already accepted a generation).
+  return {ok: true, status: resp.status, texts, assistantTexts, latestAssistant, videos, videoModels,
+          assistantCount: assistantMessages.length};
 }
 """
 

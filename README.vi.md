@@ -290,7 +290,7 @@ Plugin sẽ gọi `/api/v3/contents/generations/tasks` của dịch vụ này th
 | `DOLA_MAX_CONCURRENCY` | `3` | Số video tạo đồng thời toàn cục |
 | `DOLA_MAX_PENDING_TASKS` | `100` | Giới hạn số tác vụ đang chờ xử lý, vượt quá thì trả về 429 |
 | `DOLA_DAILY_LIMIT` | `4` | Số điểm hạn mức mỗi ngày của mỗi tài khoản |
-| `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `Asia/Tokyo` / `0` | Múi giờ và thời điểm reset hạn mức hằng ngày |
+| `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `UTC` / `0` | Múi giờ và thời điểm reset hạn mức hằng ngày |
 | `DOUBAO_ALLOW_PAID` | `1` | Khi tài khoản Doubao hết hạn mức miễn phí có tự xác nhận dùng hạn mức trả phí không; `0` = đổi tài khoản |
 | `DOUBAO_DAILY_LIMIT` | `999` | Số video tối đa phân cho một tài khoản Doubao mỗi ngày (dự phòng; hạn mức thật xem phản hồi của Doubao) |
 | `DOUBAO_POLL_INTERVAL` | `10` | Khoảng thời gian polling khi tài khoản Doubao tạo video (giây) |
