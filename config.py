@@ -51,6 +51,9 @@ VIDEO_MAX_ATTEMPTS = int(os.getenv("DOLA_VIDEO_MAX_ATTEMPTS", "0"))
 # 已提交后、上游会话最终卡片确认失败（status=5，无视频）时，每个任务最多换号重提几次。
 # 只对结构化确认的最终失败生效；内容拒绝、缺信息、结果未知都不重提。0 = 关闭。
 GENERATION_FAILURE_RETRIES = max(0, int(os.getenv("DOLA_GENERATION_FAILURE_RETRIES", "2")))
+# 请求没写 reference_source 时，带参考图的任务按此处理（2026-10-29 起默认 ai_generated：附加「参考图人物由 AI 生成」说明）；
+# 纯文字任务永远不附加。调用方显式传 reference_source="unspecified" 可关闭单个任务。
+DEFAULT_REFERENCE_SOURCE = os.getenv("DOLA_DEFAULT_REFERENCE_SOURCE", "ai_generated").strip()
 # 参考图上传失败（尚未提交）时，同一账号刷新页面重传的次数；用尽才换号。
 UPLOAD_RETRIES = max(0, int(os.getenv("DOLA_UPLOAD_RETRIES", "1")))
 

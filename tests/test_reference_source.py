@@ -36,14 +36,16 @@ def api(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('protocol', ['json', 'videos', 'multipart', 'ark'])
-@pytest.mark.parametrize('marked', [False, True])
-def test_request_persists_source_without_rewriting_prompt(api, protocol, marked):
+@pytest.mark.parametrize('declared', [None, 'ai_generated', 'unspecified'])
+def test_request_persists_source_without_rewriting_prompt(api, protocol, declared):
+    """2026-10-29: with reference images the note is the default; an explicit unspecified opts out."""
     server, db, dispatched = api
     original = '原始提示词：人物缓缓抬眸'
     raw = dict(model='seedance-2.0-fast', prompt=original, duration=10,
                ratio='16:9', reference_images=['https://example.com/image.png'])
-    if marked:
-        raw['reference_source'] = 'ai_generated'
+    if declared:
+        raw['reference_source'] = declared
+    marked = declared != 'unspecified'
 
     async def scenario():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url='http://test') as client:
@@ -73,8 +75,7 @@ def test_request_persists_source_without_rewriting_prompt(api, protocol, marked)
 
 
 @pytest.mark.parametrize('source,refs', [('ai_generated', []), ('true', ['https://example.com/a.png']),
-                                      (True, ['https://example.com/a.png']),
-                                      (None, ['https://example.com/a.png'])])
+                                      (True, ['https://example.com/a.png'])])
 @pytest.mark.parametrize('protocol', ['json', 'ark'])
 def test_invalid_source_is_rejected_before_dispatch(api, source, refs, protocol):
     server, db, dispatched = api
@@ -147,3 +148,17 @@ def test_legacy_database_migrates_without_opt_in(tmp_path):
     assert db.get('old')['reference_source'] == 'unspecified'
     assert db.get('old')['prompt_supplement'] == ''
     db._conn.close()
+
+
+@pytest.mark.parametrize('refs,expected', [([], 'unspecified'), (['https://example.com/a.png'], 'ai_generated')])
+def test_default_note_only_for_tasks_with_reference_images(api, refs, expected):
+    server, db, dispatched = api
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url='http://test') as c:
+            r = await c.post('/v1/videos', json=dict(model='seedance-2.0-fast', prompt='海边日落', duration=10,
+                                                     reference_images=refs, reference_source=None))
+            assert r.status_code in (200, 202), r.text
+            row = db.get(r.json()['id'])
+            assert row['reference_source'] == expected and row['prompt'] == '海边日落'
+            assert row['prompt_supplement'] == (AI_REFERENCE_NOTE if expected == 'ai_generated' else '')
+    run(scenario())

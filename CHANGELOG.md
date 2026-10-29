@@ -8,6 +8,7 @@
 - seedance-2.0-fast 只出 5/10 秒（`DOLA_V20_DURATIONS`，默认 5,10）：测试生成弹窗按模型给档位，API 显式请求 2.0 的 15/30 秒直接返回 422。
 - 测试生成默认提示词改为不含人物的场景，避免审核干扰账号可用性判断。
 - 新增直链交付 `DOLA_VIDEO_DELIVERY=link`：任务的 video_url 为 `/v/<任务>.mp4`，访问时 302 到上游 H.264 原片，服务器不再下载和转发视频；上游签名约 6 小时有效，过期前 15 分钟内访问会用保存的 video_model 自动续签；`/v1/videos/{id}/content` 也改为跳转。拿不到 H.264 直链或服务器直连不到 CDN 时自动退回下载。
+- 带参考图的任务默认附加 AI 素材来源说明（`DOLA_DEFAULT_REFERENCE_SOURCE=ai_generated`），纯文字任务不附加；显式传 `reference_source: "unspecified"` 可关闭单个任务。说明不保证通过上游肖像审核。
 - 派单前检测账号代理出口：粘性住宅 IP 掉线时自动换 IP 并复测，仍不通则本轮跳过该号（不记风控、不扣额度、尚未提交），同一账号 120 秒内最多自动换一次（`DOLA_EGRESS_PRECHECK`、`DOLA_EGRESS_AUTO_ROTATE_GAP`）。
 - 新 logo：小写 d，字母的圆肚是一个“池子”，池里的水位代表号池剩余额度；同时作为浏览器标签图标。
 

@@ -372,7 +372,8 @@ class VideoGenRequest(BaseModel):
     duration_seconds: int | None = Field(None, ge=4, le=30)
     # 参考图：兼容各画布工具的常见字段形态（字符串/数组/{"url": ...}）
     reference_images: list[str] = Field(default_factory=list)
-    reference_source: Literal["unspecified", "ai_generated"] = "unspecified"
+    # 不传（或 null）= 按 DOLA_DEFAULT_REFERENCE_SOURCE：带参考图默认附加 AI 素材说明，纯文字不附加
+    reference_source: Literal["unspecified", "ai_generated"] | None = None
     image_url: Any = None
     image: Any = None
     input_image: Any = None
@@ -1439,8 +1440,10 @@ def _check_doubao_model(model, duration) -> str:
 
 
 async def _submit_task(client, model, prompt, ratio, duration, reference_images,
-                       reference_source="unspecified"):
+                       reference_source=None):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
+    if reference_source is None:
+        reference_source = config.DEFAULT_REFERENCE_SOURCE if reference_images else "unspecified"
     try:
         supplement = reference_supplement(reference_source, bool(reference_images))
     except ValueError as exc:
@@ -1744,7 +1747,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
         except (TypeError, ValueError):
             seconds = 5
         resp = await _submit_task(client, requested_model, prompt, ratio, seconds, reference_images,
-                                  reference_source=body.get("reference_source", "unspecified"))
+                                  reference_source=body.get("reference_source"))
         return {"id": resp.id, "status": resp.status}
     version = _model_version(requested_model)
     if version is not None:
@@ -1771,7 +1774,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
             f"seedance-2.0-fast 仅支持 {list(config.V20_DURATIONS)} 秒）",
         )
     resp = await _submit_task(client, model, prompt, ratio, duration, reference_images,
-                              reference_source=body.get("reference_source", "unspecified"))
+                              reference_source=body.get("reference_source"))
     return {"id": resp.id, "status": resp.status}
 
 

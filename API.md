@@ -234,7 +234,7 @@ Content-Type: application/json
 | `size` | string | | 见 2.2 映射表 |
 | `ratio` | string | | 见 2.2 |
 | `reference_images` | string[] | | 参考图 URL / data URI，见第 7 节 |
-| `reference_source` | string | `unspecified` | 仅对确认全部参考图人物为纯 AI 虚构角色的任务传 `ai_generated`；提交时附加来源说明，不改写返回的 `prompt`。无参考图或非法值返回 422；不保证通过审核。JSON、multipart 和 Ark 顶层字段均支持，中间网关需要透传。 |
+| `reference_source` | string | 省略 = 有参考图时 `ai_generated`、否则 `unspecified`（`DOLA_DEFAULT_REFERENCE_SOURCE`） | `ai_generated` 时提交前附加“参考图人物由 AI 生成”的来源说明，不改写返回的 `prompt`；显式 `unspecified` 关闭。`ai_generated` 但无参考图或非法值返回 422；不保证通过审核。JSON、multipart 和 Ark 顶层字段均支持。 |
 | `image_url` / `image` / `input_image` / `input_images` | 任意 | | 参考图的兼容写法 |
 
 多余字段会被忽略（不会 422），方便各种网关直接转发。
