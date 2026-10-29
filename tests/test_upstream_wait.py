@@ -125,6 +125,18 @@ def test_free_quota_used_up_is_recognised_upstream():
     assert status == "quota_exceeded" and hits
 
 
+JA_LIMIT = ("動画生成の無料利用分（1日あたり）の上限に到達しました。高速モードで引き続きチャットできます。"
+            "動画生成を使用し続けるには、Dola Plusプランにアップグレードしてください。")
+
+
+def test_japanese_daily_limit_is_recognised_upstream():
+    """2026-10-29 日文话术：纯 API 路径以前认不出，任务干等到总超时。"""
+    assert dola_pure_api.classify_chain_outcome([], [JA_LIMIT])[0] == "quota_exceeded"
+    accepted = ("動画は**Dreamina Seedance 2.0 高速モデル**を使用して、5分以内に生成されます。"
+                "この生成では1日の無料クレジットが使用されます。")
+    assert not dola_pure_api.looks_like_daily_quota_text(accepted)
+
+
 def test_plus_upsell_alone_is_not_quota_exhausted():
     """排队久时上游也会推销 Plus，这句话本身不能当成额度用完。"""
     assert not dola_pure_api.looks_like_daily_quota_text("预计等待 45 分钟。开通 Dola Plus，免等待。")
