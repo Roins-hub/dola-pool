@@ -214,8 +214,8 @@ def credit_cost(version: str, duration: int | None) -> int:
     top = max(table)
     return -(-table[top] * seconds // top)        # 按最长一档的每秒单价外推，向上取整
 
-# seedance-2.0 只认这三个原生档位；其余（含 30）都必须走 2.5。
-V20_DURATIONS = (5, 10, 15)
+# seedance-2.0(-fast) 能出的原生档位：2026-10-29 上游只剩 5/10 秒（15 秒已下线）；其余都必须走 2.5。
+V20_DURATIONS = tuple(int(x) for x in os.getenv("DOLA_V20_DURATIONS", "5,10").split(",") if x.strip())
 
 # ---- 时长白名单 ----
 # 原生档位：上游 UI 直出的四个选项，**任何情况下都放行**。30 秒是线上主力流量，

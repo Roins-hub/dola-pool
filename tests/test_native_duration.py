@@ -96,8 +96,14 @@ def test_non_native_outside_range_rejected(monkeypatch):
 # --- 模型/时长组合解析 -------------------------------------------------------
 
 def test_resolve_native_durations_use_20():
-    for d in (5, 10, 15):
+    for d in (5, 10):
         assert server._resolve_model_for_duration("", d) == "seedance-2.0"
+
+
+def test_v20_fast_no_longer_offers_15_seconds():
+    """2026-10-29: seedance-2.0-fast upstream only offers 5/10 seconds."""
+    assert server._resolve_model_for_duration("seedance-2.0", 15) is None
+    assert server._resolve_model_for_duration("", 15) == "seedance-2.5"
 
 
 def test_resolve_30_uses_25():
@@ -122,7 +128,7 @@ def test_resolve_explicit_20_cannot_do_non_native(monkeypatch):
 
 def test_supported_durations_for_version(monkeypatch):
     _set_knob(monkeypatch, 30)
-    assert server._supported_durations_for("seedance-2.0") == [5, 10, 15]
+    assert server._supported_durations_for("seedance-2.0") == [5, 10]
     assert 20 in server._supported_durations_for("seedance-2.5")
 
 

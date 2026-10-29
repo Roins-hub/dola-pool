@@ -485,6 +485,8 @@ def _resolve_model_for_duration(model, duration) -> str | None:
         else:
             # 30 秒一直是 2.5；任意时长（非原生档位）也只有 2.5 能出。
             version = "seedance-2.5"
+    if version == "seedance-2.0" and duration not in config.V20_DURATIONS:
+        return None   # 2.0-fast 只出 V20_DURATIONS 里的档位（2026-10-29 起只剩 5/10 秒）
     if not _duration_supported(version, duration):
         return None
     return version
