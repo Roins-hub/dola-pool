@@ -373,6 +373,8 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `DOLA_VIDEO_MAX_ATTEMPTS` | `0` | 单任务最多尝试次数，`0` 表示不限、只受总时限约束 |
 | `DOLA_GENERATION_FAILURE_RETRIES` | `2` | 已提交后，上游会话最终卡片确认失败（任务状态 5、无视频）时最多换号重提几次；只看结构化状态，不看文字；内容拒绝不重提；`0` 关闭 |
 | `DOLA_VIDEO_DELIVERY` | `download` | 出片交付方式：`download` 下载到服务器由 `/videos/` 提供；`link` 下发 `/v/<任务>.mp4` 短链，访问时 302 到上游 H.264 原片（视频流量不经过服务器，签名约 6 小时有效、到期前自动续签；拿不到直链时自动退回下载） |
+| `DOLA_EGRESS_PRECHECK` | `1` | 派单前经账号自己的代理连一下 Dola；连不通的动态/提取型出口自动换 IP 再测，仍不通本轮跳过该号（不记风控、未提交生成）。只检测绑定了代理的账号 |
+| `DOLA_EGRESS_AUTO_ROTATE_GAP` | `120` | 同一账号两次自动换 IP 的最短间隔（秒） |
 | `DOLA_V20_DURATIONS` | `5,10` | seedance-2.0-fast 可用时长 |
 | `DOLA_UPLOAD_RETRIES` | `1` | 参考图上传失败（尚未提交）时同一账号刷新页面重传的次数，用尽才换号 |
 | `DOLA_MAX_CONCURRENCY` | `0` | 全局并发初始值，0 = 不限；后台保存的值优先 |

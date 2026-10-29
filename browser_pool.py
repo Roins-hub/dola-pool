@@ -19,7 +19,7 @@ from generation_errors import (
     PreSubmissionUploadError, PreSubmissionParametersError, RegionRestrictedError,
     UploadRouteError, UpstreamGenerationFailed, UpstreamReplyError,
 )
-from account_transport import diagnose_upload_route, redact_error
+from account_transport import diagnose_upload_route, egress_alive, redact_error
 from video_worker_ui import (
     AccountLimitedError, CreditInsufficientError, LoginExpiredError, RiskControlError,
     generate_video, resume_video,
@@ -297,6 +297,7 @@ class BrowserPool:
         self._upload_routes = {}
         self._browser_probe_lock = asyncio.Lock()
         self._fail_until: dict[str, float] = {}
+        self._egress_auto_rotated: dict[str, float] = {}   # 账号 -> 上次因出口不通自动换 IP 的时间
         self._fail_streak: dict[str, int] = {}   # 连续失败计数（内存，成功即清零）
         self._probe_cache: dict[str, tuple[float, dict]] = {}   # 你好探测结果缓存
         # 出口限流退避（内存）：egress -> {"until", "streak", "last", "reason"}。
@@ -1406,6 +1407,38 @@ class BrowserPool:
         """
         return proxy_store.requests_proxy_url(name)
 
+    def _has_bound_proxy(self, name: str) -> bool:
+        try:
+            return bool(proxy_store.get_account_proxy(name))
+        except Exception:
+            return False
+
+    async def ensure_live_egress(self, name: str) -> tuple[bool, str]:
+        """派单前确认账号的代理出口连得上 Dola；粘性 IP 掉线时自动换一个再测。
+
+        返回 (能用, 说明)。说明为空表示一切正常。静态代理换不了，只能本轮跳过。
+        """
+        if not config.EGRESS_PRECHECK or not self._has_bound_proxy(name):
+            return True, ""      # 只检测绑定了代理的号；未绑定的走全局默认代理，换不了也不归它管
+        try:
+            check = await asyncio.to_thread(egress_alive, name)
+        except Exception:        # 严格隔离下缺可用节点等：交给原有流程报错，这里不拦
+            return True, ""
+        if check["ok"]:
+            return True, ""
+        detail = check["detail"]
+        now = time.time()
+        if now - self._egress_auto_rotated.get(name, 0) >= config.EGRESS_AUTO_ROTATE_GAP:
+            self._egress_auto_rotated[name] = now
+            rotated = await asyncio.to_thread(self.rotate_account_ip, name, f"出口不通自动换 IP（{detail}）", True)
+            if rotated.get("rotated"):
+                print(f"[pool] {name} 代理出口连不上（{detail}）→ 已自动换 IP，重新检测", flush=True)
+                again = await asyncio.to_thread(egress_alive, name)
+                if again["ok"]:
+                    return True, f"原出口连不上（{detail}），已自动换 IP"
+                detail = f"换 IP 后仍连不上：{again['detail']}"
+        return False, f"代理出口连不上（{detail}）"
+
     def rotate_account_ip(self, name: str, reason: str = "",
                           force: bool = False) -> dict:
         """给号换一个出口 IP（动态代理换 session；静态代理无操作）。
@@ -2112,6 +2145,16 @@ class BrowserPool:
                                 deadline = time.time() + attempt_timeout
                             if on_dispatch:
                                 on_dispatch()
+                        # 先确认代理出口连得上（粘性住宅 IP 会掉线）：不通就自动换 IP，仍不通本轮跳过，
+                        # 不记风控、不扣额度——此时还没打开浏览器，更没提交生成。
+                        alive, egress_note = await self.ensure_live_egress(account)
+                        if egress_note:
+                            say(f"{account} {egress_note}" + ("" if alive else " → 换下一个号（尚未提交生成）"))
+                        if not alive:
+                            tried.add(account)
+                            tried_order.append(account)
+                            self._mark_attempt_failed(account)
+                            continue
                         # 派发前先发一句「你好」：被登出/没回复 → 该号进【风控】组，换下一个号。
                         probe = await self.probe_hello_async(account)
                         if not probe.get("ok"):

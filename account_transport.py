@@ -27,6 +27,38 @@ def http_proxy(account):
     return url or None
 
 
+EGRESS_CHECK_URL = 'https://www.dola.com/favicon.ico'
+
+
+def egress_alive(account, attempts=2):
+    """Can the account's own proxy reach Dola right now? Same relay as the browser, no direct fallback.
+
+    A sticky residential IP can go offline and stay assigned until the session rotates; this
+    catches it in a few seconds instead of a 30-second browser launch failing. Two tries so one
+    dropped connection on a flaky link is not read as a dead exit.
+    """
+    import requests
+    proxy = http_proxy(account)
+    if not proxy:
+        return {'ok': True, 'detail': '未配代理'}
+    last = ''
+    for _ in range(max(1, attempts)):
+        try:
+            with requests.Session() as session:
+                session.trust_env = False
+                response = session.get(EGRESS_CHECK_URL, proxies={'http': proxy, 'https': proxy},
+                                       timeout=(8, 10), allow_redirects=False, stream=True)
+                with response:
+                    # The local relay answers 502 when the upstream proxy cannot connect.
+                    if response.status_code in (407, 502, 503, 504):
+                        last = f'代理返回 HTTP {response.status_code}'
+                        continue
+                    return {'ok': True, 'detail': f'HTTP {response.status_code}'}
+        except Exception as exc:
+            last = type(exc).__name__
+    return {'ok': False, 'detail': last or '连接失败'}
+
+
 def diagnose_upload_route(account, host):
     """Credential-free HTTPS GET; HTTP errors still prove connectivity, not upload success."""
     if host != 'imagex-ap-southeast-1.bytevcloudapi.com':

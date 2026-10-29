@@ -313,6 +313,10 @@ TRANSIENT_COOLDOWN_SEC = int(os.getenv("DOLA_TRANSIENT_COOLDOWN_SEC", "600"))
 # 越撞限得越久。所以改成按出口退避：某出口一被拒，就在这段时间内不再从它派任务/做探测，
 # 任务原地排队等出口恢复。连续被拒按 2 倍递增（120 → 240 → 480 → 900 封顶），
 # 成功一次即清零。0 = 关闭退避（恢复旧行为：立刻换号重试）。
+# 派单前先经账号自己的代理连一下 Dola；连不通的动态/提取型出口自动换 IP 后再测，仍不通就本轮跳过该号（未提交生成）。
+EGRESS_PRECHECK = os.getenv("DOLA_EGRESS_PRECHECK", "1") == "1"
+# 同一账号两次「出口不通自动换 IP」之间的最短间隔（秒），防止网络整体抖动时把 IP 刷光。
+EGRESS_AUTO_ROTATE_GAP = int(os.getenv("DOLA_EGRESS_AUTO_ROTATE_GAP", "120"))
 EGRESS_THROTTLE_SECONDS = int(os.getenv("DOLA_EGRESS_THROTTLE_SECONDS", "120"))
 # 同一出口在 EGRESS_THROTTLE_WINDOW_SECONDS 内有至少这么多个**不同的号**被限流，才判定是 IP 被限、
 # 整个出口一起退避。只有 1 个号被拒时只暂停那个号（号级暂停，见 THROTTLE_ACCOUNT_*）——
