@@ -127,11 +127,22 @@ async ({conversationId, msToken, fp}) => {
       addText(assistantTexts, brief);
       addText(messageTexts, brief);
     }
-    if (isAssistant) assistantMessages.push({
-      id: String(msg.message_id || ''),
-      index: /^\d+$/.test(String(msg.index_in_conv)) ? String(msg.index_in_conv) : null,
-      text: messageTexts.join('\n'),
-    });
+    if (isAssistant) {
+      // Structured creation outcome (2026-10-29 chain dumps): a finished card has
+      // ai_creation_tool_list[].status 4 (video) or 5 (failed, fail_code set).
+      const ext = (msg.ext && typeof msg.ext === 'object') ? msg.ext : {};
+      let tools = ext.ai_creation_tool_list;
+      if (typeof tools === 'string') { try { tools = JSON.parse(tools); } catch (e) { tools = []; } }
+      assistantMessages.push({
+        id: String(msg.message_id || ''),
+        index: /^\d+$/.test(String(msg.index_in_conv)) ? String(msg.index_in_conv) : null,
+        text: messageTexts.join('\n'),
+        resCode: String(ext.ai_creation_res_code ?? ''),
+        finished: String(ext.is_finish ?? '') === '1',
+        tools: (Array.isArray(tools) ? tools : []).filter(t => t && typeof t === 'object')
+          .map(t => ({status: Number(t.status), failCode: String(t.fail_code ?? '')})),
+      });
+    }
   }
   // Only an explicitly ordered latest assistant turn may drive automated actions.
   const ordered = assistantMessages.filter(m => m.index !== null);

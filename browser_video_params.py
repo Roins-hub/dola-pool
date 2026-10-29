@@ -105,10 +105,37 @@ async def _select_legacy(page, duration, ratio):
         raise PreSubmissionParametersError(f"旧版页面未确认 {duration} 秒，尚未提交生成")
 
 
+MODEL_BUTTON = re.compile(r"^モデル ")
+
+
+async def video_mode_ready(page, timeout_ms=10000):
+    """Video mode renders a model button and/or the params entry in the actionbar.
+
+    2026-10-27..29: every parameter failure followed a missing model button, i.e.
+    the page was still in plain chat mode after clicking 動画を作成.
+    """
+    trigger = page.locator(PARAMS_TRIGGER + ':visible')
+    model = page.get_by_text(MODEL_BUTTON).filter(visible=True)
+    for _ in range(max(1, timeout_ms // 250)):
+        try:
+            if await trigger.count() or await model.count():
+                return True
+        except Exception:
+            pass
+        await page.wait_for_timeout(250)
+    return False
+
+
+def describe_failure(step, exc):
+    """Step and exception class only; browser messages can carry signed URLs."""
+    return f"{step}：{type(exc).__name__}"
+
+
 async def select_video_parameters(page, duration, ratio=None):
     """Support the combined panel and retain the legacy duration selectors."""
     if duration is None and not ratio:
         return
+    step = "等待参数入口"
     try:
         async with asyncio.timeout(25):
             trigger = page.locator(PARAMS_TRIGGER + ':visible')
@@ -122,12 +149,15 @@ async def select_video_parameters(page, duration, ratio=None):
             if await trigger.count():
                 if await trigger.count() != 1:
                     raise PreSubmissionParametersError("存在多个视频参数入口，尚未提交生成")
+                step = "新版参数面板"
                 await _select_modern(page, trigger, duration, ratio)
             else:
+                step = "旧版控件（未找到新版参数入口）"
                 await _select_legacy(page, duration, ratio)
     except PreSubmissionParametersError:
         raise
-    except Exception:
+    except Exception as exc:
         # Browser exception strings can contain signed URLs and account details.
         raise PreSubmissionParametersError(
-            f"设置视频参数失败：未确认 {duration} 秒 / {ratio or '原比例'}，尚未提交生成") from None
+            f"设置视频参数失败：未确认 {duration} 秒 / {ratio or '原比例'}，尚未提交生成"
+            f"（{describe_failure(step, exc)}）") from None

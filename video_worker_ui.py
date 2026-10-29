@@ -100,6 +100,17 @@ class LoginExpiredError(Exception):
     """Dola 会话已失效（页面出现登录入口），应立即换下一个账号并标记该号需重新登录。"""
 
 
+from generation_errors import RegionRestrictedError  # noqa: E402 - re-exported for callers
+
+REGION_RESTRICTED_PATH = "/security/region-restricted"
+
+
+def raise_if_region_restricted(page, account: str) -> None:
+    if REGION_RESTRICTED_PATH in (page.url or ""):
+        raise RegionRestrictedError(
+            f"{account} 代理出口所在地区被 Dola 限制（地区受限页），尚未提交生成；请检查该号代理的国家设置")
+
+
 VIDEO_BTN = "text=動画を作成"          # ja-JP locale 下的入口文案
 CAPTCHA_FRAME_KEY = "bdcaptcha.html"   # 字节 verifycenter 滑块 iframe
 
@@ -155,6 +166,7 @@ async def ensure_login_stable(page, account: str, min_wait: int = 22,
     clean_since = None
     while time.time() - start < max_wait:
         await page.wait_for_timeout(2000)
+        raise_if_region_restricted(page, account)   # 受限页没有输入框，别等到超时误判掉登录
         if await is_logged_out(page):
             raise LoginExpiredError(
                 f"{account} 登录态失效（页面出现登录入口），请重新登录该账号")
@@ -457,6 +469,39 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
         reason = code.group(0) if code else "网络连接失败"
         errors.append(UploadRouteError(urlsplit(request.url).hostname or "unknown", reason, stage))
 
+    # Cross-origin ImageX calls need a CORS preflight. When it fails Chromium only
+    # reports net::ERR_FAILED on the real request; CDP exposes the preflight cause.
+    cdp_requests, cdp_failures = {}, []
+
+    def on_cdp_request(params):
+        request = params.get("request") or {}
+        if stage_of(request.get("url", "")):
+            cdp_requests[params.get("requestId")] = (stage_of(request["url"]), params.get("type") or "",
+                                                    request.get("method") or "")
+
+    def on_cdp_failed(params):
+        known = cdp_requests.get(params.get("requestId"))
+        if not known:
+            return
+        stage, kind, method = known
+        cors = (params.get("corsErrorStatus") or {}).get("corsError")
+        parts = [f"{'预检' if kind == 'Preflight' or method == 'OPTIONS' else stage}"
+                 f" {params.get('errorText') or ''}".strip()]
+        if cors:
+            parts.append(f"CORS {cors}")
+        if params.get("blockedReason"):
+            parts.append(f"blocked {params['blockedReason']}")
+        cdp_failures.append("，".join(parts)[:160])
+
+    cdp = None
+    try:
+        cdp = await page.context.new_cdp_session(page)
+        cdp.on("Network.requestWillBeSent", on_cdp_request)
+        cdp.on("Network.loadingFailed", on_cdp_failed)
+        await cdp.send("Network.enable")
+    except Exception:
+        cdp = None   # diagnostics only; uploads do not depend on CDP
+
     async def inspect_prepare(response):
         try:
             data = await response.json()
@@ -492,7 +537,13 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
         while time.time() < deadline:
             if errors:
                 if isinstance(errors[0], UploadRouteError):
-                    raise errors[0]
+                    if cdp is not None and not cdp_failures:
+                        await page.wait_for_timeout(500)   # CDP events may trail requestfailed
+                    first = errors[0]
+                    if cdp_failures:
+                        first = UploadRouteError(first.host, first.code, first.stage,
+                                                 "；".join(dict.fromkeys(cdp_failures))[:300])
+                    raise first
                 raise PreSubmissionUploadError("参考图片上传未完成（尚未提交生成）：" + errors[0])
             prepare_count = sum("/alice/resource/prepare_upload" in url and 200 <= status < 300
                                 for status, url in events)
@@ -514,6 +565,11 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
     finally:
         page.remove_listener("response", on_response)
         page.remove_listener("requestfailed", on_request_failed)
+        if cdp is not None:
+            try:
+                await cdp.detach()
+            except Exception:
+                pass
         pending = list(checks)
         for task in pending:
             task.cancel()
@@ -650,6 +706,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     last_note = ""
     choice_replied = False
     failure_seen = (None, 0)
+    final_seen = (None, 0)
     poll_errors = 0
     while True:
         await asyncio.sleep(5)
@@ -701,12 +758,26 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                         except Exception as e:
                             print(f"[{account}] 回复时长选择失败: {str(e)[:100]}", flush=True)
         joined = "\n".join(texts)
-        if not videos and joined:
+        if not videos and (joined or latest):
             category = reply_failure(joined)
             if DAILY_LIMIT_PATTERN.search(joined):
                 raise AccountLimitedError(f"账号每日生成上限: {joined[:1000]}")
             if category == "额度不足":
                 raise CreditError(f"额度不足: {joined[:1000]}")
+            from upstream_reply import final_generation_failure
+            final = final_generation_failure(latest, bool(videos))
+            if final:
+                # The failed card must be the same latest message on two polls.
+                key = ((latest or {}).get("index"), final["code"])
+                final_seen = (key, final_seen[1] + 1 if final_seen[0] == key else 1)
+                if final_seen[1] >= 2:
+                    from generation_errors import UpstreamGenerationFailed
+                    raise UpstreamGenerationFailed(
+                        final["category"], final["text"] or joined, code=final["code"],
+                        conversation_id=conversation_id, retryable=final["retryable"],
+                        not_charged=final["not_charged"])
+                continue
+            final_seen = (None, 0)
             if category:
                 previous, hits = failure_seen
                 failure_seen = (joined, hits + 1 if previous == joined else 1)
@@ -735,6 +806,59 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             return {"video_url": url, "local_path": str(local),
                     "conversation_id": conversation_id, "account": account}
         print(f"  ...生成中（{int(time.time() - start)}s）", flush=True)
+
+
+async def enter_video_mode(page, account: str) -> None:
+    """Click 動画を作成 and confirm the video actionbar rendered (at most two clicks)."""
+    from browser_video_params import video_mode_ready
+    from generation_errors import PreSubmissionParametersError
+    for click in range(2):
+        try:
+            await page.click(VIDEO_BTN, timeout=8000)
+        except Exception:
+            entry = page.get_by_text("動画を作成", exact=False).first
+            if await entry.count():
+                await entry.evaluate("(el) => el.click()")
+        await page.wait_for_timeout(1500)
+        # A click is not enough: in plain chat mode images still upload, but the
+        # model/params controls never appear and the prompt is not a video job.
+        if await video_mode_ready(page, 10000):
+            return
+        if click:
+            raise PreSubmissionParametersError(
+                "页面未进入视频创作模式（找不到模型按钮和参数入口），尚未上传参考图或提交生成")
+        print(f"[{account}] 点击「動画を作成」后未进入视频模式，重试一次", flush=True)
+        await dismiss_popups(page)
+
+
+async def upload_with_retry(page, account: str, image_paths: list[str], on_poll=None) -> None:
+    """Upload references; on a pre-submission failure reload and retry on the same account.
+
+    Proxy links drop 20-40% of single connections (2026-10-29 probes), and one upload
+    needs prepare/Apply/TOS/Commit. A reload is far cheaper than switching accounts
+    (new browser + ~22s login check), clears the attachment stuck at 0% (screenshot
+    verified), and nothing has been submitted, so it cannot duplicate a generation.
+    """
+    from account_transport import redact_error
+    from generation_errors import PreSubmissionUploadError
+    tries = 1 + config.UPLOAD_RETRIES
+    for upload_try in range(1, tries + 1):
+        emit_feedback(on_poll, progress="正在上传参考图（尚未提交生成）" if upload_try == 1
+                      else f"正在重新上传参考图（第 {upload_try}/{tries} 次，尚未提交生成）")
+        try:
+            await attach_reference_images(page, image_paths)
+            return
+        except PreSubmissionUploadError as exc:
+            if upload_try == tries:
+                raise
+            emit_feedback(on_poll, progress=f"{redact_error(exc)[:200]}；刷新页面后同号重试上传")
+        await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
+        await page.wait_for_timeout(3000)
+        await dismiss_popups(page)
+        raise_if_region_restricted(page, account)
+        if await is_logged_out(page):
+            raise LoginExpiredError(f"{account} 重新上传前页面出现登录入口，请重新登录该账号")
+        await enter_video_mode(page, account)
 
 
 async def resume_video(account: str, conversation_id: str, timeout: int,
@@ -795,6 +919,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             page = context.pages[0] if context.pages else await context.new_page()
             await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
             await page.wait_for_timeout(5000)
+            raise_if_region_restricted(page, account)
             await dismiss_popups(page)
             await ensure_login_stable(page, account)
             cookies = await context.cookies("https://www.dola.com")
@@ -803,15 +928,9 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
 
             # ---- UI 发送 ----
-            try:
-                await page.click(VIDEO_BTN)
-            except Exception:
-                await page.get_by_text("動画を作成", exact=False).first.evaluate("(el) => el.click()")
-                await page.wait_for_timeout(500)
-            await page.wait_for_timeout(1500)
+            await enter_video_mode(page, account)
             if reference_image_paths:
-                emit_feedback(on_poll, progress="正在上传参考图（尚未提交生成）")
-                await attach_reference_images(page, reference_image_paths)
+                await upload_with_retry(page, account, reference_image_paths, on_poll)
             # 选择模型（尽力而为）：扩展/当前网页端文案 モデル 2.0高速/2.5；
             # 部分账号 UI 变体没有该按钮，找不到就沿用 Dola 默认模型，不阻塞出片。
             try:
@@ -823,11 +942,13 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                         break
                 if current_model is None:
                     current_model = page.get_by_text(re.compile(r"^モデル "), exact=False).first
+                if not await current_model.count():
+                    raise RuntimeError("没有模型按钮")   # 不让 evaluate 再盲等 30 秒
                 try:
                     await current_model.click(timeout=5000)
                 except Exception:
                     # radix popper 子元素拦截点击时，用 JS 直接派发点击
-                    await current_model.evaluate("(el) => el.click()")
+                    await current_model.evaluate("(el) => el.click()", timeout=3000)
                 await page.wait_for_timeout(500)
                 options = (("Dreamina Seedance 2.5",)
                            if model_key == "seedance_v2.5"

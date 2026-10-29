@@ -48,6 +48,11 @@ PREPARE_TIMEOUT = max(1, int(os.getenv("DOLA_PREPARE_TIMEOUT", "180")))
 TASK_DEADLINE = int(os.getenv("DOLA_TASK_DEADLINE", "600"))
 # 单个任务最多尝试的账号次数；0 表示不限次数，只受 TASK_DEADLINE 约束。
 VIDEO_MAX_ATTEMPTS = int(os.getenv("DOLA_VIDEO_MAX_ATTEMPTS", "0"))
+# 已提交后、上游会话最终卡片确认失败（status=5，无视频）时，每个任务最多换号重提几次。
+# 只对结构化确认的最终失败生效；内容拒绝、缺信息、结果未知都不重提。0 = 关闭。
+GENERATION_FAILURE_RETRIES = max(0, int(os.getenv("DOLA_GENERATION_FAILURE_RETRIES", "2")))
+# 参考图上传失败（尚未提交）时，同一账号刷新页面重传的次数；用尽才换号。
+UPLOAD_RETRIES = max(0, int(os.getenv("DOLA_UPLOAD_RETRIES", "1")))
 
 # SQLite 任务库
 DB_PATH = os.getenv("DOLA_DB_PATH", "tasks.db")

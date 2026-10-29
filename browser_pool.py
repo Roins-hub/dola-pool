@@ -15,7 +15,10 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from dola_client import CreditError
-from generation_errors import PreSubmissionUploadError, PreSubmissionParametersError, UploadRouteError, UpstreamReplyError
+from generation_errors import (
+    PreSubmissionUploadError, PreSubmissionParametersError, RegionRestrictedError,
+    UploadRouteError, UpstreamGenerationFailed, UpstreamReplyError,
+)
 from account_transport import diagnose_upload_route, redact_error
 from video_worker_ui import (
     AccountLimitedError, CreditInsufficientError, LoginExpiredError, RiskControlError,
@@ -2013,6 +2016,7 @@ class BrowserPool:
             non_pure_announced = False
             # max_attempts <= 0：不限次数，只要没到 deadline 就一轮轮换号重试。
             unlimited = max_attempts <= 0
+            generation_retries = 0     # 已提交且上游确认失败后的换号重提次数
             last_note = [""]
 
             def say(note: str) -> None:
@@ -2226,6 +2230,18 @@ class BrowserPool:
                                 (time.time() + COOLDOWN_SEC, account))
                             self._conn.commit()
                             last_err = e
+                        except UpstreamGenerationFailed as e:
+                            attempt_error = e
+                            # The original conversation ended with a failed creation card and
+                            # no video, so resubmitting elsewhere cannot duplicate a result.
+                            if not (e.retryable and generation_retries < config.GENERATION_FAILURE_RETRIES
+                                    and time_left()):
+                                raise
+                            generation_retries += 1
+                            print(f"[pool] {account} 上游确认生成失败（fail_code={e.code}，会话 "
+                                  f"{e.conversation_id} 已结束）→ 换号重提 {generation_retries}/"
+                                  f"{config.GENERATION_FAILURE_RETRIES}", flush=True)
+                            last_err = e
                         except UpstreamReplyError as e:
                             attempt_error = e
                             raise
@@ -2255,6 +2271,19 @@ class BrowserPool:
                                 (time.time(), account))
                             self._conn.commit()
                             raise
+                        except RegionRestrictedError as e:
+                            # 出口地区问题，不是账号掉登录：不标风控/不改登录态；动态代理换个出口。
+                            rotated = None
+                            try:
+                                rotated = await asyncio.to_thread(
+                                    proxy_store.rotate_account_session, account, reason="Dola 地区受限页")
+                            except Exception as exc:  # noqa: BLE001 - 换出口失败不影响换号
+                                print(f"[pool] {account} 换动态出口失败: {redact_error(exc)}", flush=True)
+                            if rotated and self._engine:
+                                self._engine.set_account_egress_key(account, proxy_store.egress_key_for(account))
+                            print(f"[pool] {account} 出口被 Dola 地区限制 → "
+                                  f"{'已换动态出口，' if rotated else ''}本任务换号", flush=True)
+                            last_err = e
                         except LoginExpiredError as e:
                             print(f"[pool] {account} 登录态失效，标记需重新登录并换号: {e}", flush=True)
                             self._set_risk(account, str(e))

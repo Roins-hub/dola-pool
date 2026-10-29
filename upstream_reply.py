@@ -33,6 +33,38 @@ def reply_failure(text):
     return None
 
 
+# ai_creation_res_code for input refusals seen in real chains (710082031: 肖像保護).
+CONTENT_CODES = {'710082031'}
+TOOL_FAILED = 5
+NOT_CHARGED_RE = re.compile(
+    r'クレジットは使用されませんでした|积分未(?:被)?(?:使用|扣除)|额度未扣除|未扣(?:除)?(?:积分|额度)|'
+    r'credits? (?:was|were) not (?:used|deducted|charged)', re.I)
+
+
+def final_generation_failure(latest, has_video):
+    """Return failure details only when the latest finished card says the task failed.
+
+    Text alone is not final: Dola has shown failure/quota wording before a video
+    arrived. A failed creation card carries ai_creation_tool_list status 5 and a
+    non-zero fail/res code; a successful one has status 4 and a video.
+    """
+    if has_video or not latest or not latest.get('finished'):
+        return None
+    tools = latest.get('tools') or []
+    if not tools or any(t.get('status') != TOOL_FAILED for t in tools):
+        return None
+    codes = [c for c in [latest.get('resCode')] + [t.get('failCode') for t in tools]
+             if c and c != '0']
+    if not codes:
+        return None
+    text = latest.get('text') or ''
+    category = reply_failure(text)
+    retryable = codes[0] not in CONTENT_CODES and category not in ('内容拒绝', '需要补充信息', '额度不足')
+    return {'code': codes[0], 'text': text, 'retryable': retryable,
+            'not_charged': bool(NOT_CHARGED_RE.search(text)),
+            'category': category or '上游生成失败'}
+
+
 def duration_reply(text, duration, ratio=None):
     """Reply only to an explicit duration question/options in the latest assistant turn."""
     if not text or not duration or reply_failure(text):

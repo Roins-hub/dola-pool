@@ -128,3 +128,22 @@ def test_browser_proxy_kwargs_use_relay_for_socks5_auth(monkeypatch):
     assert "username" not in kw and "password" not in kw
     kw2 = browser._kwargs_from_url("http://u:p@1.2.3.4:8080")           # http 代理不变
     assert kw2 == {"server": "http://1.2.3.4:8080", "username": "u", "password": "p"}
+
+
+def test_relay_answers_502_when_upstream_socks_fails():
+    """Silent close made Chromium report vague ERR_FAILED/EMPTY_RESPONSE on uploads."""
+    dead = socket.socket()
+    dead.bind(("127.0.0.1", 0))
+    port = dead.getsockname()[1]
+    dead.close()                                                        # nothing listens here
+    local = socks_relay.local_http_proxy_for(f"socks5://u:p@127.0.0.1:{port}")
+    ph, pp = local.rsplit("//", 1)[1].split(":")
+    s = socket.create_connection((ph, int(pp)), timeout=10)
+    s.sendall(b"CONNECT imagex.invalid:443 HTTP/1.1\r\nHost: imagex.invalid:443\r\n\r\n")
+    resp = b""
+    while chunk := s.recv(1024):
+        resp += chunk
+    s.close()
+    assert resp.startswith(b"HTTP/1.1 502")
+    assert sum(socks_relay.STATS.values()) >= 1
+    assert not any("u:p" in key for key in socks_relay.STATS)

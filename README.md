@@ -371,6 +371,8 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `DOLA_MAX_QUEUE_WAIT_SECONDS` | `1800` | 排队等待名额/账号的上限（秒），不包含生成等待 |
 | `DOLA_PREPARE_TIMEOUT` | `180` | 浏览器单次提交准备上限（秒）；拿到上游会话后交给生成轮询计时 |
 | `DOLA_VIDEO_MAX_ATTEMPTS` | `0` | 单任务最多尝试次数，`0` 表示不限、只受总时限约束 |
+| `DOLA_GENERATION_FAILURE_RETRIES` | `2` | 已提交后，上游会话最终卡片确认失败（任务状态 5、无视频）时最多换号重提几次；只看结构化状态，不看文字；内容拒绝不重提；`0` 关闭 |
+| `DOLA_UPLOAD_RETRIES` | `1` | 参考图上传失败（尚未提交）时同一账号刷新页面重传的次数，用尽才换号 |
 | `DOLA_MAX_CONCURRENCY` | `0` | 全局并发初始值，0 = 不限；后台保存的值优先 |
 | `DOLA_MAX_PENDING_TASKS` | `100` | 待处理任务上限，超过返回 429 |
 | `DOLA_REFERENCE_IMAGE_MAX_BYTES` | `20971520` | 每张原始参考图最多 20 MiB；URL 下载和 Base64 输入使用同一限制 |

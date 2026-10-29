@@ -87,7 +87,7 @@ async def _serve_one(proxy, reader, writer):
     method, target, version = parts[0], parts[1], parts[2]
     if method.upper() == "CONNECT":
         host, _, port = target.rpartition(":")
-        up_r, up_w = await socks5_connect(proxy, host.strip("[]"), int(port or 443))
+        up_r, up_w = await _connect_or_502(proxy, host.strip("[]"), int(port or 443), writer)
         writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         await writer.drain()
     else:
@@ -95,7 +95,7 @@ async def _serve_one(proxy, reader, writer):
         url = urlsplit(target)
         if not url.hostname:
             return
-        up_r, up_w = await socks5_connect(proxy, url.hostname, url.port or 80)
+        up_r, up_w = await _connect_or_502(proxy, url.hostname, url.port or 80, writer)
         path = url.path or "/"
         if url.query:
             path += "?" + url.query
@@ -104,10 +104,37 @@ async def _serve_one(proxy, reader, writer):
     await asyncio.gather(_pipe(reader, up_w), _pipe(up_r, writer), return_exceptions=True)
 
 
+STATS: dict[str, int] = {}             # 失败原因 -> 次数（不含地址/凭据），供诊断
+
+
+async def _connect_or_502(proxy, host: str, port: int, writer):
+    """上游连不上时明确回 502：静默断开会让 Chromium 只报含糊的 ERR_FAILED/EMPTY_RESPONSE。"""
+    try:
+        return await socks5_connect(proxy, host, port)
+    except Exception as exc:
+        reason = str(exc)[:60] if isinstance(exc, ConnectionError) and str(exc) else type(exc).__name__
+        STATS[reason] = STATS.get(reason, 0) + 1
+        try:
+            writer.write(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            await writer.drain()
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+
+
 async def socks5_connect(proxy, host: str, port: int):
     """按 RFC 1928 / 1929 连 socks5 代理（用户名密码鉴权），返回到目标的 (reader, writer)。"""
     r, w = await asyncio.wait_for(
         asyncio.open_connection(proxy.hostname, proxy.port or 1080), timeout=20)
+    try:
+        # 握手各步原先没有超时：上游半开时这条连接会一直挂着
+        return await asyncio.wait_for(_socks5_handshake(r, w, proxy, host, port), timeout=20)
+    except BaseException:
+        w.close()
+        raise
+
+
+async def _socks5_handshake(r, w, proxy, host: str, port: int):
     w.write(b"\x05\x02\x00\x02")                       # 支持：无鉴权 / 用户名密码
     await w.drain()
     _ver, method = await r.readexactly(2)

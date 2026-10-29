@@ -143,3 +143,36 @@ def test_missing_ratio_option_is_safe_failure():
     with pytest.raises(PreSubmissionParametersError, match='没有可选比例'):
         run(select_video_parameters(page, 5, '2:1'))
     assert not page.open
+
+
+def test_generic_parameter_failure_names_step_without_browser_text():
+    class Missing:
+        async def count(self): return 0
+        async def wait_for(self, **kw): raise TimeoutError("https://signed.invalid/?token=SECRET")
+        def filter(self, **kw): return self
+        first = property(lambda self: self)
+        async def click(self, **kw): raise TimeoutError("https://signed.invalid/?token=SECRET")
+    class Page:
+        def locator(self, selector): return Missing()
+        def get_by_text(self, *a, **kw): return Missing()
+        async def wait_for_timeout(self, ms): pass
+    with pytest.raises(PreSubmissionParametersError) as error:
+        run(select_video_parameters(Page(), 10, '16:9'))
+    assert '旧版控件' in str(error.value) and 'TimeoutError' in str(error.value)
+    assert 'SECRET' not in str(error.value)
+
+
+def test_video_mode_requires_model_or_params_control():
+    from browser_video_params import video_mode_ready
+    class Loc:
+        def __init__(self, n): self.n = n
+        async def count(self): return self.n
+        def filter(self, **kw): return self
+    class Page:
+        def __init__(self, trigger, model): self.t, self.m = trigger, model
+        def locator(self, selector): return Loc(self.t)
+        def get_by_text(self, *a, **kw): return Loc(self.m)
+        async def wait_for_timeout(self, ms): pass
+    assert run(video_mode_ready(Page(1, 0), 500))
+    assert run(video_mode_ready(Page(0, 1), 500))
+    assert not run(video_mode_ready(Page(0, 0), 500))
