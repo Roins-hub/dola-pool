@@ -65,6 +65,34 @@ def final_generation_failure(latest, has_video):
             'category': category or '上游生成失败'}
 
 
+_CODE_BLOCK = re.compile(r"```.*?(?:```|$)", re.S)
+_RANGE = r"(\d+)(?:\s*[-~～〜到至]\s*(\d+))?"
+_WAIT_PATTERNS = (
+    (re.compile(_RANGE + r"\s*時間"), 3600),
+    (re.compile(_RANGE + r"\s*分(?:分)?\s*(?:後|以内|ほど|程度|くらい|ぐらい|前後|かかり)"), 60),
+    (re.compile(r"(?:预计|預計|大约|大約|约|約|需要|等待)\s*" + _RANGE + r"\s*(?:分钟|分鐘)"), 60),
+    (re.compile(_RANGE + r"\s*(?:分钟|分鐘)\s*(?:左右|后|後|内|以内)"), 60),
+    (re.compile(_RANGE + r"\s*小时"), 3600),
+    (re.compile(_RANGE + r"\s*(?:minutes?|mins?)(?![a-z])", re.I), 60),
+)
+
+
+def wait_seconds_from_reply(text):
+    """Dola's own estimate in an assistant reply ("5分後に生成されます", "1-3分以内", "约 5 分钟"), in seconds.
+
+    Takes the upper end of a range. Code blocks are dropped first: Dola now echoes the
+    prompt inside a JSON plan, and a prompt saying "3分钟" is not a wait estimate.
+    """
+    clean = _CODE_BLOCK.sub(" ", str(text or "")).replace("**", "")
+    for pattern, unit in _WAIT_PATTERNS:
+        match = pattern.search(clean)
+        if match:
+            value = int(match.group(2) or match.group(1))
+            if 0 < value * unit <= 6 * 3600:
+                return value * unit
+    return 0
+
+
 def duration_reply(text, duration, ratio=None):
     """Reply only to an explicit duration question/options in the latest assistant turn."""
     if not text or not duration or reply_failure(text):

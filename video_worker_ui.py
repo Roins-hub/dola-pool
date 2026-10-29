@@ -707,7 +707,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     choice_replied = False
     failure_seen = (None, 0)
     final_seen = (None, 0)
+    last_wait = 0
     poll_errors = 0
+    from upstream_reply import wait_seconds_from_reply
     while True:
         await asyncio.sleep(5)
         if time.time() > deadline:
@@ -739,6 +741,10 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             emit_feedback(on_poll, note=note or None)
             last_callback = now
             last_note = note
+            wait = wait_seconds_from_reply(note) if note else 0
+            if wait and wait != last_wait:
+                last_wait = wait
+                emit_feedback(on_poll, progress=f"已取得上游会话，dola 预计约 {max(1, round(wait / 60))} 分钟出片，正在查询视频结果")
         videos = poll.get("videos") or []
         # ---- 新版 Dola：提交后要求 A/B/C 选择时长，不回复则永远不出片 ----
         if duration and not choice_replied:

@@ -5,10 +5,14 @@ import time
 from urllib.parse import urlsplit
 
 
-def emit(on_poll, *, note=None, progress=None):
+def emit(on_poll, *, note=None, progress=None, wait_seconds=None):
     if not on_poll:
         return
-    fields = {k: v for k, v in {"note": note, "progress": progress}.items() if v}
+    if note and wait_seconds is None:
+        from upstream_reply import wait_seconds_from_reply
+        wait_seconds = wait_seconds_from_reply(note) or None   # Dola 原话里的「N 分後 / 约 N 分钟」
+    fields = {k: v for k, v in {"note": note, "progress": progress,
+                                "wait_seconds": wait_seconds}.items() if v}
     params = inspect.signature(on_poll).parameters
     if not any(p.kind == p.VAR_KEYWORD for p in params.values()):
         fields = {k: v for k, v in fields.items() if k in params}
