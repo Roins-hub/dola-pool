@@ -183,6 +183,12 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
 .dialog input{width:100%;padding:8px 12px;font-size:13px}
 /* 单选 / 勾选框别被上面的 width:100% 拉满：否则圆点和文字隔得老远（添加代理弹窗里很明显） */
 .dialog input[type=radio],.dialog input[type=checkbox]{width:auto;padding:0;flex:none;margin:0}
+.proxy-password{display:flex;align-items:center;gap:6px}
+.proxy-password input{min-width:0;flex:1}
+.proxy-password .btn{flex:none;padding:8px 10px}
+.ip-probe-panel{margin:10px 0;padding:12px;border:1px solid var(--line);border-radius:12px}
+.ip-probe-panel:empty{display:none}
+.ip-probe-results{max-height:220px;overflow:auto;margin-top:8px;overflow-wrap:anywhere}
 .dialog .row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
 .keyfull{font-family:monospace;background:rgba(255,255,255,.07);border:1px dashed var(--stroke-hi);border-radius:10px;padding:12px;word-break:break-all;margin:10px 0}
 .chart{display:flex;align-items:flex-end;gap:14px;height:140px;padding:0 4px}
@@ -286,6 +292,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
           <button class="btn btn-danger" id="btnDelSel" onclick="deleteSelectedAccounts()" disabled>删除选中</button>
           <button class="btn" id="btnVerifySel" onclick="batchVerifySelected()" disabled>一键验证</button>
           <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="按账号模式探测：Cloak 使用独立浏览器，超时未确认不判风控；不勾选则探测当前筛选账号">你好探测</button>
+          <button class="btn" id="btnProbeIps_accounts" onclick="batchProbeIps('accounts')" title="探测勾选账号；未勾选时探测当前筛选结果，忙碌账号跳过">一键探测出口 IP</button>
           <button class="btn" id="btnBatchRecover" onclick="batchRecover()" title="批量把选中的号从【风控】/【异常】组放出来（风控恢复后回到【待激活】，建议接着探测一次）">批量恢复</button>
           <button class="btn" id="btnProxySel" onclick="openBatchProxy()" disabled>更改代理</button>
           <button class="btn" id="btnExportCookies" onclick="exportAccountCookies()" disabled>导出选中 Cookie</button>
@@ -296,6 +303,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
       </div>
       <div class="groupbar" id="groupBar"></div>
       <div id="egressWarn"></div>
+      <div id="ipProbe_accounts" class="ip-probe-panel" role="status" aria-live="polite"></div>
       <div id="accountsTable"></div>
     </div>
   </section>
@@ -307,6 +315,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <input type="search" id="search_proxies" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索名称 / 地址 / 用户名 / 备注" oninput="setSearch('proxies',this.value)">
           <button class="btn" onclick="selAllToggle('proxies')">全选 / 取消</button>
+          <button class="btn" id="btnProbeIps_proxies" onclick="batchProbeIps('proxies')" title="探测勾选代理；未勾选时探测当前筛选结果">一键探测出口 IP</button>
           <button class="btn btn-danger" id="delSel_proxies" disabled onclick="delSelected('proxies')">删除选中</button>
           <button class="btn btn-p" onclick="openAddProxy()">＋ 添加代理</button>
         </div>
@@ -319,6 +328,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--line);marg
         <span id="defaultProxyShow" style="font-family:monospace"></span>。
       </div>
       <div id="proxiesTable"></div>
+      <div id="ipProbe_proxies" class="ip-probe-panel" role="status" aria-live="polite"></div>
     </div>
   </section>
 
@@ -419,7 +429,7 @@ let autoRefresh=true, curTab='dash', timer=null;
 function q(s){return document.querySelector(s);}
 let dialogEpoch=0;
 function show(id){document.getElementById(id).style.display='flex';}
-function hide(id){if(id==='dlg')dialogEpoch++;document.getElementById(id).style.display='none';}
+function hide(id){if(id==='dlg'){dialogEpoch++;const pw=q('#f_ppass');if(pw){pw.value='';pw.type='password';}}document.getElementById(id).style.display='none';}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 /** 用户 / 上游数据（账号名、代理名、备注、dola 原话…）：转义并标 translate="no"，面板多语言不会把它当文案改写 */
 function noTr(s){return '<span translate="no">'+esc(s)+'</span>';}
@@ -795,9 +805,9 @@ function renderAccounts(){
     const jb=jobs[x.name];
     const badge=accountRunBadge(x,jb);
     // 动态代理账号：显示当前出口 IP，并提供换IP/探测
-    const ipInfo=x.proxy_mode==='dynamic'
+    const ipInfo=x.proxy_mode||x.exit_ip
       ?`<div class="tiny">出口 ${x.exit_ip?esc(x.exit_ip):'未探测'}
-         <a href="javascript:;" onclick="rotateIp('${x.name}')">换IP</a>
+         ${x.proxy_mode==='dynamic'||x.proxy_mode==='extract'?`<a href="javascript:;" onclick="rotateIp('${x.name}')">换IP</a>`:''}
          <a href="javascript:;" onclick="probeIp('${x.name}')">探测</a></div>`
       :'';
     const warn=accountJobNote(x,jb);
@@ -1716,6 +1726,7 @@ function onProxyKindChange(){
   if(tu)tu.style.display=(m==='extract'&&kind==='tunnel')?'block':'none';
 }
 let proxyProbeCache={};
+let shownProxyIds=[];
 async function loadProxies(){
   const r=await api('/api/admin/proxies');
   proxyCache=r.proxies||[];
@@ -1723,6 +1734,7 @@ async function loadProxies(){
   const shown=proxyCache.filter(p=>searchHit('proxies',p.name,p.host,p.port,p.username,p.protocol,p.remark,
     proxyProbeCache[p.id],p.mode==='extract'?'节点池':p.is_dynamic?'隧道 动态':'静态'));
   selPrune('proxies',shown.map(p=>p.id));
+  shownProxyIds=shown.map(p=>p.id);
   q('#proxiesTable').innerHTML=table(
     [selAllBox('proxies'),'名称','类型','协议','地址','端口','用户名','已绑账号','出口IP','备注','操作'],
     shown.map(p=>[
@@ -1835,6 +1847,70 @@ async function probeIp(name){
   }catch(e){return alert(dialogText`${e.message}`);}
   loadAccounts();
 }
+async function toggleProxyPassword(id,hasSaved,button){
+  const input=q('#f_ppass'),epoch=dialogEpoch;
+  if(!input||button.disabled)return;
+  if(input.type==='text'){
+    input.type='password';button.textContent='显示';button.setAttribute('aria-pressed','false');return;
+  }
+  if(id&&hasSaved&&input.dataset.loaded!=='1'&&input.dataset.dirty!=='1'){
+    button.disabled=true;button.textContent='读取中…';
+    try{
+      const result=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/password',{method:'POST'});
+      if(epoch!==dialogEpoch||!input.isConnected)return;
+      // A typed replacement wins over a late saved-password response.
+      if(input.dataset.dirty!=='1'){input.value=result.password||'';input.dataset.loaded='1';}
+    }catch(e){
+      if(epoch===dialogEpoch)alert('读取密码失败：'+e.message);
+      return;
+    }finally{
+      button.disabled=false;button.textContent='显示';
+    }
+  }
+  if(epoch!==dialogEpoch||!input.isConnected)return;
+  input.type='text';button.textContent='隐藏';button.setAttribute('aria-pressed','true');
+}
+
+const IP_PROBE_JOBS={accounts:null,proxies:null};
+function renderIpProbe(kind){
+  const job=IP_PROBE_JOBS[kind],panel=q('#ipProbe_'+kind);
+  if(!job||!panel)return;
+  const done=job.results.length,ok=job.results.filter(r=>r.ok).length;
+  const skipped=job.results.filter(r=>r.skipped).length;
+  panel.innerHTML='<div><b>出口 IP 探测 '+done+' / '+job.ids.length+'</b> · 成功 '+ok+' · 失败 '+(done-ok-skipped)+' · 跳过 '+skipped
+    +(job.running?' <button class="btn" onclick="stopIpProbe(\''+kind+'\')"'+(job.stop?' disabled':'')+'>'+(job.stop?'正在停止…':'停止后续探测')+'</button>':job.stop?' · 已停止':' · 已完成')
+    +'</div><div class="tiny">最多同时探测 3 项；查询出口不代表 Dola 登录、上传或生成可用。'+(kind==='proxies'?'动态网关显示临时出口，账号实际出口请在账号管理探测。':'忙碌账号跳过；未分配或已过期的代理会按现有规则分配节点／会话。')+'</div>'
+    +'<div class="ip-probe-results">'+job.results.map(r=>'<div class="tiny" style="margin:4px 0;color:var(--'+(r.ok?'ok':r.skipped?'sub':'red')+')">'+esc(r.label)+'：'+esc(r.ok?[r.ip,r.country,r.region,r.isp].filter(Boolean).join(' · '):r.error||'探测失败')+'</div>').join('')+'</div>';
+}
+function stopIpProbe(kind){const job=IP_PROBE_JOBS[kind];if(job){job.stop=true;renderIpProbe(kind);}}
+async function batchProbeIps(kind){
+  if(Object.values(IP_PROBE_JOBS).some(j=>j&&j.running))return;
+  const selected=kind==='accounts'?[...selAccounts]:[...SEL.proxies];
+  const ids=[...new Set(selected.length?selected:kind==='accounts'?filteredAccounts.map(a=>a.name):shownProxyIds)];
+  if(!ids.length)return alert('没有可探测的项目，请先勾选或调整筛选条件');
+  const job={ids,results:[],running:true,stop:false,next:0};IP_PROBE_JOBS[kind]=job;
+  ['accounts','proxies'].forEach(k=>{q('#btnProbeIps_'+k).disabled=true;});renderIpProbe(kind);
+  async function worker(){
+    while(!job.stop&&job.next<ids.length){
+      const id=ids[job.next++];
+      const label=kind==='accounts'?id:(proxyCache.find(p=>p.id===id)||{}).name||id;
+      let result;
+      try{
+        result=await api('/api/admin/'+kind+'/'+encodeURIComponent(id)+(kind==='accounts'?'/probe-ip':'/probe'),{method:'POST'});
+      }catch(e){result={ok:false,error:e.message};}
+      job.results.push({...result,label});
+      if(kind==='proxies')proxyProbeCache[id]=result.ok?[result.ip,result.country,result.isp].filter(Boolean).join(' · '):'探测失败';
+      renderIpProbe(kind);
+    }
+  }
+  try{await Promise.all(Array.from({length:Math.min(3,ids.length)},()=>worker()));}
+  finally{
+    job.running=false;renderIpProbe(kind);
+    ['accounts','proxies'].forEach(k=>{q('#btnProbeIps_'+k).disabled=false;});
+    try{if(kind==='accounts')await loadAccounts();else await loadProxies();}catch(e){}
+  }
+}
+
 function proxyDialog(p){
   const isEdit=!!p;
   const oldPw=p&&p.has_password?'（原密码已保存，留空保持不变）':'';
@@ -1873,8 +1949,8 @@ function proxyDialog(p){
     <div id="gwBox" style="display:${showGw?'block':'none'}">
       <div style="display:flex;gap:10px"><div style="flex:2"><label>地址</label><input id="f_phost" value="${p?esc(p.host):''}" placeholder="IP 或域名"></div>
         <div style="flex:1"><label>端口</label><input id="f_pport" type="number" value="${p&&p.port?p.port:'3128'}"></div></div>
-      <div style="display:flex;gap:10px"><div style="flex:1"><label>用户名（可选）</label><input id="f_puser" value="${p?esc(p.username||''):''}"></div>
-        <div style="flex:1"><label>密码（可选）</label><input id="f_ppass" type="password" placeholder="${oldPw}"></div></div>
+      <label>用户名（可选）</label><input id="f_puser" value="${p?esc(p.username||''):''}">
+      <label for="f_ppass">密码（可选）</label><div class="proxy-password"><input id="f_ppass" type="password" autocomplete="new-password" data-dirty="0" data-loaded="0" oninput="this.dataset.dirty='1'" placeholder="${oldPw}"><button type="button" class="btn" id="proxyPasswordToggle" aria-controls="f_ppass" aria-pressed="false" onclick="toggleProxyPassword('${p?p.id:''}',${!!(p&&p.has_password)},this)">显示</button></div>
     </div>
     <label>备注</label><input id="f_premark" value="${p?esc(p.remark||''):''}">
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
@@ -2074,7 +2150,7 @@ async function submitProxy(id){
   }
   const pw=q('#f_ppass')?q('#f_ppass').value:'';
   if(!id){body.password=pw;}
-  else if(pw){body.password=pw;}
+  else if(pw&&q('#f_ppass').dataset.dirty==='1'){body.password=pw;}
   try{
     if(id){
       await api('/api/admin/proxies/'+encodeURIComponent(id),{method:'PATCH',body});

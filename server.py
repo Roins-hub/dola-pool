@@ -2823,6 +2823,19 @@ async def admin_proxy_update(proxy_id: str, body: ProxyUpdate,
     return {"updated": updated}
 
 
+@app.post("/api/admin/proxies/{proxy_id}/password")
+async def admin_proxy_password(proxy_id: str, response: Response,
+                               x_admin_key: str | None = Header(default=None)):
+    """Reveal one saved proxy password only on an explicit authenticated request."""
+    _admin_auth(x_admin_key)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    record = proxy_store.get_proxy(proxy_id)
+    if not record:
+        raise HTTPException(404, "proxy not found")
+    return {"password": record.get("password") or ""}
+
+
 @app.delete("/api/admin/proxies/{proxy_id}")
 async def admin_proxy_delete(proxy_id: str,
                              x_admin_key: str | None = Header(default=None)):
@@ -2856,7 +2869,13 @@ async def admin_proxy_probe(proxy_id: str,
                             x_admin_key: str | None = Header(default=None)):
     """探测该代理当前的出口 IP（动态代理用临时 session，不动已绑定的号）。"""
     _admin_auth(x_admin_key)
-    return await asyncio.to_thread(proxy_store.probe_proxy_record, proxy_id)
+    try:
+        result = await asyncio.to_thread(proxy_store.probe_proxy_record, proxy_id)
+    except Exception as exc:
+        return {"ok": False, "error": redact_error(exc)}
+    if result.get("error"):
+        result["error"] = redact_error(result["error"])
+    return result
 
 
 @app.get("/api/admin/proxies/{proxy_id}/nodes")
@@ -2923,7 +2942,19 @@ async def admin_account_probe_ip(name: str,
                                  x_admin_key: str | None = Header(default=None)):
     """查该号当前真实出口 IP 与归属地。"""
     _admin_auth(x_admin_key)
-    return await asyncio.to_thread(proxy_store.probe_account_exit_ip, name)
+    if name not in pool.accounts:
+        raise HTTPException(404, "account not found")
+    lock = pool._locks.setdefault(name, asyncio.Lock())
+    if lock.locked() or JOBS.get(name, {}).get("status") == "running":
+        return {"ok": False, "skipped": True, "error": "账号正在运行任务，已跳过出口探测"}
+    async with pool._use_account(name, "probing"):
+        try:
+            result = await asyncio.to_thread(proxy_store.probe_account_exit_ip, name)
+        except Exception as exc:
+            return {"ok": False, "error": redact_error(exc)}
+        if result.get("error"):
+            result["error"] = redact_error(result["error"])
+        return result
 
 
 @app.post("/api/admin/proxies/{proxy_id}/rotate")

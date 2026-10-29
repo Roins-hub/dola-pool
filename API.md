@@ -629,6 +629,7 @@ dola 自 2026-10-12 起对 30 秒请求回「只支持 4～15 秒，按 15 秒�
 | GET | `/api/admin/proxies` | 代理列表（静态/动态、模式、绑定账号数） |
 | POST | `/api/admin/proxies` | 新建（`mode=static` 要 `host/port`；`mode=extract` 可只给 `extract_url` 或 `nodes_text`） |
 | PATCH | `/api/admin/proxies/{id}` | 改代理 |
+| POST | `/api/admin/proxies/{id}/password` | 已登录管理员显式读取单条代理密码，返回 `{ "password": "..." }`，响应禁止缓存；代理列表不返回密码 |
 | DELETE | `/api/admin/proxies/{id}` | 删代理 |
 | POST | `/api/admin/proxies/{id}/probe` | 探测代理出口 |
 | GET | `/api/admin/proxies/{id}/nodes` | 节点池（节点、存活、出口 IP、过期时间） |
@@ -638,7 +639,7 @@ dola 自 2026-10-12 起对 30 秒请求回「只支持 4～15 秒，按 15 秒�
 | POST | `/api/admin/proxies/{id}/rotate` | 给该代理下所有号换出口 |
 | POST | `/api/admin/accounts/{name}/proxy` | 给账号绑定/解绑代理 |
 | POST | `/api/admin/accounts/{name}/rotate-ip` | 给该号换出口 IP |
-| POST | `/api/admin/accounts/{name}/probe-ip` | 探测该号当前出口 IP 与归属 |
+| POST | `/api/admin/accounts/{name}/probe-ip` | 探测该号当前出口 IP 与归属；忙碌账号返回 `ok:false, skipped:true`，不存在返回 404；不提交视频 |
 | POST | `/api/admin/accounts/batch-proxy` | 批量改代理 |
 | POST | `/api/admin/accounts/rebalance-proxies` | 自动重分配（一节点一号） |
 | POST | `/api/admin/accounts/bind-proxies` | 批量绑定 |

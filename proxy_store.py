@@ -737,8 +737,9 @@ def probe_exit_ip(proxy_url: str, timeout: int = 15) -> dict:
             "region": data.get("regionName", ""),
             "isp": data.get("isp", ""),
         }
-    except Exception as exc:  # noqa: BLE001 - 探测失败原因要原样回报给面板
-        return {"ok": False, "ip": "", "error": str(exc)[:200]}
+    except Exception as exc:  # Keep diagnostics without proxy credentials.
+        from account_transport import redact_error
+        return {"ok": False, "ip": "", "error": redact_error(exc)[:200]}
 
 
 def probe_proxy_record(proxy_id: str, session: str | None = None) -> dict:
@@ -778,7 +779,21 @@ def probe_proxy_record(proxy_id: str, session: str | None = None) -> dict:
 def probe_account_exit_ip(account: str) -> dict:
     """探测某个号当前真实出口 IP，并记录到 proxy_sessions。"""
     url = proxy_url_for(account)
+    info = get_account_proxy(account)
+    if info and info.get("mode") == "extract" and not (get_session(account) or {}).get("node_id"):
+        return {"ok": False, "ip": "", "error": "账号代理没有可用节点，未探测默认出口"}
     result = probe_exit_ip(url)
+    # Static/default proxies do not otherwise create a session row. Keep their
+    # probe result visible after refresh without rotating an existing session.
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_sessions (account, proxy_id, session, rotated_at) VALUES (?,?,?,?)",
+            (account, info["id"] if info else "", "", 0),
+        )
+        conn.commit()
+    finally:
+        conn.close()
     record_probe_result(
         account,
         result.get("ip", ""),
