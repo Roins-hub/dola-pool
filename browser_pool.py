@@ -173,6 +173,17 @@ def duration_cost(model: str, duration: int = 0) -> int:
     return config.credit_cost(version, duration)
 
 
+def start_need(model: str, duration: int = 0) -> int:
+    """派号门槛：号里至少剩多少点才派这一单（见 config.start_cost；2.0 不按这一单的价卡）。"""
+    cost = duration_cost(model, duration)
+    if sites.is_doubao_model(model) or _is_pair_duration(duration):
+        return cost
+    m = (model or "").lower().replace("_", "-")
+    if "2.0" in m or "2-0" in m:
+        return config.start_cost("seedance-2.0", duration)
+    return cost
+
+
 _QUOTE_RE = re.compile(r"需要消耗\s*(\d+)\s*个.*?剩余\s*(\d+)\s*个")
 
 
@@ -1658,10 +1669,10 @@ class BrowserPool:
         if not proxied and row.get("site") != sites.DOUBAO:
             out.append("该号没绑代理，会用服务器本机 IP 直连；服务器不在日本/韩国时 dola 会拒绝"
                        "（710022002 或地区限制）")
-        cost = self._duration_cost(model or "", int(duration or 0)) if model else 0
+        need = start_need(model or "", int(duration or 0)) if model else 0
         remaining = int(row.get("remaining") or 0)
-        if cost and remaining < cost:
-            out.append(f"该号今日额度不够（剩 {remaining} 点，这条要 {cost} 点）")
+        if need and remaining < need:
+            out.append(f"该号今日额度不够（剩 {remaining} 点，这条至少要 {need} 点）")
         return out
 
     async def test_generate(self, account: str, prompt: str, ratio: str | None = None,
@@ -2029,6 +2040,7 @@ class BrowserPool:
                 deadline = time.time() + max(1, config.MAX_QUEUE_WAIT_SECONDS)
             self._sync_engine()
             cost = self._duration_cost(model, duration)
+            need = start_need(model, duration)      # 派号门槛（2.0 只要还有额度）；记账仍按 cost
             allowed_groups = self._allowed_quota_groups(model, duration)
             want_site = sites.site_for_model(model)
             member_only = sites.doubao_member_only(model)
@@ -2104,14 +2116,14 @@ class BrowserPool:
                         continue
                     # 额度组门槛：2.0 只吃满额；2.5 半额优先、满额兜底
                     if self._quota_group(a) not in allowed_groups:
-                        if a["remaining"] < cost:
+                        if a["remaining"] < need:
                             short_seen += 1     # 余额本来就不够这一单：等也等不来（要到明天重置）
                         else:
                             group_wait = True
                         continue
                     if not self._schedulable(a):
                         continue
-                    if a["remaining"] < cost:
+                    if a["remaining"] < need:
                         short_seen += 1
                         continue
                     # 两段拼接只在纯 API 路径实现（浏览器号会按 30 秒原样提交，拿不到片）
@@ -2376,7 +2388,7 @@ class BrowserPool:
                                 if self._schedulable(a)), default=0)
                     raise RuntimeError(
                         f"号池里没有号付得起这一单：{model} {duration} 秒上游要扣 {cost} 点"
-                        f"（需要剩余 ≥ {cost} 点的号），"
+                        f"（需要剩余 ≥ {need} 点的号），"
                         f"可用账号今日最多只剩 {best} 点（每日 {DAILY_LIMIT} 点，"
                         f"{reset_clock_text()}重置）；可改用更短时长或 seedance-2.0-fast")
                 if non_pure and not non_pure_announced:

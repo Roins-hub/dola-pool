@@ -248,3 +248,34 @@ def test_expensive_job_can_use_half_account_with_enough_balance(tmp_path, monkey
     r = _run(bp.generate_video("p", None, 5, "seedance-2.0", deadline=time.time() + 20))
     assert r["account"] == "acc4" and gen == ["acc4"]
     assert _row(bp, "acc4")["remaining"] == 0
+
+
+# ---------------------------------------------------------------- 2.0 派号门槛（2026-10-30 实测）
+
+def test_v20_start_threshold_is_any_remaining_credit():
+    """2.0：先 5 秒再 10 秒两条都出（acc38）→ 剩 2 点的号也能接 10 秒；2.5 仍按报价卡。"""
+    import browser_pool
+    assert config.start_cost("seedance-2.0-fast", 10) == 2
+    assert config.start_cost("seedance-2.0", 5) == 2
+    assert config.start_cost("seedance-2.5", 10) == 4
+    assert browser_pool.start_need("seedance-2.0-fast", 10) == 2
+    assert browser_pool.start_need("seedance-2.5", 10) == 4
+    assert browser_pool.duration_cost("seedance-2.0-fast", 10) == 4      # 记账不变
+
+
+def test_v20_ten_seconds_goes_to_account_with_one_five_second_used(tmp_path, monkeypatch):
+    browser_pool, bp = _pool(tmp_path, monkeypatch, names=("acc38",))
+    bp._claim("acc38", 2)                          # 已出 1 条 5 秒，剩 2 点
+    gen = []
+
+    async def fake_gen(account, *a, **k):
+        gen.append(account)
+        return {"account": account, "local_path": "x.mp4"}
+
+    bp._generate_effective = fake_gen
+    r = _run(bp.generate_video("p", None, 10, "seedance-2.0-fast", deadline=time.time() + 20))
+    assert r["account"] == "acc38" and gen == ["acc38"]
+    assert _row(bp, "acc38")["remaining"] == 0      # 5 + 10 之后当天用完（实测第三条回上限）
+    with pytest.raises(Exception):                 # 剩 0 点 → 冷却组，不再派
+        _run(bp.generate_video("p", None, 5, "seedance-2.0-fast", deadline=time.time() + 5))
+    assert gen == ["acc38"]

@@ -118,19 +118,18 @@ def test_v25_falls_back_to_full_when_no_half(tmp_path, monkeypatch):
 
 
 def test_v20_only_takes_full_group(tmp_path, monkeypatch):
-    """只有半额号时，2.0 的 15 秒（4 点）不能拿它凑数（2 点 < 4 点）。"""
+    """2.0 的门槛是「还剩一条 5 秒的点数」（2 点）：只剩 1 点的号不能拿来凑数。"""
     browser_pool, bp = _pool(tmp_path, monkeypatch)
-    bp._claim("acc1", 2)          # acc1 半额
-    bp._claim("acc2", 2)          # acc2 半额
+    bp._claim("acc1", 3)          # acc1 只剩 1 点
+    bp._claim("acc2", 3)          # acc2 只剩 1 点
     calls = []
     _record(bp, calls)
     monkeypatch.setattr(config, "V20_WAIT_SECONDS", 0)   # 不排队，立刻失败便于断言
 
-    # 2.1.9：半额号余额本来就付不起 → 直接说「没有号付得起」，不再等满额号
-    with pytest.raises(RuntimeError) as exc:
+    # 剩 1 点的号在冷却组：直接失败，不派也不干等
+    with pytest.raises(Exception):
         _run(bp.generate_video("p", None, 15, "seedance-2.0"))
 
-    assert "付得起" in str(exc.value)
     assert calls == []
 
 

@@ -180,6 +180,7 @@ DEFAULT_CREDIT_COST = 3
 #   seedance-2.0：2026-10-30 实测（acc16 / acc23，每号每日免费额度）：5 秒一天 2 条、10 秒一天 1 条，
 #                 第 2 条 10 秒 / 第 3 条 5 秒都回「無料利用分（1日あたり）の上限に到達」→ 5 秒 = 2、10 秒 = 4。
 #                 15 秒（2.0-fast 不开放）按 10 秒同价保守记。原先 2026-10-27 的「统一 3 点」会让 5 秒一天只派 1 条。
+#                 同日补测：先 5 秒再 10 秒两条都出（acc38），先 10 秒后 5 秒回上限（acc39）→ 派号门槛见 start_cost。
 # 注意 2.5 不是按秒线性涨价（15 秒一档跳到 12）：免费号每日 4 点，2.5 最长只能出 10 秒。
 # 上游余额不够报价时直接拒绝（「需要消耗 N 个，今日剩余 M 个，无法生成」），所以派号必须按报价算。
 # 表里没有的时长：取表里比它长的最短一档；比表里都长就按最长一档的每秒单价外推（向上取整）；
@@ -230,6 +231,25 @@ def credit_cost(version: str, duration: int | None) -> int:
         return table[longer[0]]
     top = max(table)
     return -(-table[top] * seconds // top)        # 按最长一档的每秒单价外推，向上取整
+
+def start_cost(version: str, duration: int | None) -> int:
+    """号里至少要剩多少点，上游才肯接这一单（派号门槛；记账仍按 credit_cost）。
+
+    seedance-2.0：Dola 只看「当日免费额度用完没有」，不比较这一单的价。2026-10-30 实测：
+    先 5 秒再 10 秒两条都出片（acc38），先 10 秒、或两条 5 秒之后就回每日上限（acc23 / acc16）。
+    所以 2.0 只要还剩一条 5 秒的点数就能接任何时长。
+    seedance-2.5：上游先报价、余额不够直接拒（「需要消耗 N 个…今日剩余 M 个，无法生成」），门槛 = 价。
+    """
+    if version == "seedance-2.0-fast":
+        version = "seedance-2.0"
+    cost = credit_cost(version, duration)
+    if version == "seedance-2.0" and V20_START_POINTS > 0:
+        return min(cost, V20_START_POINTS)
+    return cost
+
+
+# 2.0 的派号门槛（点数），见 start_cost；0 = 关闭，回到「余额 ≥ 这一单的价」。
+V20_START_POINTS = int(os.getenv("DOLA_V20_START_POINTS", "2"))
 
 # seedance-2.0(-fast) 能出的原生档位：2026-10-29 上游只剩 5/10 秒（15 秒已下线）；其余都必须走 2.5。
 V20_DURATIONS = tuple(int(x) for x in os.getenv("DOLA_V20_DURATIONS", "5,10").split(",") if x.strip())
