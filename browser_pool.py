@@ -1652,7 +1652,8 @@ class BrowserPool:
                     reference_image_paths=[],
                 )
                 local = result.get("local_path")
-                if not local or not Path(local).exists():
+                linked = result.get("delivery") == "link" and result.get("video_url")
+                if not linked and (not local or not Path(local).exists()):
                     raise RuntimeError("出片未产出本地视频文件")
                 self._claim_for(account, cost, result)
                 self._conn.execute(
@@ -1661,6 +1662,8 @@ class BrowserPool:
                 self._conn.commit()
                 self._clear_risk(account)
                 self._reset_throttle_streak(account)
+                if linked:
+                    return {"ok": True, "account": account, **result}
                 return {
                     "ok": True,
                     "account": account,

@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,7 @@ import failure_text
 from account_transport import redact_error
 import proxy_store
 import sites
+import video_link
 from prompt_context import reference_supplement, submission_prompt
 from add_account import add_account_flow
 from cookie_login import import_cookie_account, import_cookie_accounts_from_text
@@ -228,6 +230,19 @@ def _video_metadata(local_path: str, duration: int | None, ratio: str | None) ->
     if meta.get("video_size") and meta.get("video_duration"):
         meta["video_bitrate"] = int(meta["video_size"] * 8 / meta["video_duration"])
     return meta
+
+
+async def _completion_fields(task_id: str, result: dict, duration, ratio) -> dict:
+    """Completed-task fields: a downloaded file under /videos/, or a /v/ link to the upstream CDN."""
+    if result.get("delivery") == "link":
+        meta = video_link.meta_from_model(result.get("video_model") or "", result.get("video_size"),
+                                          duration, ratio)
+        return {"video_url": f"{config.PUBLIC_BASE}/v/{task_id}.mp4", "video_link": result["video_url"],
+                "video_link_expires_at": result.get("link_expires_at"),
+                "video_model": result.get("video_model") or "",
+                **{k: v for k, v in meta.items() if v is not None}}
+    meta = await asyncio.to_thread(_video_metadata, result["local_path"], duration, ratio)
+    return {"video_url": f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}", **meta}
 
 
 class KeyConcurrencyLimiter:
@@ -779,14 +794,12 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             chain = "、".join(tried_accs) or "无"
             raise RuntimeError(
                 f"等待出片超过 {overall_timeout // 60} 分钟仍未完成，任务失败（已尝试账号: {chain}）")
-        public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
-        # ffprobe 是同步子进程（几十~几百毫秒），必须在事件循环外跑：
-        # 高并发下每完成一条就卡一次 loop，会把所有轮询/接口/健康检查一起拖住。
-        meta = await asyncio.to_thread(_video_metadata, result["local_path"], duration, ratio)
-        store.update(task_id, status="completed", video_url=public_url,
+        # ffprobe 是同步子进程，_completion_fields 在线程里跑它；直链交付不下载、不 ffprobe。
+        fields = await _completion_fields(task_id, result, duration, ratio)
+        store.update(task_id, status="completed",
                      queue_note="",
                      account=result.get("account"), last_poll_at=time.time(),
-                     finished_at=time.time(), **meta)
+                     finished_at=time.time(), **fields)
         # 出片目录超限就从旧到新删，避免磁盘被撑满（同样是同步目录遍历）
         await asyncio.to_thread(_prune_downloads)
     except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
@@ -1017,12 +1030,10 @@ async def _resume_task(row: dict):
             duration=row.get("duration"),
             ratio=None if row.get("ratio") == "default" else row.get("ratio"),
             cost=_duration_cost(row.get("model"), row.get("duration") or 10))
-        public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
-        meta = await asyncio.to_thread(
-            _video_metadata, result["local_path"], row.get("duration"), row.get("ratio"))
-        store.update(task_id, status="completed", video_url=public_url,
+        fields = await _completion_fields(task_id, result, row.get("duration"), row.get("ratio"))
+        store.update(task_id, status="completed",
                      account=result.get("account"), last_poll_at=time.time(),
-                     finished_at=time.time(), **meta)
+                     finished_at=time.time(), **fields)
     except Exception as e:
         store.update(task_id, status="failed", error=failure_text.summarize(str(e)),
                      finished_at=time.time())
@@ -1516,6 +1527,22 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
     )
 
 
+@app.get("/v/{name}")
+async def video_short_link(name: str):
+    """Link-delivered video: 302 to the upstream CDN, re-signed shortly before it expires.
+
+    Public like /videos/<file>: the unguessable task id is the capability. No bytes pass through.
+    """
+    task_id = name[:-4] if name.endswith(".mp4") else name
+    row = store.get(task_id)
+    if not row or row.get("status") != "completed" or not row.get("video_link"):
+        raise HTTPException(404, "video not found")
+    link = await video_link.current_link(row, store)
+    if not link:
+        raise HTTPException(502, "upstream video link unavailable")
+    return RedirectResponse(link, status_code=302, headers={"Cache-Control": "private, max-age=60"})
+
+
 @app.get("/v1/videos/{task_id}", response_model=TaskResponse)
 async def get_video(task_id: str, authorization: str | None = Header(default=None)):
     client = _auth(authorization)
@@ -1540,6 +1567,10 @@ async def get_video_content(task_id: str, authorization: str | None = Header(def
         raise HTTPException(404, "task not found")
     if row["status"] != "completed" or not row["video_url"]:
         raise HTTPException(409, "video not ready")
+    if row.get("video_link"):
+        link = await video_link.current_link(row, store)
+        if link:
+            return RedirectResponse(link, status_code=302, headers={"Cache-Control": "private, max-age=60"})
     timeout = aiohttp.ClientTimeout(total=120)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(row["video_url"]) as resp:
@@ -2590,10 +2621,13 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
         err = result.get("error", "") if not result.get("ok") else ""
         TEST_JOBS[task_id]["error"] = err
         if result.get("ok"):
+            fields = ({"video_url": result.get("video_url")} if result.get("delivery") != "link"
+                      else await _completion_fields(task_id, result, duration, ratio))
             store.update(task_id, status="completed",
                          queue_note="",
-                         video_url=result.get("video_url"),
-                         finished_at=time.time())
+                         finished_at=time.time(), **fields)
+            if result.get("delivery") == "link":
+                TEST_JOBS[task_id]["result"] = {**result, "video_url": fields["video_url"]}
         else:
             status = "风控" if _is_risk_error(err) else "failed"
             store.update(task_id, status=status, error=failure_text.summarize(err),
@@ -3229,6 +3263,7 @@ async def admin_tasks(limit: int = 50, q: str = "", x_admin_key: str | None = He
     # q：面板搜索，查整个历史（不止最近 50 条）
     tasks = store.search_tasks(q, limit) if q.strip() else store.recent_tasks(limit)
     for t in tasks:
+        t.pop("video_model", None)   # 续签用的上游元数据，面板用不到且体积大
         # 排队中 / 生成中的任务带上预计耗时（与客户接口的 progress 同一口径：
         # 同时长近 3 天已完成任务的平均生成耗时，样本不足用兜底表）
         if t.get("status") in ("queued", "processing"):
@@ -3254,7 +3289,12 @@ async def admin_videos(limit: int = 100, q: str = "", x_admin_key: str | None = 
             local = Path(config.DOWNLOAD_DIR) / Path(item["video_url"]).name
         else:
             local = None
-        if local and local.exists():
+        item.pop("video_model", None)
+        if item.get("video_link"):
+            item["file_exists"] = True
+            item["file_size"] = item.get("video_size")
+            item["delivery"] = "link"
+        elif local and local.exists():
             item["file_exists"] = True
             try:
                 item["file_size"] = os.path.getsize(local)

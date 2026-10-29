@@ -101,6 +101,10 @@ class TaskStore:
                 ("attempt_started_at", "REAL"),
                 # 排队 / 换号原因（含 dola 原话），派到号后清空；面板「报错/备注」显示
                 ("queue_note", "TEXT"),
+                # 直链交付（DOLA_VIDEO_DELIVERY=link）：上游 H.264 签名地址、过期时间、续签用的 video_model
+                ("video_link", "TEXT"),
+                ("video_link_expires_at", "REAL"),
+                ("video_model", "TEXT"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")

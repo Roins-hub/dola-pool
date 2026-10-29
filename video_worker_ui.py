@@ -796,8 +796,20 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             vm_str = video_models[0] if video_models else ""
             # 优先用 fallback_api 的 H.264 original 高码率源（约 3Mbps），
             # 失败再回退默认 bytevc1 低码率源。
-            url = await fetch_higher_bitrate_url(vm_str, account) \
-                or extract_unwatermarked_url(vm_str, videos[0])
+            hi = await fetch_higher_bitrate_url(vm_str, account)
+            import video_link
+            if hi and video_link.enabled():
+                probe = await asyncio.to_thread(video_link.probe_direct, hi)
+                if probe:
+                    # 直链交付：不下载到服务器，由 /v/<任务>.mp4 302 到上游
+                    emit_feedback(on_poll, progress="视频已生成，直链交付（不经服务器下载）")
+                    print(f"[{account}] 出片! 直链交付（不下载）", flush=True)
+                    return {"video_url": hi, "local_path": "", "delivery": "link",
+                            "video_model": vm_str, "video_size": probe["size"],
+                            "link_expires_at": probe["expires_at"],
+                            "conversation_id": conversation_id, "account": account}
+                print(f"[{account}] 上游直链服务器直连不可用，改为下载", flush=True)
+            url = hi or extract_unwatermarked_url(vm_str, videos[0])
             print(f"[{account}] 出片! 下载中（高码率优先）...", flush=True)
             emit_feedback(on_poll, progress="视频已生成，正在下载到服务器")
             local = await _download(url, account)

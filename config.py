@@ -60,6 +60,13 @@ DB_PATH = os.getenv("DOLA_DB_PATH", "tasks.db")
 # 号池配额/账号元数据库（代理记录也放这里）
 POOL_DB_PATH = os.getenv("DOLA_POOL_DB_PATH", "pool_usage.db")
 
+# 出片交付方式（浏览器出片路径）：
+#   download = 下载到服务器、由 /videos/ 提供（原行为）；
+#   link     = 下发 /v/<任务>.mp4 稳定短链，访问时 302 到上游 H.264 原片，视频流量不经过服务器；
+#              上游签名约 6 小时有效，快过期时用保存的 video_model 自动续签；
+#              拿不到 H.264 直链或服务器直连不到 CDN 时自动退回 download。
+VIDEO_DELIVERY = os.getenv("DOLA_VIDEO_DELIVERY", "download").strip().lower()
+
 # 视频下载目录（出片后下载转存，FastAPI 以静态文件方式对外提供）
 DOWNLOAD_DIR = os.getenv("DOLA_DOWNLOAD_DIR", "downloads")
 
