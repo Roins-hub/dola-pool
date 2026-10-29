@@ -286,7 +286,7 @@ Plugin sẽ gọi `/api/v3/contents/generations/tasks` của dịch vụ này th
 | `DOLA_TASK_DEADLINE` | `600` | Tổng thời hạn của một tác vụ (giây), trong thời gian đó liên tục đổi tài khoản, quá hạn thì coi là thất bại |
 | `DOLA_VIDEO_MAX_ATTEMPTS` | `0` | Số lần thử tối đa cho một tác vụ, `0` nghĩa là không giới hạn, chỉ bị ràng buộc bởi tổng thời hạn |
 | `DOLA_GENERATION_FAILURE_RETRIES` | `2` | Sau khi đã gửi, nếu thẻ cuối của hội thoại xác nhận thất bại (trạng thái 5, không có video) thì đổi tài khoản gửi lại tối đa bấy nhiêu lần; từ chối nội dung không gửi lại; `0` để tắt |
-| `DOLA_UPLOAD_RETRIES` | `1` | Số lần tải lại trang và tải ảnh tham chiếu lại trên cùng tài khoản khi tải lên thất bại (chưa gửi) |
+| `DOLA_UPLOAD_RETRIES` | `3` | Số lần tải lại trang và tải ảnh tham chiếu lại trên cùng tài khoản khi tải lên thất bại (chưa gửi) |
 | `DOLA_MAX_CONCURRENCY` | `3` | Số video tạo đồng thời toàn cục |
 | `DOLA_MAX_PENDING_TASKS` | `100` | Giới hạn số tác vụ đang chờ xử lý, vượt quá thì trả về 429 |
 | `DOLA_DAILY_LIMIT` | `4` | Số điểm hạn mức mỗi ngày của mỗi tài khoản |

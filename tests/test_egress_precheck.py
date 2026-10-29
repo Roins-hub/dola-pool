@@ -83,3 +83,31 @@ def test_egress_alive_reads_relay_502_as_dead(monkeypatch):
     assert account_transport.egress_alive("acc1") == {"ok": False, "detail": "代理返回 HTTP 502"}
     codes = iter([502, 404])
     assert account_transport.egress_alive("acc1")["ok"] is True   # one dropped attempt is not a dead exit
+
+
+def test_upload_failure_reports_relay_upstream_failures(monkeypatch):
+    import asyncio
+    import pytest
+    import socks_relay
+    from types import SimpleNamespace
+    from generation_errors import UploadRouteError
+    from test_task_ui_regressions import load_worker_function
+    monkeypatch.setattr(socks_relay, "STATS", {"TimeoutError": 1})
+    class Page:
+        def locator(self, selector): return self
+        first = property(lambda self: self)
+        async def wait_for(self, **kw): pass
+        def on(self, event, fn): setattr(self, event, fn)
+        def remove_listener(self, event, fn): pass
+        async def count(self): return 0
+        async def wait_for_timeout(self, ms): await asyncio.sleep(0)
+        async def set_input_files(self, paths):
+            socks_relay.STATS["socks5 CONNECT 失败（代码 5）"] = 2
+            self.requestfailed(SimpleNamespace(
+                url="https://imagex-ap-southeast-1.bytevcloudapi.com/?Action=ApplyImageUpload&sig=SECRET",
+                failure="net::ERR_FAILED"))
+    with pytest.raises(UploadRouteError) as error:
+        _run(load_worker_function("attach_reference_images")(Page(), ["synthetic.png"]))
+    text = str(error.value)
+    assert "中转上游失败 socks5 CONNECT 失败（代码 5）×2" in text
+    assert "TimeoutError" not in text and "SECRET" not in text

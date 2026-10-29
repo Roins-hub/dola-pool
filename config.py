@@ -55,7 +55,8 @@ GENERATION_FAILURE_RETRIES = max(0, int(os.getenv("DOLA_GENERATION_FAILURE_RETRI
 # 纯文字任务永远不附加。调用方显式传 reference_source="unspecified" 可关闭单个任务。
 DEFAULT_REFERENCE_SOURCE = os.getenv("DOLA_DEFAULT_REFERENCE_SOURCE", "ai_generated").strip()
 # 参考图上传失败（尚未提交）时，同一账号刷新页面重传的次数；用尽才换号。
-UPLOAD_RETRIES = max(0, int(os.getenv("DOLA_UPLOAD_RETRIES", "1")))
+# 2026-10-29 实测：失败多为 ApplyImageUpload 在 1 秒内的 ERR_FAILED，且与成功穿插出现；每次重传约 10 秒，远比换号（约 50 秒）便宜。
+UPLOAD_RETRIES = max(0, int(os.getenv("DOLA_UPLOAD_RETRIES", "3")))
 
 # SQLite 任务库
 DB_PATH = os.getenv("DOLA_DB_PATH", "tasks.db")

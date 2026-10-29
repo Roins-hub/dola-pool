@@ -530,6 +530,8 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
 
     page.on("response", on_response)
     page.on("requestfailed", on_request_failed)
+    import socks_relay
+    relay_before = dict(socks_relay.STATS)
     try:
         await file_input.set_input_files(image_paths)
         expected = len(image_paths)
@@ -540,9 +542,14 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
                     if cdp is not None and not cdp_failures:
                         await page.wait_for_timeout(500)   # CDP events may trail requestfailed
                     first = errors[0]
-                    if cdp_failures:
-                        first = UploadRouteError(first.host, first.code, first.stage,
-                                                 "；".join(dict.fromkeys(cdp_failures))[:300])
+                    # 本地 SOCKS 中转这段时间新增的上游连接失败：区分「代理连不上」和「浏览器侧失败」
+                    relay = {k: v - relay_before.get(k, 0) for k, v in socks_relay.STATS.items()
+                             if v > relay_before.get(k, 0)}
+                    details = list(dict.fromkeys(cdp_failures))
+                    if relay:
+                        details.append("中转上游失败 " + "、".join(f"{k}×{n}" for k, n in relay.items()))
+                    if details:
+                        first = UploadRouteError(first.host, first.code, first.stage, "；".join(details)[:300])
                     raise first
                 raise PreSubmissionUploadError("参考图片上传未完成（尚未提交生成）：" + errors[0])
             prepare_count = sum("/alice/resource/prepare_upload" in url and 200 <= status < 300
