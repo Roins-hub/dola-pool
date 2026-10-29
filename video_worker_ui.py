@@ -992,7 +992,10 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 await box.click()
             except Exception:
                 await box.evaluate("(el) => el.focus()")
-            await page.keyboard.type(prompt, delay=100)
+            # 逐字输入仍用真实按键（React 输入框靠键盘事件同步状态）；100ms/字时 300 多字的
+            # 剧本要打 30 多秒，面板一直停在「确认参数」像卡住，所以单独报进度并调快到 40ms。
+            emit_feedback(on_poll, progress=f"正在输入提示词（{len(prompt)} 字，尚未提交生成）")
+            await page.keyboard.type(prompt, delay=40)
             await page.wait_for_timeout(600)
             replies = BrowserReplies(page, on_poll)
             replies.start()
