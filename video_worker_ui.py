@@ -833,6 +833,22 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
         print(f"  ...生成中（{int(time.time() - start)}s）", flush=True)
 
 
+def single_line_prompt(prompt: str) -> str:
+    """The composer sends on Enter: a newline typed as a key press submits the message early.
+
+    2026-10-29: the AI-source note joined to the prompt with a blank line went out as its
+    own message; Dola answered both halves with a JSON plan (710082041) and never generated.
+    Prompts that carry their own line breaks were split the same way.
+    """
+    return re.sub(r"\s*[\r\n]+\s*", " ", prompt or "").strip()
+
+
+async def type_prompt(page, prompt: str, delay: int = 40) -> None:
+    # 逐字输入仍用真实按键（React 输入框靠键盘事件同步状态）；100ms/字时 300 多字的剧本要打
+    # 30 多秒，所以调快到 40ms。换行一律换成空格，否则回车会把半截提示词提前发出去。
+    await page.keyboard.type(single_line_prompt(prompt), delay=delay)
+
+
 async def enter_video_mode(page, account: str) -> None:
     """Click 動画を作成 and confirm the video actionbar rendered (at most two clicks)."""
     from browser_video_params import video_mode_ready
@@ -1005,10 +1021,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 await box.click()
             except Exception:
                 await box.evaluate("(el) => el.focus()")
-            # 逐字输入仍用真实按键（React 输入框靠键盘事件同步状态）；100ms/字时 300 多字的
-            # 剧本要打 30 多秒，面板一直停在「确认参数」像卡住，所以单独报进度并调快到 40ms。
             emit_feedback(on_poll, progress=f"正在输入提示词（{len(prompt)} 字，尚未提交生成）")
-            await page.keyboard.type(prompt, delay=40)
+            await type_prompt(page, prompt)
             await page.wait_for_timeout(600)
             replies = BrowserReplies(page, on_poll)
             replies.start()
