@@ -1,9 +1,9 @@
-> 🌐 **中文** | [Tiếng Việt](README.vi.md)
+<p align="center"><img src="web/logo.svg" width="112" height="112" alt="dola-pool logo"></p>
+<h1 align="center">dola-pool</h1>
+<p align="center">🌐 <b>中文</b> | <a href="README.vi.md">Tiếng Việt</a></p>
 
 有兴趣的可以加群交流
 <img width="1305" height="2321" alt="301130c1842c3b30432394fc276a7a58" src="https://github.com/user-attachments/assets/39207d3c-955f-49ec-adbc-8db471f23b79" />
-
-# dola-pool
 
 **当前版本：v2.6.3** — 上游确认生成失败时安全换号，参考图上传同号重传，派单前检测并自动更换掉线的代理出口；
 支持视频直链交付，管理面板改为浅色设计。完整改动见 [更新日志](CHANGELOG.md)。

@@ -1,6 +1,6 @@
-> 🌐 [中文](README.md) | **Tiếng Việt**
-
-# dola-pool
+<p align="center"><img src="web/logo.svg" width="112" height="112" alt="dola-pool logo"></p>
+<h1 align="center">dola-pool</h1>
+<p align="center">🌐 <a href="README.md">中文</a> | <b>Tiếng Việt</b></p>
 
 Gom một nhóm tài khoản [dola.com](https://www.dola.com) (bản quốc tế của mô hình video Seedance của ByteDance) và [Doubao doubao.com](https://www.doubao.com) (bản Trung Quốc) thành một pool tài khoản, cung cấp ra ngoài **API tạo video / tạo ảnh tương thích OpenAI**, đồng thời tương thích giao thức dạng tác vụ của Volcano Ark (Ark), có thể kết nối trực tiếp vào các gateway như [new-api](https://github.com/QuantumNous/new-api).
 
