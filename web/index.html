@@ -712,7 +712,7 @@ if(typeof window!=='undefined'&&typeof window.addEventListener==='function'){
 }
 
 /* ---- 面板一键更新：外部更新程序（systemd / Docker updater）换版本、重启、验证，失败自动回滚 ---- */
-let UPDATE_INFO=null,updatePollTimer=null,updateReloadAt=0;
+let UPDATE_INFO=null,updatePollTimer=null,updateReloadAt=0,PAGE_VERSION=null;
 const UPDATE_STATES={draining:'等待任务完成',ready:'等待更新程序开始',started:'已开始',backing_up:'备份中',
   downloading:'下载新版本',installing:'安装依赖',restarting:'重启服务',verifying:'验证新版本',
   done:'更新完成',failed:'更新失败',rolled_back:'已回滚',cancelled:'已取消'};
@@ -722,8 +722,15 @@ function updateBadge(info){
   b.title=info.available?'查看更新说明并一键更新':'版本信息';
   b.classList.toggle('has-update',!!info.available);
 }
+/** 服务器版本和本页加载时的版本不同（更新完成、或别处更新过）就刷新页面，不留旧页面在跑 */
+function reloadIfNewVersion(info){
+  if(!info||!info.current)return;
+  if(!PAGE_VERSION){PAGE_VERSION=info.current;return;}
+  if(info.current!==PAGE_VERSION&&!updateReloadAt){updateReloadAt=Date.now();setTimeout(()=>location.reload(),3000);}
+}
 async function checkUpdateBadge(){
-  try{UPDATE_INFO=await api('/api/admin/update');updateBadge(UPDATE_INFO);}catch(e){}
+  try{UPDATE_INFO=await api('/api/admin/update');updateBadge(UPDATE_INFO);reloadIfNewVersion(UPDATE_INFO);
+    if(UPDATE_INFO.request&&!updatePollTimer)watchUpdate();}catch(e){}
 }
 function updateProgressHtml(info){
   const p=info.progress||{},st=p.state||'';
@@ -750,7 +757,7 @@ function renderUpdate(info){
         +(info.mode==='docker'?'<p class="hint">手动更新：在 docker-compose.yml 所在目录执行 docker compose pull && docker compose up -d</p>'
           :'<p class="hint">安装更新程序：sudo bash deploy/install-updater.sh</p>');
   }
-  showDlg(`<h2>版本</h2>
+  showDlg(`<h2 data-dlg="update">版本</h2>
     <p class="hint">当前版本 <strong translate="no">v${esc(info.current)}</strong> · <span>${modeText}</span>
       · 最新正式版 <strong translate="no">${latest.version?'v'+esc(latest.version):'—'}</strong>
       ${latest.published_at?`<span class="tiny" translate="no">（${esc(latest.published_at.slice(0,10))}）</span>`:''}</p>
@@ -783,19 +790,20 @@ async function cancelUpdate(){
   try{UPDATE_INFO=await api('/api/admin/update/cancel',{method:'POST'});renderUpdate(UPDATE_INFO);}
   catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);}
 }
-function closeUpdate(){clearInterval(updatePollTimer);updatePollTimer=null;hide('dlg');}
+/** 关掉对话框不停止盯更新进度：更新完成后仍要自动刷新页面 */
+function closeUpdate(){hide('dlg');}
 /** 更新进行中每 3 秒刷新进度；服务重启的那几秒请求会失败，忽略；版本号变了就自动刷新页面。 */
 function watchUpdate(){
   clearInterval(updatePollTimer);
   if(!UPDATE_INFO||!UPDATE_INFO.request)return;
-  const startVersion=UPDATE_INFO.current;
+  if(!PAGE_VERSION)PAGE_VERSION=UPDATE_INFO.current;
   updatePollTimer=setInterval(async()=>{
     let info;
     try{info=await api('/api/admin/update');}
     catch(e){const box=q('#dlgBox');if(box&&e.message!=='unauthorized'&&!q('#updRestart'))box.insertAdjacentHTML('beforeend','<p class="hint" id="updRestart">服务重启中…</p>');return;}
     UPDATE_INFO=info;updateBadge(info);
-    if(q('#dlgBox')&&q('#dlg').style.display!=='none')renderUpdate(info);
-    if(info.current!==startVersion&&!updateReloadAt){updateReloadAt=Date.now();setTimeout(()=>location.reload(),3000);}
+    if(q('#dlg').style.display!=='none'&&q('#dlgBox').querySelector('[data-dlg="update"]'))renderUpdate(info);
+    reloadIfNewVersion(info);
     if(!info.request){clearInterval(updatePollTimer);updatePollTimer=null;}
   },3000);
 }
