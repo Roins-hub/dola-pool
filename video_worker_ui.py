@@ -375,11 +375,17 @@ async def fetch_higher_bitrate_url(video_model_str: str, account: str | None = N
     Dola 默认下发 bytevc1/H.265 低码率源（720p 约 1Mbps）。fallback_api 是
     vod-urls 播放接口，把 codec_type 改成 8/0 会返回 h264 original（约 3.3Mbps、
     体积 3 倍）。失败返回 None，由调用方回退默认源。
+
+    2026-10-30：这一步偶发失败（13 条里 2 条），任务就退回低码率源（5 秒 0.4 MB、转码后约 1.3 Mbps）
+    且失去直链交付；以前只试一次、异常全吞掉。现在经同一出口重试 HIGH_BITRATE_ATTEMPTS 次，
+    失败原因写日志（不含签名 URL）。仍不走直连：账号隔离不变。
     """
+    reasons: list[str] = []
     try:
         vm = json.loads(video_model_str or "{}")
         fb = vm.get("fallback_api") or ""
         if not fb or not fb.startswith("http"):
+            print(f"[{account}] 高码率原片：video_model 没有 fallback_api，用默认源", flush=True)
             return None
         parts = urlsplit(fb)
         q = dict(__import__("urllib.parse", fromlist=["parse_qsl"]).parse_qsl(
@@ -388,38 +394,50 @@ async def fetch_higher_bitrate_url(video_model_str: str, account: str | None = N
         q["logo_type"] = "unwatermarked"
         url = urlunsplit((parts.scheme, parts.netloc, parts.path,
                           urlencode(q), parts.fragment))
+        proxy = (__import__("account_transport").http_proxy(account) if account
+                 else (config.PROXY or None))
         async with aiohttp.ClientSession() as s:
-            proxies = ([__import__("account_transport").http_proxy(account)] if account
-                       else ([config.PROXY] if config.PROXY else []))
-            for proxy in proxies:
+            for attempt in range(1, max(1, config.HIGH_BITRATE_ATTEMPTS) + 1):
+                if attempt > 1:
+                    await asyncio.sleep(2 * (attempt - 1))
                 try:
-                    async with s.get(url, proxy=proxy or None,
+                    async with s.get(url, proxy=proxy,
                                      timeout=aiohttp.ClientTimeout(total=30)) as r:
                         if r.status != 200:
+                            reasons.append(f"HTTP {r.status}")
                             continue
                         data = json.loads(await r.text())
-                        vi = (((data.get("video_info") or {}).get("data"))
-                              or data.get("data") or data)
-                        vl = (vi.get("video_list") or {})
-                        best = None
-                        for v in vl.values():
-                            mu = v.get("main_url") or ""
-                            if not mu:
-                                continue
-                            dec = _decode_main_token(mu, vm.get("key_seed") or "")
-                            if not dec or not dec.startswith("http"):
-                                continue
-                            rate = int(v.get("bitrate") or v.get("real_bitrate") or 0)
-                            if best is None or rate > best[0]:
-                                best = (rate, dec)
-                        if best:
-                            return best[1]
-                except Exception:
-                    # Do not log signed URLs or retry through a direct connection.
-                    continue
-    except Exception:
-        pass
+                    best = _best_decoded_source(data, vm.get("key_seed") or "")
+                    if best:
+                        if attempt > 1:
+                            print(f"[{account}] 高码率原片第 {attempt} 次取到（之前：{'；'.join(reasons)}）",
+                                  flush=True)
+                        return best
+                    reasons.append("回包里没有可解码的源")
+                except Exception as exc:  # noqa: BLE001 - 原因写日志，不带签名 URL
+                    reasons.append(type(exc).__name__ + (f": {str(exc)[:80]}" if str(exc) else ""))
+    except Exception as exc:  # noqa: BLE001
+        reasons.append(f"准备请求失败 {type(exc).__name__}: {str(exc)[:80]}")
+    print(f"[{account}] 高码率原片获取失败，退回默认低码率源："
+          f"{'；'.join(reasons)[:400] or '原因不明'}", flush=True)
     return None
+
+
+def _best_decoded_source(data: dict, key_seed: str) -> str | None:
+    """vod-urls 回包里码率最高、能解码出 http 地址的源。"""
+    vi = (((data.get("video_info") or {}).get("data")) or data.get("data") or data)
+    best = None
+    for v in (vi.get("video_list") or {}).values():
+        mu = v.get("main_url") or ""
+        if not mu:
+            continue
+        dec = _decode_main_token(mu, key_seed)
+        if not dec or not dec.startswith("http"):
+            continue
+        rate = int(v.get("bitrate") or v.get("real_bitrate") or 0)
+        if best is None or rate > best[0]:
+            best = (rate, dec)
+    return best[1] if best else None
 
 
 

@@ -150,7 +150,7 @@ def test_completed_tasks_clear_progress_and_preserve_upstream_reply(tmp_path, mo
     task_id = 'progress_test'
     monkeypatch.setattr(server, 'store', store.TaskStore(str(tmp_path / 'tasks.db')))
     monkeypatch.setattr(server, 'TEST_JOBS', {task_id: {}})
-    monkeypatch.setattr(server, '_video_metadata', lambda *a: {})
+    monkeypatch.setattr(server, '_video_metadata', lambda *a: {'video_duration': 5.09, 'video_width': 1280})
     monkeypatch.setattr(server, '_prune_downloads', lambda: None)
     class Pool:
         async def generate_video(self, *a, **kw):
@@ -174,6 +174,8 @@ def test_completed_tasks_clear_progress_and_preserve_upstream_reply(tmp_path, mo
     assert row['status'] == 'completed'
     assert row['queue_note'] == ''
     assert row['upstream_note'] == 'Dola 原始回话'
+    # 下载交付的测试任务也要有时长/分辨率（2026-10-30 以前测试任务这几列是空的）
+    assert row['video_duration'] == 5.09 and row['video_width'] == 1280
 
 
 def load_worker_function(name, **bindings):

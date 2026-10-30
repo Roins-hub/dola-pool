@@ -211,8 +211,22 @@ def test_socks_media_transport_uses_relay(monkeypatch):
     assert transport.http_proxy('acc1') == 'http://127.0.0.1:1234'
 
 
-def test_high_bitrate_failure_has_no_direct_retry():
+def _high_bitrate_fn(session_cls):
     import json
+    async def no_wait(*a): pass
+    return load_worker_function('fetch_higher_bitrate_url', json=json,
+        urlsplit=__import__('urllib.parse',fromlist=['urlsplit']).urlsplit,
+        urlunsplit=__import__('urllib.parse',fromlist=['urlunsplit']).urlunsplit,
+        urlencode=__import__('urllib.parse',fromlist=['urlencode']).urlencode,
+        config=SimpleNamespace(HIGH_BITRATE_ATTEMPTS=3, PROXY=''),
+        asyncio=SimpleNamespace(sleep=no_wait),
+        _best_decoded_source=lambda data, seed: data.get('best'),
+        aiohttp=SimpleNamespace(ClientSession=session_cls,ClientTimeout=lambda **kw: None))
+
+
+def test_high_bitrate_failure_retries_same_proxy_never_direct(monkeypatch, capsys):
+    import json
+    import account_transport
     calls=[]
     class Session:
         async def __aenter__(self): return self
@@ -220,19 +234,31 @@ def test_high_bitrate_failure_has_no_direct_retry():
         def get(self, url, **kw):
             calls.append(kw['proxy'])
             raise RuntimeError('proxy failed')
+    monkeypatch.setattr(account_transport, 'http_proxy', lambda a: 'http://bound-proxy')
+    fn=_high_bitrate_fn(Session)
+    assert _run(fn(json.dumps({'fallback_api':'https://example.invalid/?token=secret'}),'acc1')) is None
+    assert calls == ['http://bound-proxy'] * 3          # 同一出口重试，绝不直连
+    out = capsys.readouterr().out
+    assert '高码率原片获取失败' in out and 'RuntimeError' in out and 'secret' not in out
+
+
+def test_high_bitrate_second_attempt_succeeds(monkeypatch, capsys):
+    import json
     import account_transport
-    original=account_transport.http_proxy
-    account_transport.http_proxy=lambda a: 'http://bound-proxy'
-    try:
-        fn=load_worker_function('fetch_higher_bitrate_url', json=json,
-            urlsplit=__import__('urllib.parse',fromlist=['urlsplit']).urlsplit,
-            urlunsplit=__import__('urllib.parse',fromlist=['urlunsplit']).urlunsplit,
-            urlencode=__import__('urllib.parse',fromlist=['urlencode']).urlencode,
-            aiohttp=SimpleNamespace(ClientSession=Session,ClientTimeout=lambda **kw: None))
-        assert _run(fn(json.dumps({'fallback_api':'https://example.invalid/?token=secret'}),'acc1')) is None
-        assert calls == ['http://bound-proxy']
-    finally:
-        account_transport.http_proxy=original
+    class Resp:
+        def __init__(self, status): self.status = status
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def text(self): return json.dumps({'best': 'https://cdn.invalid/h264.mp4'})
+    statuses = iter([502, 200])
+    class Session:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        def get(self, url, **kw): return Resp(next(statuses))
+    monkeypatch.setattr(account_transport, 'http_proxy', lambda a: 'http://bound-proxy')
+    fn=_high_bitrate_fn(Session)
+    assert _run(fn(json.dumps({'fallback_api':'https://example.invalid/?token=secret'}),'acc1')) == 'https://cdn.invalid/h264.mp4'
+    assert 'HTTP 502' in capsys.readouterr().out
 
 
 def test_http_poll_failures_do_not_wait_until_generation_timeout():

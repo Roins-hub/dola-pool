@@ -2624,8 +2624,10 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
         err = result.get("error", "") if not result.get("ok") else ""
         TEST_JOBS[task_id]["error"] = err
         if result.get("ok"):
-            fields = ({"video_url": result.get("video_url")} if result.get("delivery") != "link"
-                      else await _completion_fields(task_id, result, duration, ratio))
+            # 下载交付也要补时长/分辨率/码率（以前只存地址，测试任务的这几列一直是空的）
+            fields = (await _completion_fields(task_id, result, duration, ratio)
+                      if result.get("delivery") == "link" or result.get("local_path")
+                      else {"video_url": result.get("video_url")})
             store.update(task_id, status="completed",
                          queue_note="",
                          finished_at=time.time(), **fields)

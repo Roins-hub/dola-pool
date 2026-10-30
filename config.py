@@ -57,6 +57,9 @@ DEFAULT_REFERENCE_SOURCE = os.getenv("DOLA_DEFAULT_REFERENCE_SOURCE", "ai_genera
 # 参考图上传失败（尚未提交）时，同一账号刷新页面重传的次数；用尽才换号。
 # 2026-10-29 实测：失败多为 ApplyImageUpload 在 1 秒内的 ERR_FAILED，且与成功穿插出现；每次重传约 10 秒，远比换号（约 50 秒）便宜。
 UPLOAD_RETRIES = max(0, int(os.getenv("DOLA_UPLOAD_RETRIES", "3")))
+# 出片后取 H.264 高码率原片（fallback_api）的尝试次数，经账号自己的代理；全失败才退回默认低码率源。
+# 2026-10-30：13 条里 2 条一次就失败，退回 0.4 MB/5 秒的低码率源并失去直链交付。
+HIGH_BITRATE_ATTEMPTS = max(1, int(os.getenv("DOLA_HIGH_BITRATE_ATTEMPTS", "3")))
 
 # SQLite 任务库
 DB_PATH = os.getenv("DOLA_DB_PATH", "tasks.db")
