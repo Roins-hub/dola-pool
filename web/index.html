@@ -5,6 +5,79 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>dola-pool 管理面板</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3CclipPath id='p'%3E%3Ccircle cx='10' cy='14' r='5.6'/%3E%3C/clipPath%3E%3Ccircle cx='10' cy='14' r='5.6' fill='%23fff'/%3E%3Crect x='2' y='14.6' width='16' height='10' fill='%232fb383' clip-path='url%28%23p%29'/%3E%3Crect x='16.4' y='1.5' width='3.6' height='21' rx='1.8' fill='%230e7a59'/%3E%3Ccircle cx='10' cy='14' r='7.2' fill='none' stroke='%230e7a59' stroke-width='3.2'/%3E%3C/svg%3E">
+<script id="native-dialogs">
+/* 应用内弹窗，替换浏览器原生 alert / confirm / prompt（原生框顶着域名、样式和面板不一致）。
+   i18n.js 在它之后加载，会再包一层负责翻译，所以这里拿到的已经是当前语言的文案。
+   alert 不阻塞；confirm / prompt 返回 Promise —— 调用处必须 await，否则 Promise 恒为真。 */
+(function(){
+  if(typeof document==='undefined'||typeof document.createElement!=='function')return;
+  const queue=[];let busy=false,current=null;
+  const RISKY=/删除|清空|移除|重置|注销|停止|丢弃|覆盖/;
+  function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
+  function open(kind,msg,def){return new Promise(resolve=>{queue.push({kind,msg:String(msg==null?'':msg),def,resolve});next();});}
+  function next(){
+    // 兜底：开着的弹窗被别的代码从页面上移除了，不能让队列永远卡住
+    if(busy&&current&&!document.body.contains(current))busy=false;
+    if(busy||!queue.length||!document.body)return;
+    const it=queue.shift();busy=true;
+    const prev=document.activeElement;
+    const risky=it.kind==='confirm'&&RISKY.test(it.msg);
+    const wrap=el('div','nd');
+    const box=el('div','nd-box'+(risky?' nd-risky':''));
+    box.setAttribute('role',it.kind==='alert'?'alertdialog':'dialog');
+    box.setAttribute('aria-modal','true');box.setAttribute('aria-labelledby','ndTitle');box.setAttribute('aria-describedby','ndMsg');
+    const title=el('h3','nd-title',it.kind==='alert'?'提示':it.kind==='prompt'?'请输入':risky?'请再次确认':'请确认');
+    title.id='ndTitle';
+    const body=el('p','nd-msg',it.msg);body.id='ndMsg';body.setAttribute('translate','no');
+    box.append(title,body);
+    let input=null;
+    if(it.kind==='prompt'){input=el('textarea','nd-input');input.rows=3;input.value=it.def==null?'':String(it.def);
+      input.setAttribute('aria-labelledby','ndMsg');input.setAttribute('translate','no');box.append(input);}
+    const row=el('div','nd-actions');
+    let cancel=null;
+    if(it.kind!=='alert'){cancel=el('button','btn','取消');cancel.type='button';row.append(cancel);}
+    const okLabel=it.kind==='alert'?'知道了':risky&&/删除/.test(it.msg)?'删除':'确定';
+    const ok=el('button','btn '+(risky?'btn-risky':'btn-p'),okLabel);ok.type='button';
+    row.append(ok);box.append(row);wrap.append(box);document.body.append(wrap);current=wrap;
+    requestAnimationFrame(()=>wrap.classList.add('nd-in'));
+    function done(value){
+      document.removeEventListener('keydown',onKey,true);wrap.remove();busy=false;
+      try{if(prev&&prev.focus&&document.contains(prev))prev.focus();}catch(e){}
+      it.resolve(value);next();
+    }
+    const yes=()=>done(it.kind==='prompt'?input.value:it.kind==='confirm'?true:undefined);
+    const no=()=>done(it.kind==='prompt'?null:it.kind==='confirm'?false:undefined);
+    function onKey(e){
+      if(e.key==='Escape'){e.preventDefault();e.stopPropagation();no();return;}
+      if(e.key==='Enter'&&e.target===input&&!e.shiftKey){e.preventDefault();yes();return;}
+      if(e.key==='Tab'){const f=[input,cancel,ok].filter(Boolean);const i=f.indexOf(document.activeElement);
+        e.preventDefault();f[(i+(e.shiftKey?-1:1)+f.length)%f.length].focus();}
+    }
+    document.addEventListener('keydown',onKey,true);
+    ok.addEventListener('click',yes);if(cancel)cancel.addEventListener('click',no);
+    wrap.addEventListener('mousedown',e=>{if(e.target===wrap&&it.kind!=='prompt')no();});
+    // 高风险操作默认聚焦「取消」：误按回车不会删东西
+    (input||(risky?cancel:ok)).focus();if(input)input.select();
+  }
+  window.alert=msg=>{open('alert',msg);};
+  window.confirm=msg=>open('confirm',msg);
+  window.prompt=(msg,def)=>open('prompt',msg,def);
+  /* 轻提示：复制成功这类不需要确认的结果，2 秒后自动消失 */
+  let toastTimer=0;
+  window.toast=msg=>{
+    let text=String(msg==null?'':msg);
+    if(msg&&Array.isArray(msg.i18nParts)&&window.I18N){
+      const tpl=msg.i18nParts.reduce((o,p,i)=>o+p+(i<msg.i18nValues.length?'{'+i+'}':''),'');
+      text=I18N.t(tpl).replace(/\{(\d+)\}/g,(_,i)=>String(msg.i18nValues[+i]));
+    }else if(window.I18N)text=I18N.t(text);
+    let t=document.getElementById('ndToast');
+    if(!t){t=el('div','nd-toast');t.id='ndToast';t.setAttribute('role','status');t.setAttribute('translate','no');document.body.append(t);}
+    t.textContent=text;t.classList.add('nd-in');
+    clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('nd-in'),2000);
+  };
+  document.addEventListener('DOMContentLoaded',next);
+})();
+</script>
 <script src="i18n/i18n.js"></script>
 <style>
 /* dola-pool console: "framed sheet" light redesign (taste-skill app sheet, style framed-sheet).
@@ -271,6 +344,25 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--border);ma
 .dialog .box{background:var(--surface);border-radius:12px;padding:24px 26px;width:440px;max-width:92vw;max-height:86vh;overflow:auto;box-shadow:var(--float)}
 .dialog h2{font-size:18px;font-weight:600;margin-bottom:14px}
 .dialog label{display:block;font-size:13px;font-weight:500;color:#3b403e;margin:14px 0 6px}
+.nd{position:fixed;inset:0;z-index:120;display:flex;align-items:center;justify-content:center;padding:16px;
+  background:rgba(19,20,22,.28);opacity:0;transition:opacity .14s ease}
+.nd.nd-in{opacity:1}
+.nd-box{width:420px;max-width:100%;max-height:82vh;overflow:auto;background:var(--surface);border-radius:12px;
+  padding:22px 24px 18px;box-shadow:var(--float);transform:translateY(6px) scale(.985);transition:transform .16s ease}
+.nd.nd-in .nd-box{transform:none}
+.nd-title{font-size:16px;font-weight:600;margin:0 0 8px;color:var(--text)}
+.nd-risky .nd-title{color:var(--negative)}
+.nd-msg{margin:0;font-size:14px;line-height:1.7;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}
+.nd-input{display:block;width:100%;margin-top:12px;padding:8px 10px;font-size:14px;line-height:1.5;resize:vertical}
+.nd-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
+.nd-actions .btn{min-width:72px}
+.btn-risky{background:var(--negative);border-color:var(--negative);color:#fff;font-weight:500}
+.btn-risky:hover{filter:brightness(.94);background:var(--negative);border-color:var(--negative)}
+.nd-toast{position:fixed;left:50%;bottom:28px;z-index:130;max-width:min(560px,calc(100vw - 32px));padding:10px 16px;
+  border-radius:8px;background:var(--text);color:#fff;font-size:13.5px;line-height:1.5;box-shadow:var(--float);
+  transform:translate(-50%,12px);opacity:0;pointer-events:none;transition:opacity .16s ease,transform .16s ease}
+.nd-toast.nd-in{opacity:1;transform:translate(-50%,0)}
+@media (prefers-reduced-motion:reduce){.nd,.nd-box,.nd-toast{transition:none}}
 .dialog .label-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
 .dialog .label-row a{font-weight:400;font-size:12.5px}
 .dialog input{width:100%;padding:0 12px;font-size:14px;height:36px}
@@ -781,12 +873,12 @@ async function checkUpdateNow(){
   catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);}
 }
 async function startUpdate(version){
-  if(!confirm(dialogText`更新到 v${version}？会暂停派新单，等正在生成的任务完成后重启服务，失败自动回滚。`))return;
+  if(!await confirm(dialogText`更新到 v${version}？会暂停派新单，等正在生成的任务完成后重启服务，失败自动回滚。`))return;
   try{UPDATE_INFO=await api('/api/admin/update',{method:'POST',body:{version}});renderUpdate(UPDATE_INFO);watchUpdate();}
   catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);}
 }
 async function cancelUpdate(){
-  if(!confirm('取消这次更新？'))return;
+  if(!await confirm('取消这次更新？'))return;
   try{UPDATE_INFO=await api('/api/admin/update/cancel',{method:'POST'});renderUpdate(UPDATE_INFO);}
   catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);}
 }
@@ -977,7 +1069,7 @@ async function startUpscale(id,secs){
   try{c=await api('/api/admin/settings/upscale');}
   catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);return;}
   if(!c.ready[c.provider]){
-    if(confirm('还没有配置超分服务，现在去设置吗？'))openUpscaleSettings();
+    if(await confirm('还没有配置超分服务，现在去设置吗？'))openUpscaleSettings();
     return;
   }
   const scale={'1080p':1,'2k':2,'4k':4}[c.target]||1;
@@ -986,7 +1078,7 @@ async function startUpscale(id,secs){
     :c.provider==='custom'
       ?dialogText`用 ${c.custom_name||'自定义 API'} 把这条视频超分到 ${c.target}（按服务商价格计费），确定吗？`
       :dialogText`用自建超分模型把这条视频超分到 ${c.target}，确定吗？`;
-  if(!confirm(msg))return;
+  if(!await confirm(msg))return;
   try{await api('/api/admin/tasks/'+encodeURIComponent(id)+'/upscale',{method:'POST',body:{}});}
   catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);return;}
   refresh();
@@ -1321,7 +1413,7 @@ function noteCell(x){
 }
 async function editNote(name){
   const cur=(allAccounts.find(a=>a.name===name)||{}).note||'';
-  const v=prompt('账号备注（上游拒稿原文会自动追加在此，可手动修改）：',cur);
+  const v=await prompt('账号备注（上游拒稿原文会自动追加在此，可手动修改）：',cur);
   if(v===null||v===cur)return;
   try{await api('/api/admin/accounts/'+encodeURIComponent(name),{method:'PATCH',body:{note:v}});}
   catch(e){return alert(dialogText`${e.message}`);}
@@ -1370,7 +1462,7 @@ async function probeHello(name){
   refresh();
 }
 async function recoverAccount(name,kind){
-  if(!confirm(dialogText`确定把 ${name} 从【${kind==='abnormal'?'异常':'风控'}】组恢复出来？\n${kind==='risk'?'（风控恢复后回到【待激活】，要再做一次「你好探测」确认登录）':''}`))return;
+  if(!await confirm(dialogText`确定把 ${name} 从【${kind==='abnormal'?'异常':'风控'}】组恢复出来？\n${kind==='risk'?'（风控恢复后回到【待激活】，要再做一次「你好探测」确认登录）':''}`))return;
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/recover',
       {method:'POST',body:{kind:kind}});
@@ -1472,7 +1564,7 @@ async function submitTestGen(name,force){
     if(String(e.message).startsWith('TEST_GEN_WARN:')){
       const reasons=String(e.message).slice('TEST_GEN_WARN:'.length).split('\n').filter(Boolean);
       const msg=dialogText`测试生成会用 ${name} 真实出片、消耗真实额度。这个号现在：\n\n${reasons.map(r=>'• '+r).join('\n')}\n\n仍然要测试吗？`;
-      if(confirm(msg))return submitTestGen(name,true);
+      if(await confirm(msg))return submitTestGen(name,true);
       q('#tg_status').textContent='已取消：'+reasons.join('；');q('#tg_status').style.color='var(--sub)';
       return;
     }
@@ -1539,7 +1631,7 @@ async function submitRenameAccount(name){
 }
 
 async function delAccount(name){
-  if(!confirm(dialogText`确定删除账号 ${name}？将同时删除其 profile。`))return;
+  if(!await confirm(dialogText`确定删除账号 ${name}？将同时删除其 profile。`))return;
   try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(dialogText`${e.message}`);}refresh();
 }
 
@@ -1553,7 +1645,7 @@ async function exportAccountCookies(name){
   if(cookieExportRunning)return;
   const names=name?[name]:[...selAccounts];
   if(!names.length)return alert('请先勾选账号');
-  if(!confirm(dialogText`导出 ${names.length} 个账号的 Cookie？文件包含登录凭据，请妥善保管。导出的是已保存快照，不代表当前登录有效；批量 ZIP 内含导出结果清单。`))return;
+  if(!await confirm(dialogText`导出 ${names.length} 个账号的 Cookie？文件包含登录凭据，请妥善保管。导出的是已保存快照，不代表当前登录有效；批量 ZIP 内含导出结果清单。`))return;
   cookieExportRunning=true;updateSelButtons();
   try{
     const r=await fetch('/api/admin/accounts/export-cookies',{
@@ -1597,7 +1689,7 @@ function stopBatchPoll(){if(batchPollTimer){clearInterval(batchPollTimer);batchP
 async function batchVerifySelected(){
   const list=[...selAccounts];
   if(!list.length)return alert('请先勾选账号');
-  if(!confirm(`对选中的 ${list.length} 个账号逐个验证登录态？\n验证会真实打开账号会话，耗时较长（每号约 10-40 秒）。`))return;
+  if(!await confirm(`对选中的 ${list.length} 个账号逐个验证登录态？\n验证会真实打开账号会话，耗时较长（每号约 10-40 秒）。`))return;
   let r;
   try{r=await api('/api/admin/accounts/batch-verify',{method:'POST',body:{names:list}});}
   catch(e){return alert(dialogText`${e.message}`);}
@@ -1628,7 +1720,7 @@ async function batchProbeHello(){
   const sel=[...selAccounts];
   const list=sel.length?sel:allAccounts.filter(x=>matchGroup(x)&&(srcFilterVal==='all'||x.source===srcFilterVal)).map(x=>x.name);
   if(!list.length)return alert('没有要探测的账号：先勾选，或用分组按钮筛出一批');
-  if(!confirm(`对 ${list.length} 个账号各发一句「你好」探测风控？\n`
+  if(!await confirm(`对 ${list.length} 个账号各发一句「你好」探测风控？\n`
     +`· Cloak 使用账号独立浏览器与绑定代理；被登出才判风控，超时未确认不判风控\n`
     +`· 网络或上游限流（710022002）导致没探成 → 只记「未完成」，不会锁号\n`
     +`· 浏览器探测串行执行，账号忙或出口限流时跳过；普通 API 探测按服务器并发设置执行`))return;
@@ -1668,7 +1760,7 @@ async function batchRecover(){
   const list=sel.length?sel:allAccounts.filter(x=>matchGroup(x)&&(srcFilterVal==='all'||x.source===srcFilterVal)
       &&(x.group==='风控'||x.group==='异常')).map(x=>x.name);
   if(!list.length)return alert('没有要恢复的账号：先勾选，或切到【风控】/【异常】分组再点');
-  if(!confirm(`把 ${list.length} 个账号从【风控】/【异常】组恢复出来？\n`
+  if(!await confirm(`把 ${list.length} 个账号从【风控】/【异常】组恢复出来？\n`
     +`· 风控号恢复后登录态会被清空，回到【待激活】\n`
     +`· 想确认能不能用，恢复后接着点一次「你好探测」`))return;
   let r;
@@ -1710,7 +1802,7 @@ async function submitBatchProxy(){
 }
 
 async function resetAllQuotas(){
-  if(!confirm('立即重置全池额度？\n所有因「每日上限 / 积分不足 / 失败」被挡的账号会恢复调度与积分缓存。\n（不等同于风控冷却，风控账号仍需重新登录）'))return;
+  if(!await confirm('立即重置全池额度？\n所有因「每日上限 / 积分不足 / 失败」被挡的账号会恢复调度与积分缓存。\n（不等同于风控冷却，风控账号仍需重新登录）'))return;
   try{const r=await api('/api/admin/accounts/reset-quotas',{method:'POST'});alert(`已重置 ${r.reset} 个账号的额度`);}
   catch(e){alert(dialogText`${e.message}`);}
   refresh();
@@ -1719,7 +1811,7 @@ async function resetAllQuotas(){
 async function deleteSelectedAccounts(){
   const list=[...selAccounts];
   if(!list.length)return;
-  if(!confirm(`确定删除选中的 ${list.length} 个账号？将同时删除其 profile。`))return;
+  if(!await confirm(`确定删除选中的 ${list.length} 个账号？将同时删除其 profile。`))return;
   let ok=0;
   for(const name of list){
     try{await api('/api/admin/accounts/'+encodeURIComponent(name),{method:'DELETE'});ok++;}
@@ -2276,7 +2368,7 @@ async function probeProxy(id,btn){
 }
 async function rotateProxy(id){
   const p=proxyCache.find(x=>x.id===id);
-  if(!confirm(dialogText`给绑定在「${p?p.name:id}」上的所有号换出口 IP？`))return;
+  if(!await confirm(dialogText`给绑定在「${p?p.name:id}」上的所有号换出口 IP？`))return;
   try{
     const r=await api('/api/admin/proxies/'+encodeURIComponent(id)+'/rotate',{method:'POST'});
     alert(`已换 IP：${r.rotated.length} 个\n跳过：${r.skipped.length} 个${r.skipped.length?'（未到最小换IP间隔）':''}`);
@@ -2614,7 +2706,7 @@ async function submitProxy(id){
 }
 async function delProxy(id){
   const p=proxyCache.find(x=>x.id===id);
-  if(!confirm(dialogText`删除代理「${p?p.name:id}」？已绑定该代理的账号会改回默认代理。`))return;
+  if(!await confirm(dialogText`删除代理「${p?p.name:id}」？已绑定该代理的账号会改回默认代理。`))return;
   try{await api('/api/admin/proxies/'+encodeURIComponent(id),{method:'DELETE'});}catch(e){return alert(dialogText`${e.message}`);}
   loadProxies();
 }
@@ -2660,7 +2752,7 @@ async function delSelected(kind){
   }
   if(kind==='tasks')tip+='\n已完成任务的视频文件会一起删除，无法恢复。';
   if(kind==='keys')tip+='\n用这些密钥的调用方会立即失效。';
-  if(!confirm(tip))return;
+  if(!await confirm(tip))return;
   const url={proxies:'/api/admin/proxies/delete-batch',tasks:'/api/admin/tasks/delete-batch',
              users:'/api/admin/users/delete-batch',keys:'/api/admin/keys/delete-batch'}[kind];
   const body=kind==='users'?{usernames:ids}:{ids};
@@ -2733,7 +2825,7 @@ async function submitUser(orig){
   hide('dlg');loadUsers();
 }
 async function delUser(username){
-  if(!confirm(dialogText`确定删除管理员 ${username}？`))return;
+  if(!await confirm(dialogText`确定删除管理员 ${username}？`))return;
   try{await api('/api/admin/users/'+encodeURIComponent(username),{method:'DELETE'});}catch(e){return alert(dialogText`${e.message}`);}
   loadUsers();
 }
@@ -3001,7 +3093,7 @@ function toggleAllVideos(on){
   loadVideos();
 }
 async function delVideo(id){
-  if(!confirm('确定删除该视频？视频文件与任务记录将一并删除，不可恢复。'))return;
+  if(!await confirm('确定删除该视频？视频文件与任务记录将一并删除，不可恢复。'))return;
   try{await api('/api/admin/videos/'+id,{method:'DELETE'});}catch(e){alert(dialogText`${e.message}`);}
   selVideos.delete(id);
   refresh();
@@ -3009,7 +3101,7 @@ async function delVideo(id){
 async function delSelectedVideos(){
   const list=[...selVideos];
   if(!list.length)return;
-  if(!confirm(`确定删除选中的 ${list.length} 个视频？文件与任务记录将一并删除，不可恢复。`))return;
+  if(!await confirm(`确定删除选中的 ${list.length} 个视频？文件与任务记录将一并删除，不可恢复。`))return;
   let ok=0;
   for(const id of list){
     try{await api('/api/admin/videos/'+id,{method:'DELETE'});ok++;}
@@ -3021,7 +3113,7 @@ async function delSelectedVideos(){
 }
 async function copyLink(url){
   await copy(url);
-  alert('链接已复制');
+  toast('链接已复制');
 }
 
 /* ---- API 密钥 ---- */
@@ -3052,10 +3144,10 @@ async function setKey(key,on){
 }
 async function copyKey(key){
   await copy(key);
-  alert('已复制 '+(key.slice(0,8)+'…'+key.slice(-4)));
+  toast(dialogText`已复制 ${key.slice(0,8)+'…'+key.slice(-4)}`);
 }
 async function delKey(key){
-  if(!confirm('删除该密钥？调用方将立即失效。'))return;
+  if(!await confirm('删除该密钥？调用方将立即失效。'))return;
   try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'DELETE'});}catch(e){alert(dialogText`${e.message}`);}refresh();
 }
 // 仅作接口返回前的占位默认值；真实档位由 /api/admin/keys 下发（随 DOLA_NATIVE_DURATION_MAX 变化）。
