@@ -410,6 +410,9 @@ class TaskResponse(BaseModel):
     progress: dict | None = None
     # 管理员对这条视频做过超分（upscale.py）后的高清地址；没有超分时为 null。
     video_url_hd: str | None = None
+    # 服务端认出的请求分辨率（720p / 1080p / 2k / 4k；没写或认不出为 null），以及自动超分的说明
+    resolution: str | None = None
+    upscale_note: str | None = None
 
 
 def _eta_text(seconds: int) -> str:
@@ -629,6 +632,49 @@ def _deep_image_urls(value, out: list[str] | None = None, depth: int = 0) -> lis
         for x in value:
             _deep_image_urls(x, out, depth + 1)
     return out
+
+
+RESOLUTION_KEYS = ("resolution", "quality", "video_resolution", "output_resolution",
+                   "video_quality", "definition")
+RESOLUTION_NESTS = ("metadata", "extra_body", "parameters", "params", "options", "config",
+                    "generation_config", "extra", "input", "settings")
+_RESOLUTION_FLAG = re.compile(r"(?:^|\s)--(?:resolution|rs)\s+(\S+)")
+
+
+def _request_resolution(raw, prompt: str = "") -> tuple[str | None, str, str]:
+    """请求里要的分辨率 → (原始写法, 去掉 --resolution 后的提示词, 来源字段)。
+
+    客户端放的位置五花八门：顶层 resolution / quality，new-api 之类塞在 metadata / extra_body，
+    也有写在提示词里的 --resolution 1080p / --rs 1080p（这段从提示词去掉，不发给 dola）。
+    只认 upscale.normalize_resolution 认得出的值；认不出的（如 quality=high）当没写。
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    places = [("", raw)] + [(f"{nest}.", raw[nest]) for nest in RESOLUTION_NESTS
+                            if isinstance(raw.get(nest), dict)]
+    for prefix, place in places:
+        for key in RESOLUTION_KEYS:
+            value = place.get(key)
+            if isinstance(value, (str, int)) and upscale.normalize_resolution(value):
+                return str(value), _strip_resolution_flag(prompt), prefix + key
+    flag = _RESOLUTION_FLAG.search(prompt or "")
+    if flag and upscale.normalize_resolution(flag.group(1)):
+        return flag.group(1), _strip_resolution_flag(prompt), "prompt --resolution"
+    return None, prompt, ""
+
+
+def _strip_resolution_flag(prompt: str) -> str:
+    flag = _RESOLUTION_FLAG.search(prompt or "")
+    return (prompt[:flag.start()] + prompt[flag.end():]).strip() if flag else prompt
+
+
+def _log_request_fields(raw, endpoint: str, resolution: str | None, source: str) -> None:
+    """每次创建任务记一行：收到了哪些字段（只记字段名）、认出的分辨率——排查「要了 1080p 却是 720p」。"""
+    if not isinstance(raw, dict):
+        return
+    keys = sorted(str(k) for k in raw.keys())
+    nested = {k: sorted(str(x) for x in raw[k].keys()) for k in RESOLUTION_NESTS if isinstance(raw.get(k), dict)}
+    print(f"[api] {endpoint} 字段 {keys}" + (f" 嵌套 {nested}" if nested else "")
+          + f" · 分辨率 {resolution + '（' + source + '）' if resolution else '未指定'}", flush=True)
 
 
 def _log_image_fields(raw, endpoint: str) -> None:
@@ -1369,9 +1415,11 @@ async def create_video(request: Request, authorization: str | None = Header(defa
     refs = list(dict.fromkeys(refs + _deep_image_urls(raw)))
     if refs:
         print(f"[api] 收到参考图 {len(refs)} 张: {refs[0][:80]}", flush=True)
-    return await _submit_task(client, req.model, req.prompt, ratio, duration, refs,
+    resolution, prompt, source = _request_resolution(raw, req.prompt)
+    _log_request_fields(raw, "openai", resolution, source)
+    return await _submit_task(client, req.model, prompt, ratio, duration, refs,
                               reference_source=req.reference_source,
-                              resolution=req.resolution or raw.get("quality"), size=req.size)
+                              resolution=resolution, size=req.size)
 
 
 def _data_url_from_upload(filename: str, data: bytes) -> str:
@@ -1404,7 +1452,7 @@ async def _raw_from_multipart(request: Request) -> dict[str, Any]:
                 break
             except ValueError:
                 continue
-    for key in ("size", "ratio", "aspect_ratio", "response_format", "reference_source"):
+    for key in ("size", "ratio", "aspect_ratio", "response_format", "reference_source") + RESOLUTION_KEYS:
         value = form.get(key)
         if isinstance(value, str) and value.strip():
             raw[key] = value.strip()
@@ -1572,10 +1620,27 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
         id=task_id, status="queued", model=model, prompt=prompt,
         progress=_progress_payload(status="queued", created_at=time.time(),
                                    duration=duration),
+        resolution=plan["requested"], upscale_note=_upscale_note(plan),
     )
 
 
-@app.get("/v/{name}")
+def _upscale_note(plan_or_row: dict) -> str | None:
+    """给客户看的一句自动超分说明（任务创建时按计划，查询时按库里的状态）。"""
+    requested = plan_or_row.get("requested") or plan_or_row.get("requested_resolution")
+    if not requested or requested == "720p":
+        return None
+    if "auto" in plan_or_row:                      # 创建时的计划
+        return (f"出片后自动超分到 {requested}" if plan_or_row["auto"] else plan_or_row.get("note") or None)
+    state = plan_or_row.get("upscale_status")
+    if not plan_or_row.get("upscale_auto"):
+        return plan_or_row.get("upscale_error") or None
+    return {"completed": f"已超分到 {plan_or_row.get('upscale_target') or requested}",
+            "failed": f"超分失败，交付原片：{plan_or_row.get('upscale_error') or ''}".rstrip("：")}.get(
+        state, f"出片后自动超分到 {requested}")
+
+
+# HEAD 也要接：不少客户端 / 播放器先 HEAD 探链接，只注册 GET 时 HEAD 会落到静态目录变成 404
+@app.api_route("/v/{name}", methods=["GET", "HEAD"])
 async def video_short_link(name: str):
     """Link-delivered video: 302 to the upstream CDN, re-signed shortly before it expires.
 
@@ -1919,6 +1984,7 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
         progress=_progress_payload(status=status, created_at=row["created_at"],
                                    duration=row["duration"]),
         video_url_hd=video_url_hd,
+        resolution=row.get("requested_resolution"), upscale_note=_upscale_note(row),
     )
 
 
@@ -2100,12 +2166,10 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
     )
     reference_images = list(dict.fromkeys(reference_images + _deep_image_urls(body)))
     prompt = "\n".join(prompt_parts).strip()
-    # Ark 写法：顶层 resolution，或提示词里的 --resolution 1080p / --rs 1080p（不发给 Dola）
-    resolution = body.get("resolution")
-    flag = re.search(r"(?:^|\s)--(?:resolution|rs)\s+(\S+)", prompt)
-    if flag:
-        resolution = resolution or flag.group(1)
-        prompt = (prompt[:flag.start()] + prompt[flag.end():]).strip()
+    # Ark 写法：顶层 resolution，或提示词里的 --resolution 1080p / --rs 1080p（不发给 Dola）；
+    # 也认 metadata / extra_body 等嵌套位置（和 /v1/videos 同一套规则）
+    resolution, prompt, source = _request_resolution(body, prompt)
+    _log_request_fields(body, "ark", resolution, source)
     if not prompt:
         raise HTTPException(422, "content 中缺少 text 提示词")
     requested_model = body.get("model")
@@ -2167,6 +2231,11 @@ async def ark_get_task(task_id: str, authorization: str | None = Header(default=
         result["content"] = {"video_url": video_url}
     if row.get("error"):
         result["error"] = row["error"]
+    if row.get("requested_resolution"):
+        result["resolution"] = row["requested_resolution"]
+        note = _upscale_note(row)
+        if note:
+            result["upscale_note"] = note
     return result
 
 

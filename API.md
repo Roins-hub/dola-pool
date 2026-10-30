@@ -203,7 +203,13 @@ Dola 原片是 720p。创建任务时可以带 `resolution`：`720p`（或不传
 
 - 超分完成前查询返回 `processing`；完成后 `video_url` 与 `video_url_hd` 都是高清地址（`/v/<id>-1080p.mp4`）；超分失败交原片 720p。
 - 后台没开自动超分或超分服务不可用时，照常交原片，不报错。
-- Ark 协议：顶层 `resolution`，或提示词里写 `--resolution 1080p` / `--rs 1080p`（这段会从提示词里去掉，不发给上游）。
+- 写在哪里都行（OpenAI 风格和 Ark 协议规则相同，按顺序找第一个认得出的值）：
+  - 顶层字段 `resolution`、`quality`、`video_resolution`、`output_resolution`、`video_quality`、`definition`；
+  - 以上字段放在 `metadata`、`extra_body`、`parameters`、`params`、`options`、`config`、`generation_config`、`extra`、`input`、`settings` 里面也认；
+  - 提示词里写 `--resolution 1080p` / `--rs 1080p`（这段会从提示词里去掉，不发给上游）。
+  认不出的值（如 `quality: "high"`）按没写处理。
+- **确认有没有认出来**：创建和查询的返回里有 `resolution`（认出的档位，没写或认不出为 `null`）和 `upscale_note`（如「出片后自动超分到 1080p」「已超分到 1080p」，或没超分的原因）。要了 1080p 却看到 `resolution: null`，说明字段位置或写法不对。
+- 高清地址 `/v/<id>-1080p.mp4` 支持 GET 和 HEAD，返回 302 跳到成片。
 - 后台可选「没有 resolution 时按 `size` 判断」（按短边：1080 → 1080p、1440 → 2k、2160 → 4k）；默认不看 `size`，因为很多客户端默认就带 `1920x1080`。
 
 ### 2.3 服务级限制（当前线上值）

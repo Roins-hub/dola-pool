@@ -278,7 +278,7 @@ input[type=file]::file-selector-button:hover{border-color:var(--control-hi);back
 *{scrollbar-width:thin;scrollbar-color:var(--control) transparent}
 #accountsTable,#proxiesTable,#tasksTable,#videosTable,#keysTable,#usersTable,#perAccount{overflow-x:auto}
 .task-attempt-history{min-width:280px;max-width:420px;overflow-wrap:anywhere}
-#tasksTable table{min-width:1450px;table-layout:fixed}
+#tasksTable table{min-width:1484px;table-layout:fixed}
 #tasksTable th:nth-child(1){width:34px}
 #tasksTable th:nth-child(2){width:100px}
 #tasksTable th:nth-child(3){width:20%}
@@ -289,7 +289,7 @@ input[type=file]::file-selector-button:hover{border-color:var(--control-hi);back
 #tasksTable th:nth-child(8){width:74px}
 #tasksTable th:nth-child(9){width:160px}
 #tasksTable th:nth-child(10){width:144px}
-#tasksTable th:nth-child(11){width:116px}
+#tasksTable th:nth-child(11){width:150px}
 #tasksTable td{overflow-wrap:anywhere;white-space:normal;vertical-align:top;padding-top:13px;padding-bottom:13px}
 #tasksTable td:nth-child(7),#tasksTable td:nth-child(8),#tasksTable td:nth-child(10){white-space:nowrap}
 /* 耗时列：「已 X」下面还有「预计 · 还剩约」一行，必须能折行，否则会压到创建时间上 */
@@ -299,7 +299,9 @@ input[type=file]::file-selector-button:hover{border-color:var(--control-hi);back
 #tasksTable td:nth-child(12){min-width:280px}
 #tasksTable .prompt{max-width:100%}
 #tasksTable .err,#tasksTable .note,#tasksTable .task-attempt-history{max-width:none;min-width:0}
-#tasksTable .video-wrap{white-space:nowrap}
+/* 视频列窄：「打开 / 预览」「4K / 预览 / 复制链接」放不下就折行，不能溢出压到报错/备注列 */
+#tasksTable .video-wrap{flex-wrap:wrap;row-gap:6px}
+#tasksTable .video-wrap>*{white-space:nowrap}
 #tasksTable td:nth-child(5) .notranslate{white-space:nowrap}
 #tasksTable .task-source{margin-top:6px}
 /* accounts: 12 columns on one sheet; dates stay on one line in grey, actions compact */

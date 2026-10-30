@@ -204,3 +204,52 @@ def test_720p_and_disabled_auto_keep_the_original(api):
             assert not high_row['upscale_auto'] and high_row['upscale_status'] == 'skipped'
             assert '没有开启自动超分' in high_row['upscale_error']
     run(scenario())
+
+
+@pytest.mark.parametrize('extra,prompt', [
+    ({'metadata': {'resolution': '1080P'}}, '白鹭飞过湖面'),              # new-api 之类塞在 metadata
+    ({'extra_body': {'quality': '1080p'}}, '白鹭飞过湖面'),
+    ({'video_resolution': '1080'}, '白鹭飞过湖面'),
+    ({}, '白鹭飞过湖面 --rs 1080p'),                                       # /v1/videos 也认提示词里的标记
+    ({'quality': 'high', 'parameters': {'resolution': 'fhd'}}, '白鹭飞过湖面'),  # 认不出的 quality 不挡后面的
+])
+def test_resolution_found_in_common_places_and_echoed(api, extra, prompt):
+    """2026-10-30 线上：PowerShell 调 /v1/videos 要了 1080p，服务端没认出（只看顶层 resolution），交了 720p。"""
+    import upscale
+    server, db, _ = api
+    upscale.save_settings(db, {'provider': 'fal', 'fal_key': 'k-123456789', 'auto': 'param'})
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url='http://test') as c:
+            r = await c.post('/v1/videos', json=dict(model='seedance-2.0-fast', prompt=prompt, duration=10, **extra))
+            assert r.status_code in (200, 202), r.text
+            body = r.json()
+            assert body['resolution'] == '1080p' and '自动超分到 1080p' in body['upscale_note']
+            row = db.get(body['id'])
+            assert row['requested_resolution'] == '1080p' and row['upscale_auto'] == 1
+            assert row['prompt'] == '白鹭飞过湖面'
+            fetched = (await c.get('/v1/videos/' + row['id'])).json()
+            assert fetched['resolution'] == '1080p' and fetched['status'] == 'queued'
+    run(scenario())
+
+
+def test_unrecognised_resolution_is_reported_as_null(api):
+    server, db, _ = api
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url='http://test') as c:
+            r = await c.post('/v1/videos', json={'prompt': 'p', 'duration': 10, 'quality': 'high'})
+            assert r.json()['resolution'] is None and r.json()['upscale_note'] is None
+    run(scenario())
+
+
+def test_hd_short_link_answers_head(api):
+    """客户端常先 HEAD 探链接：/v/<id>-1080p.mp4 只注册 GET 时 HEAD 落到静态目录成了 404。"""
+    server, db, _ = api
+    db.create('video_hd1', 'seedance-2.0-fast', 'p', '16:9', 10)
+    db.update('video_hd1', status='completed', video_url='/videos/x.mp4', upscale_status='completed',
+              upscale_target='1080p', upscale_url='https://cdn.example/hd.mp4')
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url='http://test') as c:
+            for method in ('GET', 'HEAD'):
+                r = await c.request(method, '/v/video_hd1-1080p.mp4')
+                assert r.status_code == 302 and r.headers['location'] == 'https://cdn.example/hd.mp4'
+    run(scenario())
