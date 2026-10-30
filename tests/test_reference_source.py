@@ -162,3 +162,45 @@ def test_default_note_only_for_tasks_with_reference_images(api, refs, expected):
             assert row['reference_source'] == expected and row['prompt'] == '海边日落'
             assert row['prompt_supplement'] == (AI_REFERENCE_NOTE if expected == 'ai_generated' else '')
     run(scenario())
+
+
+@pytest.mark.parametrize('protocol', ['json', 'ark', 'ark_flag'])
+def test_requested_resolution_is_recorded_and_flag_stripped(api, protocol):
+    """2026-10-30: 720p 交原片；1080p 及以上在开启自动超分时出片后自动超分（这里只看受理记录）。"""
+    import upscale
+    server, db, dispatched = api
+    upscale.save_settings(db, {'provider': 'fal', 'fal_key': 'k-123456789', 'auto': 'param'})
+    raw = dict(model='seedance-2.0-fast', prompt='白鹭飞过湖面', duration=10, ratio='16:9', resolution='1080p')
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url='http://test') as c:
+            if protocol == 'json':
+                r = await c.post('/v1/videos/generations', json=raw)
+            else:
+                text = raw['prompt'] + (' --resolution 1080p' if protocol == 'ark_flag' else '')
+                body = {'model': raw['model'], 'duration': 10, 'ratio': '16:9',
+                        'content': [{'type': 'text', 'text': text}]}
+                if protocol == 'ark':
+                    body['resolution'] = '1080p'
+                r = await c.post('/api/v3/contents/generations/tasks', json=body)
+            assert r.status_code in (200, 202), r.text
+            row = db.get(r.json()['id'])
+            assert row['requested_resolution'] == '1080p' and row['upscale_auto'] == 1
+            assert row['upscale_target'] == '1080p' and row['prompt'] == '白鹭飞过湖面'
+            fetched = await c.get('/v1/videos/' + row['id'])
+            assert fetched.json()['status'] == 'queued'
+    run(scenario())
+
+
+def test_720p_and_disabled_auto_keep_the_original(api):
+    import upscale
+    server, db, _ = api
+    upscale.save_settings(db, {'provider': 'fal', 'fal_key': 'k-123456789', 'auto': 'off'})
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url='http://test') as c:
+            low = await c.post('/v1/videos/generations', json={'prompt': 'p', 'duration': 10, 'resolution': '720p'})
+            high = await c.post('/v1/videos/generations', json={'prompt': 'p', 'duration': 10, 'resolution': '1080p'})
+            low_row, high_row = db.get(low.json()['id']), db.get(high.json()['id'])
+            assert not low_row['upscale_auto'] and not low_row['upscale_status']
+            assert not high_row['upscale_auto'] and high_row['upscale_status'] == 'skipped'
+            assert '没有开启自动超分' in high_row['upscale_error']
+    run(scenario())

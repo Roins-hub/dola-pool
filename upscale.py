@@ -25,6 +25,13 @@ FAL_PRICE_PER_SECOND = 0.0072          # 1080p / 30fps / standard（fal 模型�
 TARGETS = ("1080p", "2k", "4k")
 PRESETS = ("aigc", "general", "ugc", "short_series", "old_film")
 SETTINGS_KEY = "upscale"
+AUTO_MODES = ("off", "param", "param_or_size")
+_RESOLUTION_ALIASES = {
+    "480p": "720p", "480": "720p", "540p": "720p", "720p": "720p", "720": "720p", "hd": "720p",
+    "1080p": "1080p", "1080": "1080p", "fhd": "1080p", "fullhd": "1080p",
+    "2k": "2k", "1440p": "2k", "1440": "2k", "qhd": "2k",
+    "4k": "4k", "2160p": "4k", "2160": "4k", "uhd": "4k",
+}
 
 DEFAULTS = {
     "provider": os.getenv("DOLA_UPSCALE_PROVIDER", "fal").strip() or "fal",
@@ -37,6 +44,9 @@ DEFAULTS = {
     "open_token": os.getenv("DOLA_UPSCALE_OPEN_TOKEN", "").strip(),
     # link：/v/<任务>-1080p.mp4 302 到服务商的结果地址；download：下载到服务器再提供
     "delivery": os.getenv("DOLA_UPSCALE_DELIVERY", "download").strip() or "download",
+    # 按客户请求的分辨率自动超分：off 关闭（全部交原片）；param 只认请求里的 resolution 参数；
+    # param_or_size 没有 resolution 时再按 size（如 1920x1080）的短边判断
+    "auto": os.getenv("DOLA_UPSCALE_AUTO", "off").strip() or "off",
     # 自定义 API：任意「提交 → 轮询」或「同步返回」的 HTTP JSON 接口，按字段路径取值（见 UPSCALE.md）
     "custom_name": "",
     "custom_submit_url": "",
@@ -69,6 +79,7 @@ CUSTOM_PRESETS = {
         "custom_status_path": "data.status", "custom_success": "success", "custom_failed": "failed",
         "custom_result_path": "data.result.0", "custom_error_path": "data.errorMsg",
         "custom_code_path": "code", "custom_code_ok": "0",
+        "docs_url": "https://docs.apiverse.ai/docs/video-super-resolution/",
     },
     "apibobo": {
         "custom_name": "波波 API",
@@ -80,6 +91,8 @@ CUSTOM_PRESETS = {
         "custom_poll_url": "", "custom_status_path": "", "custom_success": "success,succeeded,completed,done",
         "custom_failed": "failed,failure,error,cancelled",
         "custom_result_path": "out", "custom_error_path": "error", "custom_code_path": "", "custom_code_ok": "0",
+        "key_url": "https://apibobo.com/console/token",
+        "docs_url": "https://apibobo.com/content/tools/video-super-resolution/",
     },
 }
 
@@ -118,6 +131,8 @@ def save_settings(store, patch: dict) -> dict:
             raise UpscaleError(f"fal_preset 只能是 {', '.join(PRESETS)}")
         if key == "delivery" and value not in ("link", "download"):
             raise UpscaleError("delivery 只能是 link 或 download")
+        if key == "auto" and value not in AUTO_MODES:
+            raise UpscaleError(f"auto 只能是 {', '.join(AUTO_MODES)}")
         if key in URL_FIELDS:
             value = value.rstrip("/") if key == "open_endpoint" else value
             if value and not value.startswith(("http://", "https://")):
@@ -212,12 +227,12 @@ async def _json_or_error(resp, what: str) -> dict:
 
 
 async def submit(settings: dict, provider: str, source_url: str, *, fps: float | None = None,
-                 duration: float | None = None, task_id: str = "") -> dict:
+                 duration: float | None = None, task_id: str = "", target: str | None = None) -> dict:
     """提交一条超分任务，返回可存库的 job 状态（不含密钥）。"""
     problem = missing_config(settings, provider)
     if problem:
         raise UpscaleError(problem)
-    target = settings.get("target") or "1080p"
+    target = target or settings.get("target") or "1080p"
     if provider == "custom":
         return await _custom_submit(settings, source_url, target, duration, task_id)
     if provider == "fal":
@@ -433,6 +448,46 @@ async def download(url: str, dest: str, *, limit_bytes: int = 500 * 1024 * 1024)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+
+
+def normalize_resolution(value) -> str | None:
+    """客户写法 → 720p / 1080p / 2k / 4k；认不出返回 None（按没写处理）。"""
+    return _RESOLUTION_ALIASES.get(str(value or "").strip().lower().replace(" ", ""))
+
+
+def resolution_from_size(size) -> str | None:
+    """1920x1080 / 1080*1920 → 按短边判断档位。"""
+    import re
+    match = re.match(r"^\s*(\d{3,5})\s*[x×*:]\s*(\d{3,5})\s*$", str(size or ""), re.I)
+    if not match:
+        return None
+    short = min(int(match.group(1)), int(match.group(2)))
+    return "720p" if short <= 720 else "1080p" if short <= 1080 else "2k" if short <= 1440 else "4k"
+
+
+def auto_plan(settings: dict, resolution, size=None) -> dict:
+    """请求的分辨率 → 出片后要不要自动超分。
+
+    返回 {"requested": 档位或 None, "auto": bool, "target": 档位, "provider": ..., "note": 不超分的原因}。
+    720p（或没写）交原片；1080p 及以上且开启了自动超分、服务商可用，才超分到请求的档位。
+    """
+    mode = settings.get("auto") or "off"
+    requested = normalize_resolution(resolution)
+    if requested is None and mode == "param_or_size":
+        requested = resolution_from_size(size)
+    plan = {"requested": requested, "auto": False, "target": requested, "provider": settings.get("provider"),
+            "note": ""}
+    if requested in (None, "720p"):
+        return plan
+    if mode == "off":
+        plan["note"] = f"请求 {requested}，但后台没有开启自动超分，交付原片 720p"
+        return plan
+    problem = missing_config(settings, settings.get("provider") or "")
+    if problem:
+        plan["note"] = f"请求 {requested}，但超分服务不可用（{problem}），交付原片 720p"
+        return plan
+    plan["auto"] = True
+    return plan
 
 
 def public_url(task_id: str, target: str | None) -> str:

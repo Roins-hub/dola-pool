@@ -197,6 +197,15 @@ curl https://your-domain/v1/images/generations -H "Authorization: Bearer sk-xxx"
 
 也可以用 `ratio` 直接传 `16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9`（Ark 风格接口同样支持这 6 种）；都不带就用上游默认。
 
+### 2.2.1 分辨率 `resolution`（自动超分）
+
+Dola 原片是 720p。创建任务时可以带 `resolution`：`720p`（或不传）交原片；`1080p` / `2k` / `4k`（也认 `1080`、`fhd`、`1440p`、`2160p` 等写法）在后台开启「按请求分辨率自动超分」且超分服务可用时，出片后自动超分到该档位。
+
+- 超分完成前查询返回 `processing`；完成后 `video_url` 与 `video_url_hd` 都是高清地址（`/v/<id>-1080p.mp4`）；超分失败交原片 720p。
+- 后台没开自动超分或超分服务不可用时，照常交原片，不报错。
+- Ark 协议：顶层 `resolution`，或提示词里写 `--resolution 1080p` / `--rs 1080p`（这段会从提示词里去掉，不发给上游）。
+- 后台可选「没有 resolution 时按 `size` 判断」（按短边：1080 → 1080p、1440 → 2k、2160 → 4k）；默认不看 `size`，因为很多客户端默认就带 `1920x1080`。
+
 ### 2.3 服务级限制（当前线上值）
 
 | 项 | 值 | 说明 |
@@ -290,7 +299,7 @@ Authorization: Bearer <API_KEY>
 | `status` | `queued` / `processing` / `completed` / `failed` |
 | `video_url` | 仅 `completed` 时有值；指向**本服务转存**的静态文件（稳定地址，不是 dola 临时 CDN） |
 | `error` | 仅 `failed` 时有值，是最末一次失败的原因（最多 500 字） |
-| `video_url_hd` | 管理员对这条视频做过超分后的高清地址（`/v/<id>-1080p.mp4`，2K / 4K 为 `-2k` / `-4k`）；没有超分时为 `null`。见 [UPSCALE.md](UPSCALE.md) |
+| `video_url_hd` | 这条视频超分后的高清地址（`/v/<id>-1080p.mp4`，2K / 4K 为 `-2k` / `-4k`）；没有超分时为 `null`。见 [UPSCALE.md](UPSCALE.md) |
 
 **只能查到自己 Key 创建的任务**；别人的 task_id 一律 `404 task not found`。
 

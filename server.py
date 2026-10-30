@@ -372,6 +372,8 @@ class VideoGenRequest(BaseModel):
     # 而落到默认 10 秒（画布「选 30 秒却生成 10 秒」就是这个原因）。
     seconds: int | None = Field(None, ge=4, le=30)
     duration_seconds: int | None = Field(None, ge=4, le=30)
+    # 想要的分辨率：720p（或不传）交 Dola 原片；1080p / 2k / 4k 在后台开启自动超分时出片后自动超分
+    resolution: str | None = None
     # 参考图：兼容各画布工具的常见字段形态（字符串/数组/{"url": ...}）
     reference_images: list[str] = Field(default_factory=list)
     # 不传（或 null）= 按 DOLA_DEFAULT_REFERENCE_SOURCE：带参考图默认附加 AI 素材说明，纯文字不附加
@@ -1149,6 +1151,7 @@ async def resume_incomplete_tasks():
         print(f"[startup] 接上 {len(watching)} 个超时任务的后台自动取回", flush=True)
     for row in watching:
         asyncio.create_task(_recover_loop(row["id"]))
+    asyncio.create_task(_auto_upscale_loop())
     upscaling = store.upscale_unfinished()
     if upscaling:
         print(f"[startup] 接着查 {len(upscaling)} 个超分任务", flush=True)
@@ -1362,7 +1365,8 @@ async def create_video(request: Request, authorization: str | None = Header(defa
     if refs:
         print(f"[api] 收到参考图 {len(refs)} 张: {refs[0][:80]}", flush=True)
     return await _submit_task(client, req.model, req.prompt, ratio, duration, refs,
-                              reference_source=req.reference_source)
+                              reference_source=req.reference_source,
+                              resolution=req.resolution or raw.get("quality"), size=req.size)
 
 
 def _data_url_from_upload(filename: str, data: bytes) -> str:
@@ -1468,7 +1472,7 @@ def _check_doubao_model(model, duration) -> str:
 
 
 async def _submit_task(client, model, prompt, ratio, duration, reference_images,
-                       reference_source=None):
+                       reference_source=None, resolution=None, size=None):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
     if reference_source is None:
         reference_source = config.DEFAULT_REFERENCE_SOURCE if reference_images else "unspecified"
@@ -1548,6 +1552,14 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
         raise HTTPException(429, str(exc)) from exc
     except PendingTaskLimitExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
+    plan = upscale.auto_plan(upscale.load_settings(store), resolution, size)
+    if plan["requested"]:
+        fields = {"requested_resolution": plan["requested"]}
+        if plan["auto"]:
+            fields.update(upscale_auto=1, upscale_target=plan["target"], upscale_provider=plan["provider"])
+        elif plan["note"]:
+            fields.update(upscale_status="skipped", upscale_error=plan["note"])
+        store.update(task_id, **fields)
     asyncio.create_task(_run_task(
         task_id, model, prompt, ratio, duration, reference_images, client
     ))
@@ -1667,6 +1679,38 @@ def _upscale_public_url(row: dict) -> str | None:
     return upscale.public_url(row["id"], row.get("upscale_target"))
 
 
+def _client_video(row: dict) -> tuple[str, str | None, str | None]:
+    """客户看到的 (status, video_url, video_url_hd)。
+
+    请求了 1080p 等并自动超分的任务：库里出片后就是 completed（看门狗、重启恢复都按原逻辑走），
+    但对客户在超分完成前仍显示 processing；超分成功交高清地址，失败交原片。
+    """
+    status, url, hd = row["status"], row.get("video_url"), _upscale_public_url(row)
+    if row.get("upscale_auto") and status == "completed":
+        state = row.get("upscale_status")
+        if state in (None, "", "queued", "processing"):
+            return "processing", None, None
+        if state == "completed" and hd:
+            return "completed", hd, hd
+    return status, url, hd
+
+
+async def _auto_upscale_loop() -> None:
+    """出片后自动超分：每 5 秒捞一次「已完成、请求了高分辨率、还没开始超分」的任务。"""
+    while True:
+        await asyncio.sleep(5)
+        try:
+            rows = await asyncio.to_thread(store.auto_upscale_pending)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[upscale] 自动超分巡检失败: {exc}", flush=True)
+            continue
+        for row in rows:
+            store.update(row["id"], upscale_status="queued", upscale_error="", upscale_started_at=time.time(),
+                         upscale_provider=row.get("upscale_provider") or upscale.load_settings(store)["provider"],
+                         upscale_target=row.get("upscale_target") or row.get("requested_resolution") or "1080p")
+            asyncio.create_task(_run_upscale(row["id"]))
+
+
 def _upscaled_video(task_id: str, target: str):
     row = store.get(task_id)
     if (not row or row.get("upscale_status") != "completed"
@@ -1714,7 +1758,7 @@ async def _run_upscale(task_id: str) -> None:
                 source = await _upscale_source(row)
                 job = await upscale.submit(settings, row.get("upscale_provider") or settings["provider"], source,
                                            duration=row.get("video_duration") or row.get("duration"),
-                                           task_id=task_id)
+                                           task_id=task_id, target=row.get("upscale_target"))
                 store.update(task_id, upscale_status="processing", upscale_job=json.dumps(job))
             deadline = float(row.get("upscale_started_at") or time.time()) + config.UPSCALE_TIMEOUT
             errors = 0
@@ -1770,6 +1814,7 @@ class UpscaleSettingsPatch(BaseModel):
     open_endpoint: str | None = None
     open_token: str | None = None
     delivery: str | None = None
+    auto: str | None = None
     custom_name: str | None = None
     custom_submit_url: str | None = None
     custom_headers: str | None = None
@@ -1849,12 +1894,13 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
     row = store.get_for_client(task_id, client["api_key_hash"])
     if not row:
         raise HTTPException(404, "task not found")
+    status, video_url, video_url_hd = _client_video(row)
     return TaskResponse(
-        id=row["id"], status=row["status"], model=row["model"],
-        prompt=row["prompt"], video_url=row["video_url"], error=row["error"],
-        progress=_progress_payload(status=row["status"], created_at=row["created_at"],
+        id=row["id"], status=status, model=row["model"],
+        prompt=row["prompt"], video_url=video_url, error=row["error"],
+        progress=_progress_payload(status=status, created_at=row["created_at"],
                                    duration=row["duration"]),
-        video_url_hd=_upscale_public_url(row),
+        video_url_hd=video_url_hd,
     )
 
 
@@ -1866,8 +1912,11 @@ async def get_video_content(task_id: str, authorization: str | None = Header(def
     row = store.get_for_client(task_id, client["api_key_hash"])
     if not row:
         raise HTTPException(404, "task not found")
-    if row["status"] != "completed" or not row["video_url"]:
+    status, video_url, video_url_hd = _client_video(row)
+    if status != "completed" or not video_url:
         raise HTTPException(409, "video not ready")
+    if video_url_hd and video_url == video_url_hd:   # 自动超分的成片
+        return _upscaled_video(row["id"], row.get("upscale_target") or "1080p")
     if row.get("video_link"):
         link = await video_link.current_link(row, store)
         if link:
@@ -2033,6 +2082,12 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
     )
     reference_images = list(dict.fromkeys(reference_images + _deep_image_urls(body)))
     prompt = "\n".join(prompt_parts).strip()
+    # Ark 写法：顶层 resolution，或提示词里的 --resolution 1080p / --rs 1080p（不发给 Dola）
+    resolution = body.get("resolution")
+    flag = re.search(r"(?:^|\s)--(?:resolution|rs)\s+(\S+)", prompt)
+    if flag:
+        resolution = resolution or flag.group(1)
+        prompt = (prompt[:flag.start()] + prompt[flag.end():]).strip()
     if not prompt:
         raise HTTPException(422, "content 中缺少 text 提示词")
     requested_model = body.get("model")
@@ -2045,7 +2100,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
         except (TypeError, ValueError):
             seconds = 5
         resp = await _submit_task(client, requested_model, prompt, ratio, seconds, reference_images,
-                                  reference_source=body.get("reference_source"))
+                                  reference_source=body.get("reference_source"), resolution=resolution)
         return {"id": resp.id, "status": resp.status}
     version = _model_version(requested_model)
     if version is not None:
@@ -2072,7 +2127,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
             f"seedance-2.0-fast 仅支持 {list(config.V20_DURATIONS)} 秒）",
         )
     resp = await _submit_task(client, model, prompt, ratio, duration, reference_images,
-                              reference_source=body.get("reference_source"))
+                              reference_source=body.get("reference_source"), resolution=resolution)
     return {"id": resp.id, "status": resp.status}
 
 
@@ -2082,15 +2137,16 @@ async def ark_get_task(task_id: str, authorization: str | None = Header(default=
     row = store.get_for_client(task_id, client["api_key_hash"])
     if not row:
         raise HTTPException(404, "task not found")
+    status, video_url, _hd = _client_video(row)
     result = {
         "id": row["id"],
         "model": row["model"],
-        "status": ARK_STATUS_MAP.get(row["status"], row["status"]),
+        "status": ARK_STATUS_MAP.get(status, status),
         "created_at": int(row["created_at"]),
         "updated_at": int(row.get("updated_at") or row["created_at"]),
     }
-    if row["status"] == "completed" and row.get("video_url"):
-        result["content"] = {"video_url": row["video_url"]}
+    if status == "completed" and video_url:
+        result["content"] = {"video_url": video_url}
     if row.get("error"):
         result["error"] = row["error"]
     return result

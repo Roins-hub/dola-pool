@@ -118,6 +118,9 @@ class TaskStore:
                 ("upscale_seconds", "REAL"),
                 ("upscale_started_at", "REAL"),
                 ("upscale_finished_at", "REAL"),
+                # 客户请求的分辨率（720p / 1080p / 2k / 4k）；upscale_auto=1 表示出片后自动超分到它
+                ("requested_resolution", "TEXT"),
+                ("upscale_auto", "INTEGER DEFAULT 0"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -306,6 +309,14 @@ class TaskStore:
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
                     (key, value, time.time()),
                 )
+
+    def auto_upscale_pending(self) -> list[dict]:
+        """已出片、请求了高分辨率、还没开始超分的任务（正常出片 / 重启续轮询 / 超时取回都会走到这里）。"""
+        with _LOCK:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE status='completed' AND upscale_auto=1 "
+                "AND (upscale_status IS NULL OR upscale_status='')").fetchall()
+        return [dict(r) for r in rows]
 
     def upscale_unfinished(self) -> list[dict]:
         """服务重启后要接着查的超分任务。"""

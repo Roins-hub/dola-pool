@@ -316,3 +316,78 @@ def test_source_url_uses_the_fresh_upstream_link_or_rejects_a_local_base(srv, mo
     monkeypatch.setattr(config, "PUBLIC_BASE", "http://127.0.0.1:8000")
     with pytest.raises(upscale.UpscaleError, match="公网地址"):
         _run(srv._upscale_source({"video_url": "http://127.0.0.1:8000/videos/a.mp4"}))
+
+
+# ---------------------------------------------------------------- 按请求分辨率自动超分
+
+@pytest.mark.parametrize("value,expected", [("1080p", "1080p"), ("FHD", "1080p"), ("2K", "2k"), ("1440p", "2k"),
+                                            ("4k", "4k"), ("720p", "720p"), ("480p", "720p"), ("8k", None), (None, None)])
+def test_resolution_aliases(value, expected):
+    assert upscale.normalize_resolution(value) == expected
+
+
+def test_resolution_from_size_uses_the_short_side():
+    assert upscale.resolution_from_size("1920x1080") == "1080p"
+    assert upscale.resolution_from_size("1080x1920") == "1080p"
+    assert upscale.resolution_from_size("1280x720") == "720p"
+    assert upscale.resolution_from_size("3840x2160") == "4k"
+    assert upscale.resolution_from_size("16:9") is None
+
+
+def test_auto_plan_rules():
+    ready = {**FAL, "auto": "param"}
+    assert upscale.auto_plan(ready, "720p")["auto"] is False                      # 720p 原片直出
+    assert upscale.auto_plan(ready, None, "1920x1080")["requested"] is None       # param 模式不看 size
+    plan = upscale.auto_plan(ready, "1080p")
+    assert plan["auto"] and plan["target"] == "1080p" and plan["provider"] == "fal"
+    assert upscale.auto_plan({**ready, "auto": "param_or_size"}, None, "1920x1080")["target"] == "1080p"
+    off = upscale.auto_plan({**FAL, "auto": "off"}, "4k")
+    assert not off["auto"] and "没有开启自动超分" in off["note"]
+    no_key = upscale.auto_plan({**ready, "fal_key": ""}, "2k")
+    assert not no_key["auto"] and "fal API Key" in no_key["note"]
+
+
+def test_auto_upscale_runs_after_completion_and_client_sees_hd(srv, monkeypatch):
+    upscale.save_settings(srv.store, {"auto": "param"})
+    srv.store.create("video_auto1", "seedance-2.0-fast", "p", "16:9", 10)
+    srv.store.update("video_auto1", requested_resolution="1080p", upscale_auto=1, upscale_target="1080p",
+                     upscale_provider="fal", status="processing")
+    row = srv.store.get("video_auto1")
+    assert srv._client_video(row) == ("processing", None, None)
+    srv.store.update("video_auto1", status="completed", video_url="https://pool.example/videos/a.mp4")
+    assert srv._client_video(srv.store.get("video_auto1"))[0] == "processing"   # 超分完成前对客户仍是生成中
+    targets = []
+    async def submit(settings, provider, source, **kw):
+        targets.append(kw.get("target"))
+        return {"provider": "fal", "status_url": "s", "response_url": "r"}
+    async def poll(*a): return {"state": "completed", "url": "https://fal.media/hd.mp4"}
+    monkeypatch.setattr(upscale, "submit", submit)
+    monkeypatch.setattr(upscale, "poll", poll)
+    started = []
+    monkeypatch.setattr(srv.asyncio, "create_task", lambda coro: started.append(coro))
+    async def one_tick():
+        rows = srv.store.auto_upscale_pending()
+        assert [r["id"] for r in rows] == ["video_auto1"]
+        for r in rows:
+            srv.store.update(r["id"], upscale_status="queued", upscale_started_at=time.time())
+            await srv._run_upscale(r["id"])
+    _run(one_tick())
+    assert targets == ["1080p"] and not srv.store.auto_upscale_pending()
+    status, url, hd = srv._client_video(srv.store.get("video_auto1"))
+    assert status == "completed" and url == hd == "https://pool.example/v/video_auto1-1080p.mp4"
+
+
+def test_failed_auto_upscale_falls_back_to_the_original(srv):
+    srv.store.create("video_auto2", "seedance-2.0-fast", "p", "16:9", 10)
+    srv.store.update("video_auto2", status="completed", video_url="https://pool.example/videos/a.mp4",
+                     upscale_auto=1, upscale_status="failed", upscale_error="fal：boom")
+    assert srv._client_video(srv.store.get("video_auto2")) == (
+        "completed", "https://pool.example/videos/a.mp4", None)
+
+
+def test_submit_records_requested_resolution(srv, monkeypatch):
+    upscale.save_settings(srv.store, {"auto": "param"})
+    plan = upscale.auto_plan(upscale.load_settings(srv.store), "2k")
+    assert plan["auto"] and plan["target"] == "2k"
+    upscale.save_settings(srv.store, {"auto": "off"})
+    assert "没有开启" in upscale.auto_plan(upscale.load_settings(srv.store), "1080p")["note"]
