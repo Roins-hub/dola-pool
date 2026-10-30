@@ -28,6 +28,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from compress import GzipTextMiddleware
 from pydantic import BaseModel, Field
 
 import config
@@ -90,7 +91,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.6.7"
+APP_VERSION = "2.6.8"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -106,6 +107,9 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=86400,
 )
+
+# 面板列表接口很大，跨洋访问先压缩（只压文本类响应，视频与 Range 请求不动）
+app.add_middleware(GzipTextMiddleware)
 
 store = TaskStore(config.DB_PATH)
 pool = BrowserPool(max_concurrency=store.get_global_concurrency(config.MAX_CONCURRENCY))

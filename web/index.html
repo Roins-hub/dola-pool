@@ -428,6 +428,8 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--border);ma
 .note{display:inline-block;max-width:300px;white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.6;color:var(--muted);cursor:pointer}
 .note:hover{color:var(--text)}
 .log-pane{max-height:260px;overflow:auto;background:var(--raised);border-radius:8px;padding:12px;white-space:pre-wrap;font-family:var(--mono);font-size:12.5px}
+.log-pane:empty{display:none}
+.tab-loading{padding:24px 0;text-align:center}
 .account-id{font-family:var(--mono);font-size:13px;color:var(--text);font-weight:500}
 ::selection{background:#c9efdf}
 ::-webkit-scrollbar{width:10px;height:10px}
@@ -693,19 +695,29 @@ function dialogText(strings,...values){
 function fmt(ts){if(!ts)return '-';const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function fmtHM(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}`;}
 
-let pendingRequests=0;
+let pendingRequests=0,requestStatusTimer=0;
 const pendingReads=new Map();
+/** 写操作的「正在处理」提示：只算非 GET 请求，超过 400ms 才出现，读取和后台刷新不打扰 */
 function requestStatus(delta){
   pendingRequests=Math.max(0,pendingRequests+delta);
   const status=q('#requestStatus');
-  if(status){status.hidden=pendingRequests===0;status.textContent=pendingRequests?'正在处理，请稍候…':'';}
+  if(!status)return;
+  if(!pendingRequests){
+    clearTimeout(requestStatusTimer);requestStatusTimer=0;
+    status.hidden=true;status.textContent='';return;
+  }
+  if(!requestStatusTimer&&status.hidden)requestStatusTimer=setTimeout(()=>{
+    requestStatusTimer=0;
+    if(pendingRequests){status.textContent='正在处理，请稍候…';status.hidden=false;}
+  },400);
 }
 function api(path,opts={}){
   const method=(opts.method||'GET').toUpperCase();
   const key=JSON.stringify([adminKey,path,opts.headers||{}]);
   if(method==='GET'&&pendingReads.has(key))return pendingReads.get(key);
+  const write=method!=='GET';
   const work=(async()=>{
-    requestStatus(1);
+    if(write)requestStatus(1);
     try{
       const r=await fetch(path,{method,headers:{'Content-Type':'application/json','X-Admin-Key':adminKey,...(opts.headers||{})},body:opts.body?JSON.stringify(opts.body):undefined});
       if(r.status===401){showLogin();throw new Error('unauthorized');}
@@ -713,7 +725,7 @@ function api(path,opts={}){
       let data={};try{data=text?JSON.parse(text):{};}catch(e){}
       if(!r.ok)throw new Error(data.detail||(`${r.status} ${text.slice(0,120)}`));
       return data;
-    }finally{requestStatus(-1);}
+    }finally{if(write)requestStatus(-1);}
   })();
   if(method!=='GET')return work;
   const shared=work.finally(()=>{if(pendingReads.get(key)===shared)pendingReads.delete(key);});
@@ -739,7 +751,26 @@ function switchTab(t){
   q('main').classList.toggle('wide-tasks',t==='tasks');
   document.querySelectorAll('.side-nav .nav-item').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
   ['dash','accounts','proxies','tasks','videos','keys','users'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
+  tabLoadingNote(t,!LOADED_TABS.has(t));
   refresh();
+}
+/** 已经加载过的页：再切回来先显示上次的内容，后台刷新；没加载过的显示一行「正在加载…」 */
+const LOADED_TABS=new Set();
+function tabLoadingNote(tab,on){
+  const sec=q('#tab-'+tab);if(!sec||typeof sec.querySelector!=='function')return;
+  const note=sec.querySelector(':scope > .tab-loading');
+  if(on&&!note){const p=document.createElement('p');p.className='hint tab-loading';p.textContent='正在加载…';sec.append(p);}
+  if(!on&&note)note.remove();
+}
+const TAB_LOADERS={accounts:()=>loadAccounts(),tasks:()=>loadTasks(),videos:()=>loadVideos(),
+  upscale:()=>api('/api/admin/settings/upscale').then(c=>{UPSCALE_SETTINGS={at:Date.now(),data:c};})};
+let tabsPrefetched=false;
+async function prefetchTabs(){
+  if(tabsPrefetched)return;tabsPrefetched=true;
+  for(const t of ['tasks','videos','accounts','upscale']){
+    if(LOADED_TABS.has(t)||t===curTab)continue;
+    try{await TAB_LOADERS[t]();if(t!=='upscale'){LOADED_TABS.add(t);tabLoadingNote(t,false);}}catch(e){}
+  }
 }
 
 const refreshingTabs=new Set();
@@ -756,7 +787,9 @@ async function refresh(){
     else if(curTab==='videos')await loadVideos();
     else if(curTab==='keys')await loadKeys();
     else if(curTab==='users')await loadUsers();
+    LOADED_TABS.add(tab);tabLoadingNote(tab,false);
     q('#lastUpdate').textContent='更新于 '+new Date().toLocaleTimeString();
+    if(!tabsPrefetched)setTimeout(prefetchTabs,800);
   }catch(e){if(e.message!=='unauthorized')q('#lastUpdate').textContent='刷新失败，请重试';}
   finally{refreshingTabs.delete(tab);}
 }
@@ -974,12 +1007,15 @@ function watchUpdate(){
 }
 
 /* ---- 视频超分：fal（字节超分）或自建开源模型；在任务列表 / 视频管理里对已完成的视频发起 ---- */
+let UPSCALE_SETTINGS=null;
 async function openUpscaleSettings(){
-  showDlg(`<h2>视频超分</h2><p class="hint">正在读取超分设置…</p>`);
+  const cached=UPSCALE_SETTINGS&&Date.now()-UPSCALE_SETTINGS.at<5*60*1000?UPSCALE_SETTINGS.data:null;
+  if(!cached)showDlg(`<h2>视频超分</h2><p class="hint">正在读取超分设置…</p>`);
   const epoch=dialogEpoch;
   try{
-    const c=await api('/api/admin/settings/upscale');
+    const c=cached||await api('/api/admin/settings/upscale');
     if(epoch!==dialogEpoch)return;
+    UPSCALE_SETTINGS={at:cached?UPSCALE_SETTINGS.at:Date.now(),data:c};
     const opt=(v,label,cur)=>`<option value="${v}" ${v===cur?'selected':''}>${label}</option>`;
     const price=c.fal_price_per_second;
     showDlg(`<h2>视频超分</h2>
@@ -1097,6 +1133,7 @@ async function saveUpscaleSettings(){
   button.disabled=true;feedback.textContent='正在保存…';
   try{
     const c=await api('/api/admin/settings/upscale',{method:'PATCH',body});
+    UPSCALE_SETTINGS={at:Date.now(),data:c};
     if(epoch!==dialogEpoch)return;
     q('#upFalKey').value='';q('#upToken').value='';q('#cuHeaders').value='';
     if(c.custom_headers_set)q('#cuHeaders').placeholder=`已保存（${c.custom_headers_hint}），留空不修改`;

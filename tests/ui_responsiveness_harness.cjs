@@ -9,10 +9,11 @@ function node(selector) {
   return nodes.get(selector);
 }
 const requests = [];
+const timers = [];
 const ctx = vm.createContext({
   console, localStorage:{getItem:()=>'',setItem(){}},
   document:{querySelector:node,getElementById:id=>node('#'+id),querySelectorAll:()=>[]},
-  setInterval(){},clearInterval(){},setTimeout(){},clearTimeout(){},
+  setInterval(){},clearInterval(){},setTimeout:fn=>{timers.push(fn);return timers.length;},clearTimeout(){},
   fetch:(path,options)=>new Promise((resolve,reject)=>requests.push({path,options,resolve,reject})),
   alert(){},confirm:()=>true,
 });
@@ -32,7 +33,8 @@ const reply = (index,data,status=200) => requests[index].resolve({ok:status===20
 
   const a=execute('api("/test")'),b=execute('api("/test")');
   assert.strictEqual(a,b);assert.equal(requests.length,1);
-  assert.equal(node('#requestStatus').hidden,false);
+  timers.splice(0).forEach(fn=>fn());
+  assert.equal(node('#requestStatus').hidden,true);          // 读取不弹「正在处理」
   reply(0,{ok:true});await a;
   assert.equal(node('#requestStatus').hidden,true);
   const again=execute('api("/test")');assert.equal(requests.length,2);
@@ -41,7 +43,12 @@ const reply = (index,data,status=200) => requests[index].resolve({ok:status===20
   // Writes are never deduplicated.
   const w1=execute('api("/test",{method:"POST",body:{name:"one"}})');
   const w2=execute('api("/test",{method:"POST",body:{name:"two"}})');
-  assert.equal(requests.length,4);reply(2,{});reply(3,{});await Promise.all([w1,w2]);
+  assert.equal(requests.length,4);
+  assert.equal(node('#requestStatus').hidden,true);          // 写操作 400ms 内不弹
+  timers.splice(0).forEach(fn=>fn());
+  assert.equal(node('#requestStatus').hidden,false);         // 超过 400ms 才提示
+  reply(2,{});reply(3,{});await Promise.all([w1,w2]);
+  assert.equal(node('#requestStatus').hidden,true);
 
   const loading=execute('openAddAccount()');
   assert.equal(node('#dlg').style.display,'flex');
