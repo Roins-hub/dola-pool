@@ -760,7 +760,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             continue
         poll_errors = 0
         now = time.time()
-        from upstream_reply import reply_failure, duration_reply
+        from upstream_reply import reply_failure, duration_reply, start_confirm_reply
         from generation_errors import UpstreamReplyError
         latest = poll.get("latestAssistant")
         latest_text = (latest or {}).get("text", "")
@@ -782,6 +782,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             joined = "\n".join(texts)
             if latest and not videos:
                 reply = duration_reply(joined, duration, ratio)
+                # dola 问「按 N 秒直接开始生成吗？」（时长本来就在支持范围内）→ 回确认，否则永远不出片
+                confirm = None if reply else start_confirm_reply(joined, duration)
+                reply = reply or confirm
                 if reply:
                     box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')
                     if box:
@@ -792,6 +795,8 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                             await page.keyboard.press("Enter")
                             choice_replied = True
                             print(f"[{account}] 已回复时长选择: {reply}（{duration}s）", flush=True)
+                            if confirm:
+                                emit_feedback(on_poll, progress=f"dola 询问是否按 {duration} 秒直接生成，已回复确认，等待出片")
                         except Exception as e:
                             print(f"[{account}] 回复时长选择失败: {str(e)[:100]}", flush=True)
         joined = "\n".join(texts)

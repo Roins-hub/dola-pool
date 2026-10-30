@@ -109,3 +109,45 @@ def duration_reply(text, duration, ratio=None):
                  r'(?:choose|select|specify).{0,20}duration|何秒(?:に|で)|需要几秒', clean, re.I):
         return f'{ratio or "16:9"}、{duration}秒'
     return None
+
+
+# 2026-10-30 线上：「この動画は 10 秒を指定されていますが、現在の動画生成は 4～15 秒に対応しています。
+# 直接生成を開始してよろしいですか？」——请求时长本来就在支持范围内，dola 只是问一句要不要直接开始。
+# 不回话就永远不出片（任务一直停在「已取得上游会话」）。
+_START_QUESTION = re.compile(
+    r'よろしいですか|よろしいでしょうか|いいですか|開始しますか|生成しますか|進めますか|始めますか|'
+    r'是否(?:直接)?(?:开始|生成|继续)|要不要(?:直接)?(?:开始|生成)|(?:开始|直接)生成吗|可以吗|'
+    r'do you want me to (?:proceed|start|generate|go ahead)|shall i (?:proceed|start|generate)|'
+    r'would you like me to (?:proceed|start|generate)|(?:ok|okay) to (?:proceed|start)', re.I)
+_SECONDS = re.compile(r'(\d+)\s*(?:秒|seconds?\b|secs?\b|s\b)', re.I)
+_SECOND_RANGE = re.compile(r'(\d+)\s*(?:秒|s)?\s*[~～〜\-–到至]\s*(\d+)\s*(?:秒|seconds?\b|s\b)', re.I)
+MAX_SINGLE_SECONDS = 15
+
+
+def start_confirm_reply(text, duration):
+    """dola 只是在确认「按请求的时长直接开始生成吗」→ 返回一句确认；否则 None。
+
+    只在请求时长 ≤ 15 秒、回复里没有提到别的时长（除了支持范围的上下限）时才确认，
+    免得把「改成 15 秒可以吗」这类改时长的提议也答应下来。
+    """
+    if not text or not duration or reply_failure(text):
+        return None
+    duration = int(duration)
+    if duration > MAX_SINGLE_SECONDS or not _START_QUESTION.search(text):
+        return None
+    clean = text.replace('**', '')
+    allowed = {duration}
+    for low, high in _SECOND_RANGE.findall(clean):
+        if not int(low) <= duration <= int(high):
+            return None
+        allowed |= {int(low), int(high)}
+    mentioned = {int(n) for n in _SECONDS.findall(clean)}
+    if duration not in mentioned and not _SECOND_RANGE.search(clean):
+        return None
+    if mentioned - allowed:
+        return None
+    if re.search(r'[\u3040-\u30ff]', clean):
+        return f'はい、{duration}秒で生成を開始してください。'
+    if re.search(r'[\u4e00-\u9fff]', clean):
+        return f'确认，直接按{duration}秒开始生成。'
+    return f'Yes, please start generating the {duration}-second video now.'

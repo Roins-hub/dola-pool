@@ -700,6 +700,21 @@ def _awaiting_confirmation(dola, texts) -> bool:
     return False
 
 
+def _start_confirm_text(dola, texts, duration) -> str | None:
+    """dola 问「按 N 秒直接开始生成吗？」（时长在支持范围内）→ 要回的确认语；已受理 / 别的情况返回 None。"""
+    from upstream_reply import start_confirm_reply
+    is_echo = getattr(dola, "is_prompt_echo_text", None) or (lambda _t: False)
+    accepted = getattr(dola, "looks_like_generation_accepted", None) or (lambda _t: False)
+    own = [str(t) for t in texts or [] if str(t).strip() and not is_echo(str(t))]
+    if not own or any(accepted(t) for t in own):
+        return None
+    for text in reversed(own):
+        reply = start_confirm_reply(text, duration)
+        if reply:
+            return reply
+    return None
+
+
 def _chat_reply(*, dola, session, ctx, headers, conversation_id: str, text: str,
                 account: str = "") -> bool:
     """在**同一个会话**里回一句纯文本（video_ability=False），返回是否发出去（移植自 stable-dola-pool）。"""
@@ -1368,6 +1383,19 @@ def generate_pure_video(
             ack_deadline=time.time() + NO_ACK_SECONDS,
             poll_interval=poll_interval, credits=credits, on_poll=on_poll,
         ) or []
+        confirm_text = _start_confirm_text(dola, ack_texts, duration)
+        if confirm_text:
+            # 不回话就永远不出片：dola 停在「直接生成を開始してよろしいですか？」
+            replied = _chat_reply(dola=dola, session=session, ctx=ctx, headers=headers,
+                                  conversation_id=conversation_id, text=confirm_text, account=account)
+            log.info("pure: %s dola 询问是否按 %ss 直接生成 → 回「%s」(ok=%s)",
+                     account, duration, confirm_text, replied)
+            if not replied:
+                raise PureApiError(
+                    f"{account} dola 在等确认（{_upstream_note(dola, ack_texts)[:120]}），但回话失败")
+            # 不等「受理播报」（日文受理话术未必认得出，等不到会误判失败→重提重复扣点）；
+            # 直接进下面的出片等待，出片 / 终态都由 _wait_for_video 判定
+            _emit_note_text(on_poll, f"dola 询问是否按 {duration} 秒直接生成 → 已回复确认")
         # 上游说「预计等待 N 分钟」：出片等待跟着放长（封顶 DOLA_PURE_TIMEOUT_MAX），
         # 否则上游排队久一点就会被我们自己判超时（上游其实还在生成，额度照扣）。
         upstream_wait = _wait_seconds_from_texts(dola, ack_texts)
