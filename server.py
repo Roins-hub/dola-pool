@@ -36,6 +36,7 @@ import failure_text
 from account_transport import redact_error
 import proxy_store
 import sites
+import updater
 import upscale
 import video_link
 from prompt_context import reference_supplement, submission_prompt
@@ -653,6 +654,23 @@ def _map_ark_ratio(ratio) -> str | None:
     return value if value in {"16:9", "9:16", "1:1", "4:3", "3:4", "21:9"} else None
 
 
+async def _wait_update_drain(task_id: str) -> None:
+    """面板一键更新排空期间不派新单：任务留在排队里，更新完成（或重启后重新受理）再继续。
+
+    每分钟刷新一次 updated_at，排队时钟不算更新耗时，看门狗不会把它判成排队超时。
+    """
+    noted = 0.0
+    held = False
+    while updater.draining():
+        held = True
+        if time.time() - noted > 60:
+            store.update(task_id, queue_note="排队中：服务正在更新版本，完成后自动开始")
+            noted = time.time()
+        await asyncio.sleep(3)
+    if held:
+        store.update(task_id, queue_note="")
+
+
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client):
     api_key_hash = client.get("api_key_hash")
     acquired = False
@@ -662,6 +680,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 变化」算排队时长，不清零的话刚被重启捞回来的任务会带着旧的 updated_at 立刻被判
         # 「排队超时」——把刚修好的恢复路径又堵死。
         store.update(task_id, status="queued", error="", queue_note="")
+        await _wait_update_drain(task_id)
         key_limit = int(client.get("concurrency_limit", 0) or 0)
         if key_limiter.is_full(api_key_hash, key_limit):
             store.set_queue_note(task_id, f"排队中：这个客户（API Key）同时最多跑 {key_limit} 个任务，"
@@ -1135,6 +1154,7 @@ async def resume_incomplete_tasks():
         print(f"[startup] 接着查 {len(upscaling)} 个超分任务", flush=True)
     for row in upscaling:
         asyncio.create_task(_run_upscale(row["id"]))
+    asyncio.create_task(_update_loop())
     asyncio.create_task(_cred_refresher_loop())
     asyncio.create_task(_daily_quota_reset_loop())
     asyncio.create_task(_task_watchdog_loop())
@@ -1558,6 +1578,81 @@ async def video_short_link(name: str):
     return RedirectResponse(link, status_code=302, headers={"Cache-Control": "private, max-age=60"})
 
 
+# ---------------------------------------------------------------- 面板一键更新（updater.py）
+
+def _update_busy() -> dict:
+    running = store.queue_progress(created_at=None, duration=None)["running"]
+    jobs = (len(_running_add_jobs()) + (1 if ADD_ACCOUNT_SEM.locked() else 0)
+            + sum(1 for job in TEST_JOBS.values() if job.get("status") == "running"))
+    return {"running": running, "jobs": jobs}
+
+
+async def _update_loop() -> None:
+    """有更新请求时：等生成中的任务和后台作业清空后放行更新程序；等太久就放弃。"""
+    while True:
+        await asyncio.sleep(3)
+        try:
+            if updater.current_request():
+                await asyncio.to_thread(updater.tick, await asyncio.to_thread(_update_busy))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[update] 巡检失败: {exc}", flush=True)
+
+
+def _require_owner(x_admin_key: str | None) -> str:
+    _admin_auth(x_admin_key)
+    session = ADMIN_SESSIONS.get(x_admin_key or "") or {}
+    if session.get("role") != "owner":
+        raise HTTPException(403, "只有 owner 账号可以更新版本")
+    return session.get("username") or "owner"
+
+
+async def _update_payload(force: bool = False) -> dict:
+    latest = await updater.latest_release(force=force)
+    return {"current": APP_VERSION, "latest": latest,
+            "available": bool(latest.get("version")) and updater.is_newer(latest["version"], APP_VERSION),
+            **updater.status()}
+
+
+class UpdateRequest(BaseModel):
+    version: str
+
+
+@app.get("/api/admin/update")
+async def admin_update_status(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return await _update_payload()
+
+
+@app.post("/api/admin/update/check")
+async def admin_update_check(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return await _update_payload(force=True)
+
+
+@app.post("/api/admin/update")
+async def admin_update_start(body: UpdateRequest, x_admin_key: str | None = Header(default=None)):
+    """排空后由外部更新程序换版本、重启、验证，失败自动回滚。只能更新到 GitHub 最新正式版。"""
+    user = _require_owner(x_admin_key)
+    latest = await updater.latest_release(force=True)
+    if latest.get("error") and not latest.get("version"):
+        raise HTTPException(502, f"查不到最新版本：{latest['error']}")
+    try:
+        updater.request_update(body.version.strip().lstrip("vV"), APP_VERSION, user, latest)
+    except updater.UpdateError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await _update_payload()
+
+
+@app.post("/api/admin/update/cancel")
+async def admin_update_cancel(x_admin_key: str | None = Header(default=None)):
+    _require_owner(x_admin_key)
+    try:
+        updater.cancel_update()
+    except updater.UpdateError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await _update_payload()
+
+
 # ---------------------------------------------------------------- 视频超分（upscale.py）
 
 _UPSCALE_NAME = re.compile(r"^(?P<id>[A-Za-z0-9_]+)-(?P<target>1080p|2k|4k)$")
@@ -1617,7 +1712,9 @@ async def _run_upscale(task_id: str) -> None:
             job = json.loads(row.get("upscale_job") or "null")
             if not job:
                 source = await _upscale_source(row)
-                job = await upscale.submit(settings, row.get("upscale_provider") or settings["provider"], source)
+                job = await upscale.submit(settings, row.get("upscale_provider") or settings["provider"], source,
+                                           duration=row.get("video_duration") or row.get("duration"),
+                                           task_id=task_id)
                 store.update(task_id, upscale_status="processing", upscale_job=json.dumps(job))
             deadline = float(row.get("upscale_started_at") or time.time()) + config.UPSCALE_TIMEOUT
             errors = 0
@@ -1673,6 +1770,20 @@ class UpscaleSettingsPatch(BaseModel):
     open_endpoint: str | None = None
     open_token: str | None = None
     delivery: str | None = None
+    custom_name: str | None = None
+    custom_submit_url: str | None = None
+    custom_headers: str | None = None
+    custom_body: str | None = None
+    custom_target_map: str | None = None
+    custom_id_path: str | None = None
+    custom_poll_url: str | None = None
+    custom_status_path: str | None = None
+    custom_success: str | None = None
+    custom_failed: str | None = None
+    custom_result_path: str | None = None
+    custom_error_path: str | None = None
+    custom_code_path: str | None = None
+    custom_code_ok: str | None = None
 
 
 class UpscaleRequest(BaseModel):

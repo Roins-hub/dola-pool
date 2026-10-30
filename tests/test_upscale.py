@@ -22,7 +22,7 @@ def test_settings_mask_secrets_and_keep_or_clear_them():
     upscale.save_settings(store, {"provider": "fal", "fal_key": "fal-secret-key-1234"})
     pub = upscale.public_settings(upscale.load_settings(store))
     assert "fal_key" not in pub and pub["fal_key_set"] and pub["fal_key_hint"] == "••••1234"
-    assert pub["ready"] == {"fal": True, "open": False}
+    assert pub["ready"] == {"fal": True, "open": False, "custom": False}
     upscale.save_settings(store, {"fal_key": None, "delivery": "link"})       # None = 保持
     assert upscale.load_settings(store)["fal_key"] == "fal-secret-key-1234"
     upscale.save_settings(store, {"fal_key": ""})                             # 空字符串 = 清除
@@ -118,6 +118,73 @@ def test_open_provider_contract(monkeypatch):
     assert calls[0][2]["headers"] == {"Authorization": "Bearer tok"}
     assert _run(upscale.poll(cfg, job))["state"] == "pending"
     assert _run(upscale.poll(cfg, job))["url"] == "https://gpu.example/o.mp4"
+
+
+# ---------------------------------------------------------------- 自定义 API
+
+def custom_settings(store, preset, **extra):
+    patch = dict(upscale.CUSTOM_PRESETS[preset])
+    patch.update(provider="custom", **extra)
+    upscale.save_settings(store, patch)
+    return upscale.load_settings(store)
+
+
+def test_custom_preset_apiverse_async_flow(monkeypatch):
+    cfg = custom_settings(MemStore(), "apiverse", custom_headers='{"Authorization": "Bearer av-token-9999"}')
+    calls = fake_http(monkeypatch, [
+        ("POST", "api.apiverse.ai/api/v2/open/aigc/super-resolution", 200,
+         {"code": 0, "data": {"taskId": "task_1", "status": "processing"}}),
+        ("GET", "api.apiverse.ai/api/v2/open/aigc/task_1", 200, {"code": 0, "data": {"status": "processing"}}),
+        ("GET", "api.apiverse.ai/api/v2/open/aigc/task_1", 200,
+         {"code": 0, "data": {"status": "success", "result": ["https://oss.example/out_1080p.mp4"]}})])
+    job = _run(upscale.submit(cfg, "custom", "https://cdn/v.mp4", duration=10.08, task_id="video_x"))
+    assert job == {"provider": "custom", "id": "task_1"}
+    body, headers = calls[0][2]["json"], calls[0][2]["headers"]
+    assert body == {"videoUrl": "https://cdn/v.mp4", "quality": "1080p", "duration": 11, "taskNickname": "video_x"}
+    assert headers["Authorization"] == "Bearer av-token-9999"
+    assert _run(upscale.poll(cfg, job))["state"] == "pending"
+    assert _run(upscale.poll(cfg, job))["url"] == "https://oss.example/out_1080p.mp4"
+
+
+def test_custom_business_code_and_failed_status(monkeypatch):
+    cfg = custom_settings(MemStore(), "apiverse", custom_headers='{"Authorization": "Bearer x"}')
+    fake_http(monkeypatch, [("POST", "apiverse", 200, {"code": 10006, "msg": "余额不足"})])
+    with pytest.raises(upscale.UpscaleError, match="10006.*余额不足"):
+        _run(upscale.submit(cfg, "custom", "https://cdn/v.mp4", duration=5))
+    fake_http(monkeypatch, [("GET", "apiverse", 200, {"code": 0, "data": {"status": "failed", "errorMsg": "超分任务执行失败"}})])
+    failed = _run(upscale.poll(cfg, {"provider": "custom", "id": "t"}))
+    assert failed["state"] == "failed" and "超分任务执行失败" in failed["error"]
+
+
+def test_custom_preset_apibobo_is_synchronous(monkeypatch):
+    cfg = custom_settings(MemStore(), "apibobo", custom_headers='{"Authorization": "Bearer sk-bobo"}', target="2k")
+    calls = fake_http(monkeypatch, [("POST", "apibobo.com/v1/tools/run", 200, {"out": "https://bobo.example/r.mp4"})])
+    job = _run(upscale.submit(cfg, "custom", "https://cdn/v.mp4"))
+    assert calls[0][2]["json"]["input"] == {"video": "https://cdn/v.mp4", "resolution": "2K"}   # target 改名
+    assert _run(upscale.poll(cfg, job)) == {"state": "completed", "url": "https://bobo.example/r.mp4",
+                                            "size": None, "billed_seconds": None}
+
+
+def test_custom_settings_validation_and_header_masking():
+    store = MemStore()
+    with pytest.raises(upscale.UpscaleError, match="JSON"):
+        upscale.save_settings(store, {"custom_headers": "Authorization: Bearer x"})
+    with pytest.raises(upscale.UpscaleError, match="http"):
+        upscale.save_settings(store, {"custom_submit_url": "api.example.com/run"})
+    cfg = custom_settings(store, "apiverse", custom_headers='{"Authorization": "Bearer secret-token-1234"}')
+    pub = upscale.public_settings(cfg)
+    assert pub["ready"]["custom"] and pub["custom_headers_hint"] == "Authorization"
+    assert "secret-token" not in json.dumps(pub, ensure_ascii=False)
+    assert "custom_headers_example" in pub["custom_presets"]["apiverse"]
+    assert "缺查询地址" in upscale.missing_config({**cfg, "custom_poll_url": ""}, "custom")
+
+
+def test_template_rendering_keeps_types():
+    out = upscale.render_template('{"a": "{{duration}}", "b": "x-{{target}}", "c": ["{{video_url}}"]}',
+                                  {"duration": 11, "target": "1080p", "video_url": "u"})
+    assert out == {"a": 11, "b": "x-1080p", "c": ["u"]}
+    assert upscale.json_path({"data": {"result": ["r0"]}}, "data.result.0") == "r0"
+    assert upscale.json_path({"data": {}}, "data.result.0") is None
 
 
 def test_missing_config_blocks_submit():

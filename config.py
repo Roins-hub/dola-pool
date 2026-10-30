@@ -57,6 +57,16 @@ DEFAULT_REFERENCE_SOURCE = os.getenv("DOLA_DEFAULT_REFERENCE_SOURCE", "ai_genera
 # 参考图上传失败（尚未提交）时，同一账号刷新页面重传的次数；用尽才换号。
 # 2026-10-29 实测：失败多为 ApplyImageUpload 在 1 秒内的 ERR_FAILED，且与成功穿插出现；每次重传约 10 秒，远比换号（约 50 秒）便宜。
 UPLOAD_RETRIES = max(0, int(os.getenv("DOLA_UPLOAD_RETRIES", "3")))
+# 面板一键更新（updater.py）：GitHub 仓库、交接目录、版本检查缓存、等任务清空的最长时间、
+# 放行后等更新程序开始的最长时间。DOLA_DEPLOY_MODE 可强制 source / docker（默认自动判断）。
+UPDATE_REPO = os.getenv("DOLA_UPDATE_REPO", "Roins-hub/dola-pool").strip()
+UPDATE_DIR = os.getenv("DOLA_UPDATE_DIR", "") or os.path.join(
+    os.path.dirname(os.path.abspath(os.getenv("DOLA_DB_PATH", "tasks.db"))), "update")
+UPDATE_CHECK_TTL = max(60, int(os.getenv("DOLA_UPDATE_CHECK_TTL", "600")))
+UPDATE_IDLE_TIMEOUT = max(60, int(os.getenv("DOLA_UPDATE_IDLE_TIMEOUT", "1800")))
+UPDATE_AGENT_TIMEOUT = max(30, int(os.getenv("DOLA_UPDATE_AGENT_TIMEOUT", "600")))
+DEPLOY_MODE = os.getenv("DOLA_DEPLOY_MODE", "")
+
 # 视频超分（upscale.py）：同时进行的超分任务数、单条最长等待、轮询间隔。服务商与密钥在面板「视频超分」里设置
 # （或 DOLA_UPSCALE_PROVIDER / DOLA_FAL_KEY / DOLA_UPSCALE_OPEN_URL / DOLA_UPSCALE_OPEN_TOKEN 作为默认值）。
 UPSCALE_CONCURRENCY = max(1, int(os.getenv("DOLA_UPSCALE_CONCURRENCY", "2")))

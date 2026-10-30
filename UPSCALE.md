@@ -8,6 +8,7 @@ dola-pool 出的视频是 720p（Dola 原片 720×1280 / 1280×720，24fps）。
 |---|---|---|
 | **fal**（`fal-ai/bytedance-upscaler/upscale/video`，字节官方超分） | 开箱即用，效果稳定，有 AI 生成视频预设 | 1080p 每秒 $0.0072（10 秒约 $0.07），2K ×2、4K ×4，失败不计费 |
 | **自建开源模型**（Real-ESRGAN、FlashVSR 等，部署在云端 GPU） | 想要更便宜或自控 | 只付 GPU 时间；按本文的接口约定实现即可接入 |
+| **自定义 API**（Apiverse、波波 API 等第三方） | 已有别家超分 API | 按对方价格；面板里填地址、请求头、请求体模板和字段路径，不用改代码 |
 
 ## 使用
 
@@ -49,6 +50,31 @@ dola-pool 出的视频是 720p（Dola 原片 720×1280 / 1280×720，24fps）。
 | POST | `/api/admin/tasks/{id}/upscale` | 发起超分，body `{"provider": "fal" \| "open", "force": false}`；已超分过需 `force: true` 才重做（会再次计费） |
 
 任务记录里的字段：`upscale_status`（queued / processing / completed / failed）、`upscale_provider`、`upscale_target`、`upscale_url`（服务商结果地址）、`upscale_file`（本地文件名）、`upscale_error`、`upscale_size`、`upscale_seconds`（计费秒数）、`upscale_started_at`、`upscale_finished_at`。服务重启后会从存库的任务状态接着查询，不会重复提交。
+
+## 自定义 API
+
+面板「视频超分」→ 默认服务选「自定义 API」，按对方文档填写；字段路径用点号分隔、数组用下标（`data.result.0`）。
+
+| 设置 | 说明 | Apiverse 示例 |
+|---|---|---|
+| 提交地址 | POST，JSON 请求体 | `https://api.apiverse.ai/api/v2/open/aigc/super-resolution` |
+| 请求头 | JSON 对象，含密钥；保存后只显示头名称 | `{"Authorization": "Bearer <token>"}` |
+| 请求体模板 | JSON；`{{video_url}}` `{{target}}` `{{duration}}`（秒，向上取整）`{{task_id}}`。整个值就是 `"{{duration}}"` 时按数字填入 | `{"videoUrl": "{{video_url}}", "quality": "{{target}}", "duration": "{{duration}}"}` |
+| 分辨率改名 | 对方的档位名和 1080p / 2k / 4k 不同时填，如 `2k=2K` | 留空 |
+| 任务 ID 路径 | 提交响应里的任务 ID；**留空表示同步接口**，结果地址直接在提交响应里（提交最多等 15 分钟） | `data.taskId` |
+| 查询地址 | GET，`{{id}}` 换成任务 ID | `https://api.apiverse.ai/api/v2/open/aigc/{{id}}` |
+| 状态路径 / 成功值 / 失败值 | 其它状态都算进行中 | `data.status` / `success` / `failed` |
+| 结果地址路径 | 成功时视频地址 | `data.result.0` |
+| 失败原因路径 | 可选 | `data.errorMsg` |
+| 业务码路径 / 成功值 | HTTP 200 但业务失败的接口用（如余额不足） | `code` / `0` |
+
+面板里有 **Apiverse 模板** 和 **波波 API 模板** 两个按钮，填入后把请求头里的密钥换成自己的再保存。
+
+已核对的第三方（2026-10-30）：
+
+- **Apiverse**（[文档](https://docs.apiverse.ai/docs/video-super-resolution/)）：异步，720p / 1080p / 2k / 4k，按档位 × 输出分钟计费（不足 1 分钟按 1 分钟），失败自动解冻不扣费；必须传准 `duration`，否则按 1 分钟冻结。
+- **波波 API**（[文档](https://apibobo.com/content/tools/video-super-resolution/)）：`POST /v1/tools/run`，同步返回 `out` 视频链接，720p / 1080p / 2K / 4K，按处理量计费、失败不扣费。2026-10-30 其工具目录里「视频超分」标为**故障**，接入前先确认可用。
+- **七牛**（[文档](https://developer-doc.qiniu.com/products/dora/quality%20enhancement/0-video-super-resolution)）：不是「传视频地址」的接口——视频要先在七牛华东区存储空间里，用 AK/SK 签名的 `pfop` 发起持久化处理，结果写回存储空间，只能放大 2 / 3 倍（720p → 1440p / 2160p）。自定义 API 接不了，需要专门写一个服务商（先用 fetch 把原片抓进存储空间，再 pfop、查 prefop 状态、从存储域名取结果）。
 
 ## 自建开源超分服务
 

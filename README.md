@@ -351,6 +351,26 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 中的 `uploadMultiEntityConf.maxImageSize = 0x1400000`。这是原图接收配置，
 不是所有模型的永久上限；Dola 网页后续仍可能压缩图片或执行模型专属校验。
 
+### 面板一键更新
+
+管理后台左侧的 **版本** 按钮显示当前版本；GitHub 有新的正式版时变成「有新版本 vX.Y.Z」，点开可看更新说明，owner 账号点 **更新到 vX.Y.Z**：
+
+1. 暂停派新单（新提交的任务照常受理、排队等待），等正在生成的任务和后台作业完成；
+2. 外部更新程序备份代码和数据库，换到新版本，重启服务；
+3. 等 `/health` 报出新版本号才算成功，页面自动刷新；任何一步失败都自动回滚到原版本。
+
+| 部署方式 | 更新程序 | 安装 |
+|---|---|---|
+| 源码（systemd） | `deploy/updater.sh`，由 `<服务名>-updater.path` 监听触发，root 运行；git 仓库用 fetch + fast-forward，否则下载源码包覆盖（不动账号、数据库、视频、dola.env） | `install.sh` 自动安装；已部署的服务器执行 `sudo bash deploy/install-updater.sh` |
+| Docker | `docker-compose.yml` 里的 `updater` 服务（`docker:27-cli`，挂 docker.sock）：改写同目录 `.env` 的 `DOLA_IMAGE_TAG`，`docker compose pull` + `up -d` | 用新版 compose 文件，在其所在目录执行 `docker compose up -d` |
+
+注意：
+
+- 只能更新到 GitHub 上的最新正式版；源码部署的代码目录有未提交改动或本地提交时会拒绝更新（不改动任何文件）。
+- 等任务清空最长 `DOLA_UPDATE_IDLE_TIMEOUT`（默认 1800 秒），超时放弃本次更新；放行后更新程序 `DOLA_UPDATE_AGENT_TIMEOUT`（默认 600 秒）内没开始也会放弃并恢复派单。
+- Docker 的 updater 挂 docker.sock，等同于宿主机 root 权限；不需要一键更新可以删掉 compose 里的 `updater` 服务，改用手动 `docker compose pull && docker compose up -d`。
+- 备份位置：源码部署 `/opt/dola-pool-backups/update-<旧>-to-<新>-<时间>/`（代码 + 数据库）；Docker `data/backups/update-<时间>/`（数据库）。
+
 ### 视频超分（1080p）
 
 管理后台左侧点击 **视频超分**，选择 fal（字节官方超分，1080p 每秒 $0.0072）或自建开源模型服务，填好密钥 / 地址后，

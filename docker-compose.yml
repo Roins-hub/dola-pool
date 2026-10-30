@@ -1,9 +1,11 @@
-# docker compose up -d   启动；docker compose pull && docker compose up -d   升级
+# docker compose up -d   启动；面板「版本」里可一键更新，也可以手动：docker compose pull && docker compose up -d
 # 配置照 deploy/dola.env.example 写一份 dola.env 放在本文件旁边；数据都在 ./data（账号、数据库、成片）。
+# 请在本文件所在目录执行 docker compose（updater 用 ${PWD} 找到项目目录）。
 services:
   dola-pool:
-    image: ghcr.io/roins-hub/dola-pool:latest
-    # 想用本地代码构建镜像就把上一行注释掉、打开下一行：
+    # 版本由同目录 .env 里的 DOLA_IMAGE_TAG 决定（一键更新会改写它）；不设置时用 latest
+    image: ghcr.io/roins-hub/dola-pool:${DOLA_IMAGE_TAG:-latest}
+    # 想用本地代码构建镜像就把上一行注释掉、打开下一行（此时一键更新不可用）：
     # build: .
     container_name: dola-pool
     restart: unless-stopped
@@ -13,4 +15,19 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - ./data:/data
+
+  # 面板一键更新的执行程序：等 app 清空任务后换镜像、重启、验证，失败自动回滚。
+  # 挂 docker.sock 等同于宿主机 root 权限；不需要一键更新可以删掉整个 updater 服务。
+  updater:
+    image: docker:27-cli
+    container_name: dola-pool-updater
+    restart: unless-stopped
+    depends_on:
+      - dola-pool
+    working_dir: ${PWD}
+    entrypoint: ["sh", "${PWD}/docker/updater.sh"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD}:${PWD}
       - ./data:/data

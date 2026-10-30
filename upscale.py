@@ -17,8 +17,8 @@ import aiohttp
 
 import config
 
-PROVIDERS = ("fal", "open")
-PROVIDER_LABELS = {"fal": "fal（字节超分）", "open": "自建开源模型"}
+PROVIDERS = ("fal", "open", "custom")
+PROVIDER_LABELS = {"fal": "fal（字节超分）", "open": "自建开源模型", "custom": "自定义 API"}
 FAL_QUEUE = "https://queue.fal.run"
 FAL_MODEL = os.getenv("DOLA_FAL_UPSCALE_MODEL", "fal-ai/bytedance-upscaler/upscale/video")
 FAL_PRICE_PER_SECOND = 0.0072          # 1080p / 30fps / standard（fal 模型页，2026-10）
@@ -37,8 +37,51 @@ DEFAULTS = {
     "open_token": os.getenv("DOLA_UPSCALE_OPEN_TOKEN", "").strip(),
     # link：/v/<任务>-1080p.mp4 302 到服务商的结果地址；download：下载到服务器再提供
     "delivery": os.getenv("DOLA_UPSCALE_DELIVERY", "download").strip() or "download",
+    # 自定义 API：任意「提交 → 轮询」或「同步返回」的 HTTP JSON 接口，按字段路径取值（见 UPSCALE.md）
+    "custom_name": "",
+    "custom_submit_url": "",
+    "custom_headers": "",          # JSON 对象，如 {"Authorization": "Bearer sk-..."}；按密钥处理
+    "custom_body": "",             # JSON 模板，占位符 {{video_url}} {{target}} {{duration}} {{task_id}}
+    "custom_target_map": "",       # 目标分辨率改名，如 1080p=1080p,2k=2K,4k=4K
+    "custom_id_path": "",          # 提交响应里任务 ID 的路径；留空 = 同步接口，结果直接在提交响应里
+    "custom_poll_url": "",         # 查询地址，{{id}} 换成任务 ID
+    "custom_status_path": "",
+    "custom_success": "success,succeeded,completed,done",
+    "custom_failed": "failed,failure,error,cancelled",
+    "custom_result_path": "",
+    "custom_error_path": "",
+    "custom_code_path": "",        # 业务码路径（HTTP 200 但业务失败的接口用），如 code
+    "custom_code_ok": "0",
 }
-SECRET_FIELDS = ("fal_key", "open_token")
+SECRET_FIELDS = ("fal_key", "open_token", "custom_headers")
+URL_FIELDS = ("open_endpoint", "custom_submit_url", "custom_poll_url")
+
+# 面板「填入模板」：已核对文档的现成服务。密钥写在请求头里，填完把 sk-... 换成自己的。
+CUSTOM_PRESETS = {
+    "apiverse": {
+        "custom_name": "Apiverse",
+        "custom_submit_url": "https://api.apiverse.ai/api/v2/open/aigc/super-resolution",
+        "custom_headers": '{"Authorization": "Bearer 你的 Apiverse Token"}',
+        "custom_body": '{"videoUrl": "{{video_url}}", "quality": "{{target}}", "duration": "{{duration}}", '
+                       '"taskNickname": "{{task_id}}"}',
+        "custom_target_map": "", "custom_id_path": "data.taskId",
+        "custom_poll_url": "https://api.apiverse.ai/api/v2/open/aigc/{{id}}",
+        "custom_status_path": "data.status", "custom_success": "success", "custom_failed": "failed",
+        "custom_result_path": "data.result.0", "custom_error_path": "data.errorMsg",
+        "custom_code_path": "code", "custom_code_ok": "0",
+    },
+    "apibobo": {
+        "custom_name": "波波 API",
+        "custom_submit_url": "https://apibobo.com/v1/tools/run",
+        "custom_headers": '{"Authorization": "Bearer sk-你的波波Key"}',
+        "custom_body": '{"provider": "video", "endpoint": "/super-resolution", '
+                       '"input": {"video": "{{video_url}}", "resolution": "{{target}}"}}',
+        "custom_target_map": "1080p=1080p,2k=2K,4k=4K", "custom_id_path": "",
+        "custom_poll_url": "", "custom_status_path": "", "custom_success": "success,succeeded,completed,done",
+        "custom_failed": "failed,failure,error,cancelled",
+        "custom_result_path": "out", "custom_error_path": "error", "custom_code_path": "", "custom_code_ok": "0",
+    },
+}
 
 
 class UpscaleError(RuntimeError):
@@ -75,10 +118,19 @@ def save_settings(store, patch: dict) -> dict:
             raise UpscaleError(f"fal_preset 只能是 {', '.join(PRESETS)}")
         if key == "delivery" and value not in ("link", "download"):
             raise UpscaleError("delivery 只能是 link 或 download")
-        if key == "open_endpoint":
-            value = value.rstrip("/")
+        if key in URL_FIELDS:
+            value = value.rstrip("/") if key == "open_endpoint" else value
             if value and not value.startswith(("http://", "https://")):
-                raise UpscaleError("自建模型地址必须以 http:// 或 https:// 开头")
+                raise UpscaleError(f"{key} 必须以 http:// 或 https:// 开头")
+        if key in ("custom_headers", "custom_body") and value:
+            try:
+                parsed = json.loads(value)
+            except ValueError as exc:
+                raise UpscaleError(f"{key} 不是合法的 JSON：{exc}") from exc
+            if not isinstance(parsed, dict):
+                raise UpscaleError(f"{key} 必须是 JSON 对象")
+            if key == "custom_headers" and not all(isinstance(v, str) for v in parsed.values()):
+                raise UpscaleError("custom_headers 的值必须都是字符串")
         current[key] = value
     store.set_setting(SETTINGS_KEY, json.dumps(current, ensure_ascii=False))
     return current
@@ -88,12 +140,25 @@ def _mask(secret: str) -> str:
     return ("••••" + secret[-4:]) if len(secret) > 8 else ("••••" if secret else "")
 
 
+def _headers_hint(raw: str) -> str:
+    """自定义请求头只显示名字（值里通常是密钥）。"""
+    try:
+        names = list(json.loads(raw or "{}"))
+    except ValueError:
+        return ""
+    return "、".join(names)
+
+
 def public_settings(settings: dict) -> dict:
     """给面板看的配置：密钥只给是否已设置和末 4 位。"""
     out = {k: v for k, v in settings.items() if k not in SECRET_FIELDS}
     for key in SECRET_FIELDS:
         out[f"{key}_set"] = bool(settings.get(key))
-        out[f"{key}_hint"] = _mask(settings.get(key) or "")
+        out[f"{key}_hint"] = (_headers_hint(settings.get(key) or "") if key == "custom_headers"
+                              else _mask(settings.get(key) or ""))
+    out["custom_presets"] = {name: {k: v for k, v in preset.items() if k != "custom_headers"}
+                             | {"custom_headers_example": preset["custom_headers"]}
+                             for name, preset in CUSTOM_PRESETS.items()}
     out["ready"] = {p: not missing_config(settings, p) for p in PROVIDERS}
     out["providers"] = [{"id": p, "label": PROVIDER_LABELS[p]} for p in PROVIDERS]
     out["fal_price_per_second"] = FAL_PRICE_PER_SECOND
@@ -107,6 +172,14 @@ def missing_config(settings: dict, provider: str) -> str:
         return "" if settings.get("fal_key") else "没有填写 fal API Key"
     if provider == "open":
         return "" if settings.get("open_endpoint") else "没有填写自建超分服务地址"
+    if provider == "custom":
+        if not settings.get("custom_submit_url") or not settings.get("custom_body"):
+            return "自定义 API 还没有填写提交地址和请求体"
+        if settings.get("custom_id_path") and not (settings.get("custom_poll_url") and settings.get("custom_status_path")):
+            return "自定义 API 是异步接口，还缺查询地址或状态字段路径"
+        if not settings.get("custom_result_path"):
+            return "自定义 API 还没有填写结果地址的字段路径"
+        return ""
     return f"未知的超分服务商 {provider}"
 
 
@@ -138,12 +211,15 @@ async def _json_or_error(resp, what: str) -> dict:
     return data
 
 
-async def submit(settings: dict, provider: str, source_url: str, *, fps: float | None = None) -> dict:
+async def submit(settings: dict, provider: str, source_url: str, *, fps: float | None = None,
+                 duration: float | None = None, task_id: str = "") -> dict:
     """提交一条超分任务，返回可存库的 job 状态（不含密钥）。"""
     problem = missing_config(settings, provider)
     if problem:
         raise UpscaleError(problem)
     target = settings.get("target") or "1080p"
+    if provider == "custom":
+        return await _custom_submit(settings, source_url, target, duration, task_id)
     if provider == "fal":
         payload = {
             "video_url": source_url,
@@ -182,6 +258,8 @@ def _open_headers(settings: dict) -> dict:
 
 async def poll(settings: dict, job: dict) -> dict:
     """查一次：{"state": pending|completed|failed, "url", "error", "billed_seconds", "size"}。"""
+    if job.get("provider") == "custom":
+        return await _custom_poll(settings, job)
     if job.get("provider") == "fal":
         headers = {"Authorization": f"Key {settings.get('fal_key') or ''}"}
         async with aiohttp.ClientSession(timeout=_timeout()) as session:
@@ -218,6 +296,116 @@ async def poll(settings: dict, job: dict) -> dict:
                 "billed_seconds": data.get("duration")}
     if state in ("failed", "error", "cancelled"):
         return {"state": "failed", "error": f"自建超分服务：{str(data.get('error') or state)[:300]}"}
+    return {"state": "pending"}
+
+
+# ---------------------------------------------------------------- 自定义 API
+
+def json_path(data, path: str):
+    """按 a.b.0.c 取值；取不到返回 None。"""
+    cur = data
+    for part in [p for p in (path or "").split(".") if p != ""]:
+        if isinstance(cur, list) and part.isdigit() and int(part) < len(cur):
+            cur = cur[int(part)]
+        elif isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        else:
+            return None
+    return cur
+
+
+def _target_name(settings: dict, target: str) -> str:
+    for pair in (settings.get("custom_target_map") or "").split(","):
+        key, _, value = pair.partition("=")
+        if key.strip().lower() == target.lower() and value.strip():
+            return value.strip()
+    return target
+
+
+def render_template(template: str, values: dict):
+    """JSON 模板填值：整个字符串就是 "{{duration}}" 时换成原类型（数字），其余按文本替换。"""
+    def walk(node):
+        if isinstance(node, dict):
+            return {k: walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        if isinstance(node, str):
+            for name, value in values.items():
+                token = "{{" + name + "}}"
+                if node == token:
+                    return value
+                node = node.replace(token, str(value))
+        return node
+    return walk(json.loads(template))
+
+
+def _custom_headers(settings: dict) -> dict:
+    headers = json.loads(settings.get("custom_headers") or "{}")
+    return {"Content-Type": "application/json", **headers}
+
+
+def _custom_check_code(settings: dict, data: dict, what: str) -> None:
+    path = settings.get("custom_code_path")
+    if not path:
+        return
+    code = json_path(data, path)
+    if str(code) != str(settings.get("custom_code_ok") or "0"):
+        message = json_path(data, settings.get("custom_error_path") or "") or data.get("msg") or data.get("message")
+        raise UpscaleError(f"{what} 业务码 {code}：{str(message or '')[:200]}")
+
+
+def _custom_words(raw: str) -> set[str]:
+    return {w.strip().lower() for w in (raw or "").split(",") if w.strip()}
+
+
+def _custom_result(settings: dict, data: dict, what: str) -> dict:
+    url = json_path(data, settings.get("custom_result_path") or "")
+    if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        raise UpscaleError(f"{what} 里按 {settings.get('custom_result_path')} 取不到视频地址")
+    return {"state": "completed", "url": url, "size": None, "billed_seconds": None}
+
+
+async def _custom_submit(settings: dict, source_url: str, target: str, duration: float | None,
+                         task_id: str) -> dict:
+    body = render_template(settings["custom_body"], {
+        "video_url": source_url, "target": _target_name(settings, target),
+        "duration": max(1, int(-(-float(duration or 0) // 1))) if duration else 60, "task_id": task_id})
+    sync = not settings.get("custom_id_path")
+    async with aiohttp.ClientSession(timeout=_timeout(900 if sync else 60)) as session:
+        async with session.post(settings["custom_submit_url"], json=body, headers=_custom_headers(settings)) as resp:
+            data = await _json_or_error(resp, "自定义 API 提交")
+    _custom_check_code(settings, data, "自定义 API 提交")
+    if sync:   # 同步接口：结果直接在提交响应里
+        return {"provider": "custom", "result": _custom_result(settings, data, "自定义 API 提交响应")}
+    job_id = json_path(data, settings["custom_id_path"])
+    if job_id in (None, ""):
+        raise UpscaleError(f"自定义 API 提交响应里按 {settings['custom_id_path']} 取不到任务 ID")
+    return {"provider": "custom", "id": str(job_id)}
+
+
+async def _custom_poll(settings: dict, job: dict) -> dict:
+    if job.get("result"):
+        return job["result"]
+    if not settings.get("custom_poll_url"):
+        return {"state": "failed", "error": "自定义 API 的查询地址已被清空，无法继续查询"}
+    from urllib.parse import quote
+    url = settings["custom_poll_url"].replace("{{id}}", quote(job["id"], safe=""))
+    async with aiohttp.ClientSession(timeout=_timeout()) as session:
+        async with session.get(url, headers=_custom_headers(settings)) as resp:
+            data = await _json_or_error(resp, "自定义 API 查询")
+    try:
+        _custom_check_code(settings, data, "自定义 API 查询")
+    except UpscaleError as exc:
+        return {"state": "failed", "error": str(exc)}
+    state = str(json_path(data, settings.get("custom_status_path") or "") or "").lower()
+    if state in _custom_words(settings.get("custom_success")):
+        try:
+            return _custom_result(settings, data, "自定义 API 查询结果")
+        except UpscaleError as exc:
+            return {"state": "failed", "error": str(exc)}
+    if state in _custom_words(settings.get("custom_failed")):
+        error = json_path(data, settings.get("custom_error_path") or "") or state
+        return {"state": "failed", "error": f"自定义 API：{str(error)[:300]}"}
     return {"state": "pending"}
 
 

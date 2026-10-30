@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 面板一键更新：侧栏「版本」显示当前版本，GitHub 有新正式版时提示并可由 owner 一键更新。更新时暂停派新单（新任务排队、不计排队超时），等生成中的任务和后台作业完成后由外部更新程序备份、换版本、重启并核对 `/health` 版本号，失败自动回滚。源码部署用 `deploy/updater.sh`（systemd path 单元触发，`install.sh` 自动安装，已部署的执行 `deploy/install-updater.sh`）；Docker 用 compose 里的 `updater` 服务改写 `.env` 的 `DOLA_IMAGE_TAG` 后 pull + up。镜像版本改由 `DOLA_IMAGE_TAG` 控制。
+- 视频超分新增「自定义 API」服务商：在面板里填提交地址、请求头（JSON，按密钥处理）、请求体模板（`{{video_url}}` `{{target}}` `{{duration}}` `{{task_id}}`）和任务 ID / 状态 / 结果 / 错误 / 业务码的字段路径，支持异步轮询和同步返回；内置 Apiverse、波波 API 模板。七牛需要先存进其存储空间，说明见 UPSCALE.md。
 - 视频超分：管理面板新增「视频超分」设置，可选 fal（字节官方超分 `fal-ai/bytedance-upscaler/upscale/video`，AI 视频预设，1080p 每秒 $0.0072）或自建开源模型服务；任务列表 / 视频管理对已完成的视频一键超分到 1080p / 2K / 4K，fal 发起前确认预计费用。结果默认下载到服务器，以 `/v/<任务>-1080p.mp4` 提供（可选直链到服务商），客户 API 新增 `video_url_hd`。服务重启后接着查询、不重复提交；失败记录原因可重试。自建模型的接口约定与 Modal + Real-ESRGAN 示例见 UPSCALE.md。
 - 出片后取 H.264 高码率原片失败时，经同一账号代理重试 3 次（`DOLA_HIGH_BITRATE_ATTEMPTS`）并记录原因；以前只试一次，13 条里 2 条退回了 0.4 MB/5 秒的低码率源并失去直链交付。
 - 测试生成走下载交付时也记录时长、分辨率和码率。

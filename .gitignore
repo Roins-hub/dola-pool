@@ -16,6 +16,9 @@ accounts/
 downloads/
 refs/
 
+# --- one-click update hand-off files (updater.py) ---
+update/
+
 # --- probe / debug artifacts (contain live session snippets) ---
 /*.html
 /*.png

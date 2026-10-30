@@ -19,6 +19,7 @@
 #   DOLA_USER         运行服务的系统用户，默认执行 sudo 的那个用户（没有则 root）
 #   DOLA_DISPLAY      Xvfb 虚拟显示编号，默认 99（和已有 Xvfb 冲突时改掉）
 #   DOLA_VERSION      用法二时拉取的 Git 标签/分支，默认 main
+#                     装好后可在管理面板「版本」里一键更新到新的正式版（deploy/install-updater.sh）
 #   DOLA_REPO         用法二时的仓库地址
 #
 # 重复执行 = 升级：会更新代码和依赖，但保留 dola.env、账号、数据库、视频等全部数据。
@@ -245,6 +246,13 @@ for _ in $(seq 1 30); do
 done
 [ "$ok" = 1 ] || die "服务没起来，查看日志：journalctl -u ${DOLA_SERVICE} -n 80 --no-pager"
 c_ok "服务运行中"
+
+# ---------------------------------------------------------------- 8. 面板一键更新
+if DOLA_DIR="$DOLA_DIR" DOLA_SERVICE="$DOLA_SERVICE" bash "$DOLA_DIR/deploy/install-updater.sh"; then
+  :
+else
+  c_warn "一键更新程序安装失败，面板里的「更新」不可用（可稍后执行 sudo bash $DOLA_DIR/deploy/install-updater.sh）"
+fi
 
 cat <<EOF
 
