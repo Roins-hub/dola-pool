@@ -290,6 +290,7 @@ Authorization: Bearer <API_KEY>
 | `status` | `queued` / `processing` / `completed` / `failed` |
 | `video_url` | 仅 `completed` 时有值；指向**本服务转存**的静态文件（稳定地址，不是 dola 临时 CDN） |
 | `error` | 仅 `failed` 时有值，是最末一次失败的原因（最多 500 字） |
+| `video_url_hd` | 管理员对这条视频做过超分后的高清地址（`/v/<id>-1080p.mp4`，2K / 4K 为 `-2k` / `-4k`）；没有超分时为 `null`。见 [UPSCALE.md](UPSCALE.md) |
 
 **只能查到自己 Key 创建的任务**；别人的 task_id 一律 `404 task not found`。
 
@@ -660,6 +661,8 @@ dola 自 2026-10-12 起对 30 秒请求回「只支持 4～15 秒，按 15 秒�
 | GET | `/api/admin/tasks?limit=50` | 最近任务（上限 200） |
 | GET | `/api/admin/videos` | 出片列表 |
 | DELETE | `/api/admin/videos/{task_id}` | 删任务记录并删本地文件 |
+| GET / PATCH | `/api/admin/settings/upscale` | 视频超分设置（fal / 自建开源模型；密钥只回末 4 位） |
+| POST | `/api/admin/tasks/{task_id}/upscale` | 对已完成的视频发起超分，见 [UPSCALE.md](UPSCALE.md) |
 | GET | `/api/admin/stats` | 总览统计（按账号/按 Key 用量） |
 | GET | `/api/admin/stress` | 压测状态 |
 | POST | `/api/admin/stress` | 启动压测 |

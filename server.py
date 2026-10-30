@@ -26,7 +26,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,7 @@ import failure_text
 from account_transport import redact_error
 import proxy_store
 import sites
+import upscale
 import video_link
 from prompt_context import reference_supplement, submission_prompt
 from add_account import add_account_flow
@@ -400,6 +401,8 @@ class TaskResponse(BaseModel):
     # 排队/进度说明：客户端可以拿它显示「排队中，预计 N 分钟」。
     # 字段是附加的（老客户端忽略即可，不影响原有 status/video_url 语义）。
     progress: dict | None = None
+    # 管理员对这条视频做过超分（upscale.py）后的高清地址；没有超分时为 null。
+    video_url_hd: str | None = None
 
 
 def _eta_text(seconds: int) -> str:
@@ -1127,6 +1130,11 @@ async def resume_incomplete_tasks():
         print(f"[startup] 接上 {len(watching)} 个超时任务的后台自动取回", flush=True)
     for row in watching:
         asyncio.create_task(_recover_loop(row["id"]))
+    upscaling = store.upscale_unfinished()
+    if upscaling:
+        print(f"[startup] 接着查 {len(upscaling)} 个超分任务", flush=True)
+    for row in upscaling:
+        asyncio.create_task(_run_upscale(row["id"]))
     asyncio.create_task(_cred_refresher_loop())
     asyncio.create_task(_daily_quota_reset_loop())
     asyncio.create_task(_task_watchdog_loop())
@@ -1535,8 +1543,12 @@ async def video_short_link(name: str):
     """Link-delivered video: 302 to the upstream CDN, re-signed shortly before it expires.
 
     Public like /videos/<file>: the unguessable task id is the capability. No bytes pass through.
+    `<task>-1080p.mp4`（或 -2k / -4k）是超分结果。
     """
     task_id = name[:-4] if name.endswith(".mp4") else name
+    hd = _UPSCALE_NAME.match(task_id)
+    if hd:
+        return _upscaled_video(hd["id"], hd["target"])
     row = store.get(task_id)
     if not row or row.get("status") != "completed" or not row.get("video_link"):
         raise HTTPException(404, "video not found")
@@ -1544,6 +1556,180 @@ async def video_short_link(name: str):
     if not link:
         raise HTTPException(502, "upstream video link unavailable")
     return RedirectResponse(link, status_code=302, headers={"Cache-Control": "private, max-age=60"})
+
+
+# ---------------------------------------------------------------- 视频超分（upscale.py）
+
+_UPSCALE_NAME = re.compile(r"^(?P<id>[A-Za-z0-9_]+)-(?P<target>1080p|2k|4k)$")
+_LOCAL_BASE = re.compile(r"//(127\.0\.0\.1|localhost|0\.0\.0\.0)[:/]")
+UPSCALE_SEM = asyncio.Semaphore(max(1, config.UPSCALE_CONCURRENCY))
+UPSCALING: set[str] = set()
+
+
+def _upscale_public_url(row: dict) -> str | None:
+    if row.get("upscale_status") != "completed":
+        return None
+    return upscale.public_url(row["id"], row.get("upscale_target"))
+
+
+def _upscaled_video(task_id: str, target: str):
+    row = store.get(task_id)
+    if (not row or row.get("upscale_status") != "completed"
+            or (row.get("upscale_target") or "1080p") != target):
+        raise HTTPException(404, "video not found")
+    if row.get("upscale_file"):
+        path = Path(config.DOWNLOAD_DIR) / Path(row["upscale_file"]).name
+        if path.is_file():
+            return FileResponse(path, media_type="video/mp4")
+    if row.get("upscale_url"):
+        return RedirectResponse(row["upscale_url"], status_code=302,
+                                headers={"Cache-Control": "private, max-age=60"})
+    raise HTTPException(410, "upscaled video removed")
+
+
+async def _upscale_source(row: dict) -> str:
+    """交给超分服务的原片地址：直链交付用现签的上游 H.264 原片，下载交付用本服务的 /videos/ 地址。"""
+    if row.get("video_link"):
+        link = await video_link.current_link(row, store)
+        if link:
+            return link
+        raise upscale.UpscaleError("上游直链已失效且无法续签，拿不到原片")
+    name = Path(row.get("video_url") or "").name
+    if name and (Path(config.DOWNLOAD_DIR) / name).is_file():
+        base = config.PUBLIC_BASE
+        if _LOCAL_BASE.search(base + "/"):
+            raise upscale.UpscaleError("DOLA_PUBLIC_BASE 是本机地址，外部超分服务取不到视频；请设置公网地址")
+        return f"{base}/videos/{name}"
+    raise upscale.UpscaleError("找不到原片（视频文件已删除）")
+
+
+async def _run_upscale(task_id: str) -> None:
+    """提交（若还没提交）→ 轮询 → 按设置下载或直链。服务重启后从存库的 job 接着查，不重复提交。"""
+    if task_id in UPSCALING:
+        return
+    UPSCALING.add(task_id)
+    try:
+        async with UPSCALE_SEM:
+            row = store.get(task_id)
+            if not row or row.get("upscale_status") not in ("queued", "processing"):
+                return
+            settings = upscale.load_settings(store)
+            job = json.loads(row.get("upscale_job") or "null")
+            if not job:
+                source = await _upscale_source(row)
+                job = await upscale.submit(settings, row.get("upscale_provider") or settings["provider"], source)
+                store.update(task_id, upscale_status="processing", upscale_job=json.dumps(job))
+            deadline = float(row.get("upscale_started_at") or time.time()) + config.UPSCALE_TIMEOUT
+            errors = 0
+            while True:
+                if time.time() > deadline:
+                    raise upscale.UpscaleError(f"超分超时：{config.UPSCALE_TIMEOUT}s 内没有结果")
+                try:
+                    result = await upscale.poll(upscale.load_settings(store), job)
+                    errors = 0
+                except (upscale.UpscaleError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                    errors += 1
+                    if errors >= 5:
+                        raise upscale.UpscaleError(f"连续 5 次查询失败：{str(exc)[:200]}") from exc
+                    await asyncio.sleep(10)
+                    continue
+                if result["state"] == "completed":
+                    break
+                if result["state"] == "failed":
+                    raise upscale.UpscaleError(result.get("error") or "超分失败")
+                await asyncio.sleep(config.UPSCALE_POLL_SECONDS)
+            target = row.get("upscale_target") or settings.get("target") or "1080p"
+            fields = {"upscale_status": "completed", "upscale_url": result["url"], "upscale_error": "",
+                      "upscale_size": result.get("size"), "upscale_seconds": result.get("billed_seconds"),
+                      "upscale_finished_at": time.time()}
+            if settings.get("delivery") == "download":
+                name = f"{task_id}-{target}.mp4"
+                try:
+                    fields["upscale_size"] = await upscale.download(
+                        result["url"], str(Path(config.DOWNLOAD_DIR) / name))
+                    fields["upscale_file"] = name
+                except upscale.UpscaleError as exc:
+                    # 服务商已经出片计费：下载失败就改为直链，不判失败
+                    fields["upscale_error"] = f"{exc}；改为直链交付"
+            store.update(task_id, **fields)
+    except asyncio.CancelledError:
+        raise
+    except upscale.UpscaleError as exc:
+        store.update(task_id, upscale_status="failed", upscale_error=str(exc)[:500],
+                     upscale_finished_at=time.time())
+    except Exception as exc:  # noqa: BLE001 - 任何异常都要落库，面板才看得到
+        store.update(task_id, upscale_status="failed",
+                     upscale_error=f"{type(exc).__name__}: {redact_error(exc)}"[:500],
+                     upscale_finished_at=time.time())
+    finally:
+        UPSCALING.discard(task_id)
+
+
+class UpscaleSettingsPatch(BaseModel):
+    provider: str | None = None
+    target: str | None = None
+    fal_key: str | None = None
+    fal_preset: str | None = None
+    open_endpoint: str | None = None
+    open_token: str | None = None
+    delivery: str | None = None
+
+
+class UpscaleRequest(BaseModel):
+    provider: str | None = None   # 不传 = 用设置里的默认服务商
+    force: bool = False           # 已超分过时重做（会再次计费）
+
+
+@app.get("/api/admin/settings/upscale")
+async def admin_upscale_settings(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return upscale.public_settings(upscale.load_settings(store))
+
+
+@app.patch("/api/admin/settings/upscale")
+async def admin_upscale_settings_save(body: UpscaleSettingsPatch, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    try:
+        saved = upscale.save_settings(store, body.model_dump(exclude_unset=True))
+    except upscale.UpscaleError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return upscale.public_settings(saved)
+
+
+@app.post("/api/admin/tasks/{task_id}/upscale")
+async def admin_task_upscale(task_id: str, body: UpscaleRequest, x_admin_key: str | None = Header(default=None)):
+    """对一条已完成的视频发起超分（异步）。fal 按输出秒数计费，前端发起前会确认。"""
+    _admin_auth(x_admin_key)
+    row = store.get(task_id)
+    if not row:
+        raise HTTPException(404, "task not found")
+    if row.get("status") != "completed" or not row.get("video_url"):
+        raise HTTPException(409, "只有已完成且视频还在的任务才能超分")
+    if row.get("upscale_status") in ("queued", "processing") or task_id in UPSCALING:
+        raise HTTPException(409, "这条视频正在超分")
+    if row.get("upscale_status") == "completed" and not body.force:
+        raise HTTPException(409, "这条视频已经超分过；要重做请确认后再提交（会再次计费）")
+    settings = upscale.load_settings(store)
+    provider = body.provider or settings["provider"]
+    if provider not in upscale.PROVIDERS:
+        raise HTTPException(422, f"provider 只能是 {', '.join(upscale.PROVIDERS)}")
+    problem = upscale.missing_config(settings, provider)
+    if problem:
+        raise HTTPException(400, f"{problem}：请先在「视频超分」设置里填写")
+    if row.get("upscale_file"):
+        try:
+            (Path(config.DOWNLOAD_DIR) / Path(row["upscale_file"]).name).unlink(missing_ok=True)
+        except OSError:
+            pass
+    store.update(task_id, upscale_status="queued", upscale_provider=provider,
+                 upscale_target=settings.get("target") or "1080p", upscale_job=None, upscale_url=None,
+                 upscale_file=None, upscale_error="", upscale_size=None, upscale_seconds=None,
+                 upscale_started_at=time.time(), upscale_finished_at=None)
+    asyncio.create_task(_run_upscale(task_id))
+    seconds = row.get("video_duration") or row.get("duration")
+    return {"ok": True, "status": "queued", "provider": provider,
+            "target": settings.get("target") or "1080p",
+            "estimated_cost_usd": upscale.estimate_cost(provider, seconds)}
 
 
 @app.get("/v1/videos/{task_id}", response_model=TaskResponse)
@@ -1557,6 +1743,7 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
         prompt=row["prompt"], video_url=row["video_url"], error=row["error"],
         progress=_progress_payload(status=row["status"], created_at=row["created_at"],
                                    duration=row["duration"]),
+        video_url_hd=_upscale_public_url(row),
     )
 
 
@@ -3269,6 +3456,8 @@ async def admin_tasks(limit: int = 50, q: str = "", x_admin_key: str | None = He
     tasks = store.search_tasks(q, limit) if q.strip() else store.recent_tasks(limit)
     for t in tasks:
         t.pop("video_model", None)   # 续签用的上游元数据，面板用不到且体积大
+        t.pop("upscale_job", None)
+        t["upscale_public_url"] = _upscale_public_url(t)
         # 排队中 / 生成中的任务带上预计耗时（与客户接口的 progress 同一口径：
         # 同时长近 3 天已完成任务的平均生成耗时，样本不足用兜底表）
         if t.get("status") in ("queued", "processing"):
@@ -3295,6 +3484,8 @@ async def admin_videos(limit: int = 100, q: str = "", x_admin_key: str | None = 
         else:
             local = None
         item.pop("video_model", None)
+        item.pop("upscale_job", None)
+        item["upscale_public_url"] = _upscale_public_url(item)
         if item.get("video_link"):
             item["file_exists"] = True
             item["file_size"] = item.get("video_size")
@@ -3327,6 +3518,11 @@ def _delete_task_files_and_record(row: dict) -> None:
         try:
             if local.exists():
                 local.unlink()
+        except OSError:
+            pass
+    if row.get("upscale_file"):
+        try:
+            (Path(config.DOWNLOAD_DIR) / Path(row["upscale_file"]).name).unlink(missing_ok=True)
         except OSError:
             pass
     delete_reference_thumbnails(_task_reference_thumbs(row.get("reference_thumbs")))

@@ -1,0 +1,251 @@
+"""视频超分（upscale.py + server 接口）：配置打码、fal / 自建模型的提交与轮询、后台执行、续查与交付。"""
+import json
+import time
+from pathlib import Path
+
+import pytest
+
+import upscale
+from test_task_deadline import _run
+
+
+class MemStore:
+    def __init__(self): self.settings = {}
+    def get_setting(self, key): return self.settings.get(key)
+    def set_setting(self, key, value): self.settings[key] = value
+
+
+# ---------------------------------------------------------------- 配置
+
+def test_settings_mask_secrets_and_keep_or_clear_them():
+    store = MemStore()
+    upscale.save_settings(store, {"provider": "fal", "fal_key": "fal-secret-key-1234"})
+    pub = upscale.public_settings(upscale.load_settings(store))
+    assert "fal_key" not in pub and pub["fal_key_set"] and pub["fal_key_hint"] == "••••1234"
+    assert pub["ready"] == {"fal": True, "open": False}
+    upscale.save_settings(store, {"fal_key": None, "delivery": "link"})       # None = 保持
+    assert upscale.load_settings(store)["fal_key"] == "fal-secret-key-1234"
+    upscale.save_settings(store, {"fal_key": ""})                             # 空字符串 = 清除
+    assert upscale.load_settings(store)["fal_key"] == ""
+    assert "secret" not in json.dumps(upscale.public_settings(upscale.load_settings(store)))
+
+
+@pytest.mark.parametrize("patch", [{"provider": "topaz"}, {"target": "8k"}, {"delivery": "ftp"},
+                                   {"open_endpoint": "gpu-box:8000"}, {"fal_preset": "anime"}])
+def test_invalid_settings_are_rejected(patch):
+    with pytest.raises(upscale.UpscaleError):
+        upscale.save_settings(MemStore(), patch)
+
+
+def test_cost_estimate_only_for_fal():
+    assert upscale.estimate_cost("fal", 10) == 0.072
+    assert upscale.estimate_cost("open", 10) is None
+
+
+# ---------------------------------------------------------------- 服务商（假 HTTP）
+
+class FakeResp:
+    def __init__(self, status, body): self.status, self.body = status, body
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): pass
+    async def text(self): return json.dumps(self.body)
+
+
+def fake_http(monkeypatch, replies):
+    """replies: [(method, url_substring, status, body)]，按顺序消费；记录请求。"""
+    calls = []
+    class Session:
+        def __init__(self, *a, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        def _reply(self, method, url, kw):
+            calls.append((method, url, kw))
+            want_method, part, status, body = replies.pop(0)
+            assert method == want_method and part in url, (method, url)
+            return FakeResp(status, body)
+        def post(self, url, **kw): return self._reply("POST", url, kw)
+        def get(self, url, **kw): return self._reply("GET", url, kw)
+    monkeypatch.setattr(upscale.aiohttp, "ClientSession", Session)
+    return calls
+
+
+FAL = {"provider": "fal", "target": "1080p", "fal_key": "k-123", "fal_preset": "aigc",
+       "fal_tier": "standard", "fal_fidelity": "high", "open_endpoint": "", "open_token": "", "delivery": "link"}
+
+
+def test_fal_submit_sends_aigc_1080p_at_source_fps(monkeypatch):
+    calls = fake_http(monkeypatch, [("POST", "queue.fal.run/fal-ai/bytedance-upscaler/upscale/video", 200,
+                                     {"request_id": "r1", "status_url": "https://queue.fal.run/x/requests/r1/status",
+                                      "response_url": "https://queue.fal.run/x/requests/r1"})])
+    job = _run(upscale.submit(FAL, "fal", "https://cdn/v.mp4"))
+    assert job == {"provider": "fal", "request_id": "r1", "status_url": "https://queue.fal.run/x/requests/r1/status",
+                   "response_url": "https://queue.fal.run/x/requests/r1"}
+    body, headers = calls[0][2]["json"], calls[0][2]["headers"]
+    assert body["video_url"] == "https://cdn/v.mp4" and body["target_resolution"] == "1080p"
+    assert body["target_fps"] == 24.0 and body["enhancement_preset"] == "aigc"
+    assert headers == {"Authorization": "Key k-123"} and "k-123" not in json.dumps(job)
+
+
+def test_fal_poll_pending_completed_and_failed(monkeypatch):
+    job = {"provider": "fal", "status_url": "https://q/s", "response_url": "https://q/r"}
+    fake_http(monkeypatch, [("GET", "q/s", 200, {"status": "IN_QUEUE", "queue_position": 2})])
+    assert _run(upscale.poll(FAL, job))["state"] == "pending"
+    fake_http(monkeypatch, [("GET", "q/s", 200, {"status": "COMPLETED"}),
+                            ("GET", "q/r", 200, {"video": {"url": "https://fal.media/out.mp4", "file_size": 9},
+                                                 "duration": 10.08})])
+    assert _run(upscale.poll(FAL, job)) == {"state": "completed", "url": "https://fal.media/out.mp4",
+                                            "size": 9, "billed_seconds": 10.08}
+    fake_http(monkeypatch, [("GET", "q/s", 200, {"status": "COMPLETED"}),
+                            ("GET", "q/r", 422, {"detail": [{"msg": "video too long"}]})])
+    failed = _run(upscale.poll(FAL, job))
+    assert failed["state"] == "failed" and "video too long" in failed["error"]
+
+
+def test_fal_rejected_submit_raises_with_detail(monkeypatch):
+    fake_http(monkeypatch, [("POST", "queue.fal.run", 401, {"detail": "Invalid key"})])
+    with pytest.raises(upscale.UpscaleError, match="401.*Invalid key"):
+        _run(upscale.submit(FAL, "fal", "https://cdn/v.mp4"))
+
+
+def test_open_provider_contract(monkeypatch):
+    cfg = {**FAL, "provider": "open", "open_endpoint": "https://gpu.example", "open_token": "tok"}
+    calls = fake_http(monkeypatch, [("POST", "gpu.example/v1/upscale", 200, {"id": "j9", "status": "queued"}),
+                                    ("GET", "gpu.example/v1/upscale/j9", 200, {"status": "processing"}),
+                                    ("GET", "gpu.example/v1/upscale/j9", 200,
+                                     {"status": "completed", "video_url": "https://gpu.example/o.mp4"})])
+    job = _run(upscale.submit(cfg, "open", "https://cdn/v.mp4"))
+    assert job == {"provider": "open", "id": "j9"}
+    assert calls[0][2]["headers"] == {"Authorization": "Bearer tok"}
+    assert _run(upscale.poll(cfg, job))["state"] == "pending"
+    assert _run(upscale.poll(cfg, job))["url"] == "https://gpu.example/o.mp4"
+
+
+def test_missing_config_blocks_submit():
+    with pytest.raises(upscale.UpscaleError, match="fal API Key"):
+        _run(upscale.submit({**FAL, "fal_key": ""}, "fal", "https://cdn/v.mp4"))
+
+
+# ---------------------------------------------------------------- 后台执行与接口
+
+@pytest.fixture
+def srv(tmp_path, monkeypatch):
+    import config
+    import server
+    from store import TaskStore
+    monkeypatch.setattr(server, "store", TaskStore(str(tmp_path / "tasks.db")))
+    monkeypatch.setattr(config, "DOWNLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "PUBLIC_BASE", "https://pool.example")
+    monkeypatch.setattr(config, "UPSCALE_POLL_SECONDS", 0)
+    monkeypatch.setattr(server, "_admin_auth", lambda key: None)
+    (tmp_path / "a.mp4").write_bytes(b"720p")
+    server.store.create("video_up1", "seedance-2.0-fast", "p", "16:9", 10)
+    server.store.update("video_up1", status="completed", video_url="https://pool.example/videos/a.mp4",
+                        video_duration=10.08)
+    upscale.save_settings(server.store, {"provider": "fal", "fal_key": "k-123", "delivery": "link"})
+    return server
+
+
+def _start(server, **body):
+    return _run(server.admin_task_upscale("video_up1", server.UpscaleRequest(**body)))
+
+
+def test_upscale_runs_to_completion_and_serves_the_hd_link(srv, monkeypatch):
+    submitted = []
+    async def submit(settings, provider, source, **kw):
+        submitted.append((provider, source))
+        return {"provider": "fal", "status_url": "s", "response_url": "r"}
+    replies = [{"state": "pending"}, {"state": "completed", "url": "https://fal.media/hd.mp4",
+                                      "size": 30, "billed_seconds": 10.08}]
+    async def poll(settings, job): return replies.pop(0)
+    monkeypatch.setattr(upscale, "submit", submit)
+    monkeypatch.setattr(upscale, "poll", poll)
+    async def scenario():
+        res = await srv.admin_task_upscale("video_up1", srv.UpscaleRequest())
+        assert res["status"] == "queued" and res["estimated_cost_usd"] == 0.0726
+        while srv.store.get("video_up1")["upscale_status"] in ("queued", "processing"):
+            await __import__("asyncio").sleep(0.01)
+    _run(scenario())
+    row = srv.store.get("video_up1")
+    assert submitted == [("fal", "https://pool.example/videos/a.mp4")]
+    assert row["upscale_status"] == "completed" and row["upscale_url"] == "https://fal.media/hd.mp4"
+    assert srv._upscale_public_url(row) == "https://pool.example/v/video_up1-1080p.mp4"
+    from fastapi.testclient import TestClient
+    client = TestClient(srv.app)
+    r = client.get("/v/video_up1-1080p.mp4", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "https://fal.media/hd.mp4"
+    assert client.get("/v/video_up1-4k.mp4", follow_redirects=False).status_code == 404
+    with pytest.raises(srv.HTTPException) as again:          # 已超分：不带 force 不重做（避免重复计费）
+        _start(srv)
+    assert again.value.status_code == 409
+
+
+def test_download_delivery_serves_the_local_file(srv, monkeypatch, tmp_path):
+    upscale.save_settings(srv.store, {"delivery": "download"})
+    async def submit(*a, **kw): return {"provider": "fal", "status_url": "s", "response_url": "r"}
+    async def poll(*a): return {"state": "completed", "url": "https://fal.media/hd.mp4"}
+    async def download(url, dest, **kw):
+        Path(dest).write_bytes(b"1080p-bytes")
+        return 11
+    monkeypatch.setattr(upscale, "submit", submit)
+    monkeypatch.setattr(upscale, "poll", poll)
+    monkeypatch.setattr(upscale, "download", download)
+    srv.store.update("video_up1", upscale_status="queued", upscale_provider="fal", upscale_target="1080p",
+                     upscale_started_at=time.time())
+    _run(srv._run_upscale("video_up1"))
+    row = srv.store.get("video_up1")
+    assert row["upscale_file"] == "video_up1-1080p.mp4" and row["upscale_size"] == 11
+    from fastapi.testclient import TestClient
+    r = TestClient(srv.app).get("/v/video_up1-1080p.mp4")
+    assert r.status_code == 200 and r.content == b"1080p-bytes"
+    srv._delete_task_files_and_record(srv.store.get("video_up1"))
+    assert not (tmp_path / "video_up1-1080p.mp4").exists()
+
+
+def test_failure_is_recorded_and_can_be_retried(srv, monkeypatch):
+    async def submit(*a, **kw): return {"provider": "fal", "status_url": "s", "response_url": "r"}
+    async def poll(*a): return {"state": "failed", "error": "fal：video too long"}
+    monkeypatch.setattr(upscale, "submit", submit)
+    monkeypatch.setattr(upscale, "poll", poll)
+    srv.store.update("video_up1", upscale_status="queued", upscale_provider="fal", upscale_started_at=time.time())
+    _run(srv._run_upscale("video_up1"))
+    row = srv.store.get("video_up1")
+    assert row["upscale_status"] == "failed" and "video too long" in row["upscale_error"]
+    async def noop(task_id): pass
+    monkeypatch.setattr(srv, "_run_upscale", noop)
+    assert _start(srv)["status"] == "queued"                 # 失败后可以直接重试
+
+
+def test_restart_resumes_polling_without_resubmitting(srv, monkeypatch):
+    async def submit(*a, **kw): raise AssertionError("must not resubmit a job that was already accepted")
+    async def poll(settings, job):
+        assert job == {"provider": "fal", "status_url": "s", "response_url": "r"}
+        return {"state": "completed", "url": "https://fal.media/hd.mp4"}
+    monkeypatch.setattr(upscale, "submit", submit)
+    monkeypatch.setattr(upscale, "poll", poll)
+    srv.store.update("video_up1", upscale_status="processing", upscale_provider="fal", upscale_started_at=time.time(),
+                     upscale_job=json.dumps({"provider": "fal", "status_url": "s", "response_url": "r"}))
+    assert [r["id"] for r in srv.store.upscale_unfinished()] == ["video_up1"]
+    _run(srv._run_upscale("video_up1"))
+    assert srv.store.get("video_up1")["upscale_status"] == "completed"
+
+
+def test_start_is_refused_until_the_provider_is_configured(srv):
+    upscale.save_settings(srv.store, {"fal_key": ""})
+    with pytest.raises(srv.HTTPException) as missing:
+        _start(srv)
+    assert missing.value.status_code == 400 and "fal API Key" in missing.value.detail
+    srv.store.update("video_up1", status="processing")
+    with pytest.raises(srv.HTTPException) as not_done:
+        _start(srv, provider="open")
+    assert not_done.value.status_code == 409
+
+
+def test_source_url_uses_the_fresh_upstream_link_or_rejects_a_local_base(srv, monkeypatch):
+    import config
+    import video_link
+    async def fresh(row, store): return "https://cdn.dola/fresh.mp4"
+    monkeypatch.setattr(video_link, "current_link", fresh)
+    assert _run(srv._upscale_source({"video_link": "old"})) == "https://cdn.dola/fresh.mp4"
+    monkeypatch.setattr(config, "PUBLIC_BASE", "http://127.0.0.1:8000")
+    with pytest.raises(upscale.UpscaleError, match="公网地址"):
+        _run(srv._upscale_source({"video_url": "http://127.0.0.1:8000/videos/a.mp4"}))

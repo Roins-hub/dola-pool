@@ -266,6 +266,8 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--border);ma
 .chart-legend .lg-bad{background:#e46a6f}
 .empty{padding:28px 4px;text-align:left;color:var(--muted)}
 .video-wrap{display:flex;gap:8px;align-items:center}
+.upscale-cell{margin-top:6px}
+.upscale-cell .tiny{display:block;max-width:240px;white-space:normal}
 .tiny{font-size:12.5px;color:var(--muted)}
 .err{display:inline-block;max-width:420px;white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.6;color:var(--negative)}
 .note{display:inline-block;max-width:300px;white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.6;color:var(--muted);cursor:pointer}
@@ -344,6 +346,7 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--border);ma
     <span id="lastUpdate"></span>
     <button class="btn" onclick="refresh()">刷新</button>
     <button class="btn" onclick="openConcurrencySettings()">全局并发</button>
+    <button class="btn" onclick="openUpscaleSettings()">视频超分</button>
     <button class="btn btn-p" onclick="openStress()">压力测试</button>
     <button class="btn btn-danger" onclick="logout()" title="清除面板密码">注销</button>
     <select class="lang-sel" data-i18n-switcher aria-label="Language"></select>
@@ -635,6 +638,114 @@ async function saveConcurrencySettings(){
     refresh();
   }catch(e){if(epoch===dialogEpoch&&e.message!=='unauthorized')feedback.textContent='保存失败：'+e.message;}
   finally{if(epoch===dialogEpoch){button.disabled=false;input.disabled=false;}}
+}
+
+/* ---- 视频超分：fal（字节超分）或自建开源模型；在任务列表 / 视频管理里对已完成的视频发起 ---- */
+async function openUpscaleSettings(){
+  showDlg(`<h2>视频超分</h2><p class="hint">正在读取超分设置…</p>`);
+  const epoch=dialogEpoch;
+  try{
+    const c=await api('/api/admin/settings/upscale');
+    if(epoch!==dialogEpoch)return;
+    const opt=(v,label,cur)=>`<option value="${v}" ${v===cur?'selected':''}>${label}</option>`;
+    const price=c.fal_price_per_second;
+    showDlg(`<h2>视频超分</h2>
+      <p class="hint">把已完成的 720p 视频放大到更高分辨率。在任务列表或视频管理里点「超分」发起，完成后多出一个高清地址。</p>
+      <label for="upProvider">默认服务</label>
+      <select id="upProvider" onchange="upscaleProviderView()">${opt('fal','fal（字节超分，按秒计费）',c.provider)}${opt('open','自建开源模型（云端 GPU）',c.provider)}</select>
+      <div id="upFal">
+        <label for="upFalKey">fal API Key</label>
+        <input id="upFalKey" type="password" autocomplete="off" placeholder="${c.fal_key_set?`已保存 ${c.fal_key_hint}，留空不修改`:'在 fal.ai 控制台创建'}">
+        <label for="upPreset">增强预设</label>
+        <select id="upPreset">${opt('aigc','AI 生成视频（推荐）',c.fal_preset)}${opt('general','通用',c.fal_preset)}${opt('ugc','用户拍摄短视频',c.fal_preset)}</select>
+        <p class="hint">价格：1080p 每秒 $${price}，10 秒约 $${(price*10).toFixed(2)}；失败不计费。2K / 4K 分别是 2 倍 / 4 倍价格。</p>
+      </div>
+      <div id="upOpen">
+        <label for="upEndpoint">服务地址</label>
+        <input id="upEndpoint" type="url" placeholder="https://your-gpu-service.example" value="${esc(c.open_endpoint||'')}">
+        <label for="upToken">访问令牌（可选）</label>
+        <input id="upToken" type="password" autocomplete="off" placeholder="${c.open_token_set?`已保存 ${c.open_token_hint}，留空不修改`:'服务要求时填写'}">
+        <p class="hint">接口约定和部署示例见项目里的 UPSCALE.md（Real-ESRGAN 等开源模型）。</p>
+      </div>
+      <label for="upTarget">目标分辨率</label>
+      <select id="upTarget">${opt('1080p','1080p',c.target)}${opt('2k','2K',c.target)}${opt('4k','4K',c.target)}</select>
+      <label for="upDelivery">交付方式</label>
+      <select id="upDelivery">${opt('download','下载到服务器（推荐，链接长期有效）',c.delivery)}${opt('link','直链到服务商（不占服务器流量，链接可能过期）',c.delivery)}</select>
+      <p id="upFeedback" class="hint" role="status" aria-live="polite"></p>
+      <div class="row"><button class="btn" onclick="hide('dlg')">关闭</button><button id="upSave" class="btn btn-p" onclick="saveUpscaleSettings()">保存</button></div>`);
+    upscaleProviderView();
+  }catch(e){
+    if(epoch===dialogEpoch&&e.message!=='unauthorized')showDlg(`<h2>视频超分</h2><p role="alert">${esc(e.message)}</p><button class="btn" onclick="openUpscaleSettings()">重试</button>`);
+  }
+}
+
+function upscaleProviderView(){
+  const p=q('#upProvider')&&q('#upProvider').value;
+  if(q('#upFal'))q('#upFal').style.display=p==='fal'?'':'none';
+  if(q('#upOpen'))q('#upOpen').style.display=p==='open'?'':'none';
+}
+
+async function saveUpscaleSettings(){
+  const button=q('#upSave'),feedback=q('#upFeedback');
+  if(!button||button.disabled)return;
+  const body={provider:q('#upProvider').value,target:q('#upTarget').value,delivery:q('#upDelivery').value,
+    fal_preset:q('#upPreset').value,open_endpoint:q('#upEndpoint').value.trim()};
+  const falKey=q('#upFalKey').value.trim(),token=q('#upToken').value.trim();
+  if(falKey)body.fal_key=falKey;      // 留空 = 不修改已保存的密钥
+  if(token)body.open_token=token;
+  const epoch=dialogEpoch;
+  button.disabled=true;feedback.textContent='正在保存…';
+  try{
+    const c=await api('/api/admin/settings/upscale',{method:'PATCH',body});
+    if(epoch!==dialogEpoch)return;
+    q('#upFalKey').value='';q('#upToken').value='';
+    if(c.fal_key_set)q('#upFalKey').placeholder=`已保存 ${c.fal_key_hint}，留空不修改`;
+    if(c.open_token_set)q('#upToken').placeholder=`已保存 ${c.open_token_hint}，留空不修改`;
+    feedback.textContent=c.ready[c.provider]?'已保存，可以在任务列表里发起超分。'
+      :(c.provider==='fal'?'已保存，但还没有 fal API Key，暂时不能超分。':'已保存，但还没有填写服务地址，暂时不能超分。');
+    refresh();
+  }catch(e){if(epoch===dialogEpoch&&e.message!=='unauthorized')feedback.textContent='保存失败：'+e.message;}
+  finally{if(epoch===dialogEpoch)button.disabled=false;}
+}
+
+/** 任务 / 视频行里的超分状态与按钮（只对已完成、视频还在的任务显示） */
+function upscaleCell(t){
+  if(t.status!=='completed'||!t.video_url)return '';
+  const st=t.upscale_status||'';
+  const secs=Math.max(1,Math.round(t.video_duration||t.duration||10));
+  const start='<button class="btn" onclick="startUpscale(\''+esc(t.id)+'\','+secs+')">';
+  if(st==='queued'||st==='processing')
+    return '<div class="upscale-cell"><span class="badge b-blue">超分中</span></div>';
+  if(st==='completed'&&t.upscale_public_url){
+    const u=esc(t.upscale_public_url);
+    return '<div class="upscale-cell"><div class="video-wrap"><a href="'+u+'" target="_blank" translate="no">'
+      +esc((t.upscale_target||'1080p').toUpperCase())+'</a>'
+      +'<button class="btn" onclick="playVideo(&quot;'+u+'&quot;)">预览</button>'
+      +'<button class="btn" onclick="copyLink(&quot;'+u+'&quot;)">复制链接</button></div>'
+      +(t.upscale_error?'<span class="tiny" translate="no">'+esc(t.upscale_error)+'</span>':'')+'</div>';
+  }
+  if(st==='failed')
+    return '<div class="upscale-cell"><span class="tiny err">超分失败：'+noTr(t.upscale_error||'')+'</span>'
+      +start+'重试超分</button></div>';
+  return '<div class="upscale-cell">'+start+'超分</button></div>';
+}
+
+async function startUpscale(id,secs){
+  let c;
+  try{c=await api('/api/admin/settings/upscale');}
+  catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);return;}
+  if(!c.ready[c.provider]){
+    if(confirm('还没有配置超分服务，现在去设置吗？'))openUpscaleSettings();
+    return;
+  }
+  const scale={'1080p':1,'2k':2,'4k':4}[c.target]||1;
+  const msg=c.provider==='fal'
+    ?dialogText`用 fal 把这条视频超分到 ${c.target}，按输出时长计费，约 $${(c.fal_price_per_second*scale*secs).toFixed(3)}（${secs} 秒）。确定吗？`
+    :dialogText`用自建超分模型把这条视频超分到 ${c.target}，确定吗？`;
+  if(!confirm(msg))return;
+  try{await api('/api/admin/tasks/'+encodeURIComponent(id)+'/upscale',{method:'POST',body:{}});}
+  catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);return;}
+  refresh();
 }
 
 /* ---- 仪表盘 ---- */
@@ -2528,7 +2639,7 @@ async function loadTasks(){
     costCell(t),
     fmt(t.created_at),
     t.video_url
-      ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">打开</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">预览</button></div>'
+      ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">打开</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">预览</button></div>'+upscaleCell(t)
       :'—',
     // 报错原文完整展示（含换行）：不再 slice(0,30)，上游「内容审核不合规 / 肖像保护 / 侵权」
     // 这类话术要能一眼看全。
@@ -2605,7 +2716,7 @@ async function loadVideos(){
       :'<span class="badge b-gray">文件已删</span>';
     const ops='<div class="video-wrap">'
       +(v.video_url?'<button class="btn" style="margin-right:6px" onclick="playVideo(&quot;'+esc(v.video_url)+'&quot;)">预览</button><button class="btn" style="margin-right:6px" onclick="copyLink(&quot;'+esc(v.video_url)+'&quot;)">复制链接</button>':'')
-      +'<button class="btn btn-danger" onclick="delVideo(\''+v.id+'\')">删除</button></div>';
+      +'<button class="btn btn-danger" onclick="delVideo(\''+v.id+'\')">删除</button></div>'+upscaleCell({...v,status:'completed'});
     return [
       `<input type="checkbox" ${selVideos.has(v.id)?'checked':''} onchange="toggleVideoSel('${v.id}',this.checked)">`,
       fmt(v.created_at),

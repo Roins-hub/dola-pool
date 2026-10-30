@@ -105,6 +105,19 @@ class TaskStore:
                 ("video_link", "TEXT"),
                 ("video_link_expires_at", "REAL"),
                 ("video_model", "TEXT"),
+                # 视频超分（upscale.py）：状态 queued/processing/completed/failed、服务商、
+                # 可续查的 job（JSON，不含密钥）、结果地址/本地文件、目标分辨率、计费秒数
+                ("upscale_status", "TEXT"),
+                ("upscale_provider", "TEXT"),
+                ("upscale_target", "TEXT"),
+                ("upscale_job", "TEXT"),
+                ("upscale_url", "TEXT"),
+                ("upscale_file", "TEXT"),
+                ("upscale_error", "TEXT"),
+                ("upscale_size", "INTEGER"),
+                ("upscale_seconds", "REAL"),
+                ("upscale_started_at", "REAL"),
+                ("upscale_finished_at", "REAL"),
             ):
                 try:
                     self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
@@ -279,6 +292,27 @@ class TaskStore:
                 ),
             )
             self._conn.commit()
+
+    def get_setting(self, key: str) -> str | None:
+        with _LOCK:
+            row = self._conn.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        with _LOCK:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+                    (key, value, time.time()),
+                )
+
+    def upscale_unfinished(self) -> list[dict]:
+        """服务重启后要接着查的超分任务。"""
+        with _LOCK:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE upscale_status IN ('queued','processing')").fetchall()
+        return [dict(r) for r in rows]
 
     def get_global_concurrency(self, default: int) -> int:
         with _LOCK:
