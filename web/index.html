@@ -268,6 +268,14 @@ select:disabled{cursor:not-allowed;opacity:.6}
   select option::checkmark{display:none}
 }
 input[type=checkbox]{accent-color:var(--accent);cursor:pointer;width:15px;height:15px;vertical-align:middle}
+input[type=radio]{accent-color:var(--accent);cursor:pointer;width:15px;height:15px;vertical-align:middle}
+/* 文件选择框：按钮与面板的次要按钮一致，后面是已选文件名 */
+input[type=file]{width:100%;padding:4px!important;font-size:13px;color:var(--muted)!important;cursor:pointer}
+input[type=file]::file-selector-button{height:28px;margin-right:10px;padding:0 12px;border:1px solid var(--control);border-radius:6px;
+  background:var(--raised);color:var(--text);font:inherit;font-weight:500;cursor:pointer;transition:border-color .15s,background .15s}
+input[type=file]::file-selector-button:hover{border-color:var(--control-hi);background:var(--hover)}
+/* 滚动条：细、浅灰，与边框同色系（Firefox 与 Chromium 121+ 的标准属性） */
+*{scrollbar-width:thin;scrollbar-color:var(--control) transparent}
 #accountsTable,#proxiesTable,#tasksTable,#videosTable,#keysTable,#usersTable,#perAccount{overflow-x:auto}
 .task-attempt-history{min-width:280px;max-width:420px;overflow-wrap:anywhere}
 #tasksTable table{min-width:1450px;table-layout:fixed}
@@ -1910,7 +1918,7 @@ function renderBatchAddForm(){
   const sw=batchAddModeSwitch();
   if(batchAddMode==='cookie'){
     showDlg(`<h2>批量添加账号（Cookie JSON）</h2>${sw}
-      <input id="f_cookieFiles" type="file" accept=".json,application/json" multiple style="display:block;margin-bottom:10px" onchange="previewCookieBatchFiles()">
+      <input id="f_cookieFiles" type="file" accept=".json,application/json" multiple style="margin-bottom:10px" onchange="previewCookieBatchFiles()">
       <div class="hint" style="margin-bottom:8px">选择一个或多个 Cookie 导出 JSON（每个文件对应一个 dola 账号，如 ck76.json）。
       账号名默认取文件名；文件需为扩展导出格式（含 cookies 数组）。导入会排队逐个写入 profile。</div>
       <label style="display:flex;align-items:flex-start;gap:6px;color:var(--sub);margin:8px 0">
