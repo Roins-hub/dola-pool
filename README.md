@@ -5,8 +5,8 @@
 有兴趣的可以加群交流
 <img width="1305" height="2321" alt="301130c1842c3b30432394fc276a7a58" src="https://github.com/user-attachments/assets/39207d3c-955f-49ec-adbc-8db471f23b79" />
 
-**当前版本：v2.6.5** — 管理面板一键更新（源码 / Docker，失败自动回滚），视频超分到 1080p / 2K / 4K
-（fal、自建开源模型或自定义 API）。完整改动见 [更新日志](CHANGELOG.md)。
+**当前版本：v2.6.6** — 按请求分辨率自动超分（720p 原片直出，1080p 及以上出片后自动超分），
+管理面板一键更新与视频超分（fal、自建开源模型或自定义 API）。完整改动见 [更新日志](CHANGELOG.md)。
 
 把一组 [dola.com](https://www.dola.com)（字节 Seedance 视频模型国际版）和 [豆包 doubao.com](https://www.doubao.com)（国内版）账号组成号池，对外提供 **OpenAI 兼容的视频生成 / 生图 API**，并兼容火山方舟（Ark）任务式协议，可直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
 
