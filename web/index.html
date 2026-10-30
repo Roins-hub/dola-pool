@@ -401,7 +401,26 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--border);ma
 .empty{padding:28px 4px;text-align:left;color:var(--muted)}
 .video-wrap{display:flex;gap:8px;align-items:center}
 .upscale-cell{margin-top:6px}
-.upd-notes{max-height:38vh;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--raised);border-radius:8px;padding:12px;font-size:12.5px;line-height:1.65}
+.upd-notes{max-height:42vh;overflow:auto;overflow-wrap:anywhere;background:var(--raised);border-radius:8px;padding:14px 16px;font-size:13px;line-height:1.7;color:var(--text)}
+.upd-notes h4{font-size:13.5px;font-weight:600;margin:14px 0 6px}
+.upd-notes h4:first-child,.upd-notes .upd-h1{margin-top:0}
+.upd-notes .upd-h1{font-size:15px}
+.upd-notes p{margin:6px 0}
+.upd-notes ul{margin:6px 0;padding-left:18px}
+.upd-notes li{margin:4px 0}
+.upd-notes code{font-size:12px}
+.upd-last{margin:4px 0 10px}
+.dialog .box:has([data-dlg="update"]){width:560px}
+/* 新版本提醒：右下角卡片，看过（查看 / 稍后）的版本不再弹 */
+.upd-notice{position:fixed;right:20px;bottom:20px;z-index:110;width:340px;max-width:calc(100vw - 32px);background:var(--surface);
+  border-radius:12px;padding:16px 18px 14px;box-shadow:var(--float);transform:translateY(12px);opacity:0;
+  transition:opacity .18s ease,transform .18s ease}
+.upd-notice.nd-in{opacity:1;transform:none}
+.upd-notice h3{font-size:15px;font-weight:600;margin:0 0 4px}
+.upd-notice p{margin:0;font-size:13px;line-height:1.6;color:var(--muted)}
+.upd-notice .nd-actions{margin-top:12px}
+#verBtn.has-update::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:1px}
+@media (prefers-reduced-motion:reduce){.upd-notice{transition:none}}
 .upd-steps{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
 .upscale-cell .tiny{display:block;max-width:240px;white-space:normal}
 .tiny{font-size:12.5px;color:var(--muted)}
@@ -830,16 +849,62 @@ function reloadIfNewVersion(info){
 }
 async function checkUpdateBadge(){
   try{UPDATE_INFO=await api('/api/admin/update');updateBadge(UPDATE_INFO);reloadIfNewVersion(UPDATE_INFO);
-    if(UPDATE_INFO.request&&!updatePollTimer)watchUpdate();}catch(e){}
+    if(UPDATE_INFO.request&&!updatePollTimer)watchUpdate();
+    notifyNewVersion(UPDATE_INFO);}catch(e){}
+}
+/** 发现新正式版时右下角提醒一次；点「查看更新」或「稍后」后同一版本不再提醒（存在本浏览器） */
+const UPDATE_SEEN_KEY='dola-update-seen';
+function updateSeen(){try{return localStorage.getItem(UPDATE_SEEN_KEY)||'';}catch(e){return '';}}
+function markUpdateSeen(v){try{localStorage.setItem(UPDATE_SEEN_KEY,v);}catch(e){}}
+function notifyNewVersion(info){
+  const v=info&&info.available&&info.latest&&info.latest.version;
+  if(!v||info.request||updateSeen()===v||q('#updNotice')||typeof document.createElement!=='function')return;
+  const summary=String(info.latest.notes||'').replace(/\r/g,'').split('\n').map(x=>x.trim())
+    .find(x=>x&&!x.startsWith('#'))||'';
+  const box=document.createElement('div');
+  box.className='upd-notice';box.id='updNotice';box.setAttribute('role','status');
+  box.innerHTML=`<h3>发现新版本 <span translate="no">v${esc(v)}</span></h3>`
+    +(summary?`<p translate="no">${esc(summary.replace(/\*\*/g,'').slice(0,90))}${summary.length>90?'…':''}</p>`:'')
+    +`<div class="nd-actions"><button class="btn" type="button" id="updLater">稍后</button>`
+    +`<button class="btn btn-p" type="button" id="updView">查看更新</button></div>`;
+  document.body.append(box);
+  requestAnimationFrame(()=>box.classList.add('nd-in'));
+  const close=()=>{markUpdateSeen(v);box.remove();};
+  q('#updLater').addEventListener('click',close);
+  q('#updView').addEventListener('click',()=>{close();openUpdate();});
 }
 function updateProgressHtml(info){
   const p=info.progress||{},st=p.state||'';
   if(!info.request&&!st)return '';
+  if(!info.request){   // 已结束的上一次更新：一行小字，不抢当前状态的位置
+    const label=UPDATE_STATES[st]||st;
+    return `<p class="hint upd-last">上次更新：<span translate="no">${esc(p.from_version||'')} → ${esc(p.to_version||'')}</span> · <span>${esc(label)}</span></p>`;
+  }
   const label=UPDATE_STATES[st]||st;
   const cls=st==='done'?'b-green':(st==='failed'||st==='rolled_back')?'b-red':st==='cancelled'?'b-gray':'b-blue';
   const versions=p.to_version?`<span class="tiny" translate="no">${esc(p.from_version||'')} → ${esc(p.to_version)}</span>`:'';
   return `<div class="upd-steps"><span class="badge ${cls}">${esc(label)}</span>${versions}</div>`
     +(p.message?`<p class="hint" translate="no">${esc(p.message)}</p>`:'');
+}
+/** GitHub 发布说明（Markdown）→ 安全 HTML：先整体转义，再还原标题、加粗、列表、行内代码和链接 */
+function renderNotes(md){
+  const inline=t=>esc(t)
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,(_,txt,url)=>`<a href="${url}" target="_blank" rel="noopener">${txt}</a>`)
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+    .replace(/`([^`]+)`/g,'<code>$1</code>');
+  const out=[];let list=false;
+  for(const raw of String(md||'').replace(/\r/g,'').split('\n')){
+    const line=raw.trimEnd();
+    const item=line.match(/^\s*[-*]\s+(.*)$/);
+    if(item){if(!list){out.push('<ul>');list=true;}out.push('<li>'+inline(item[1])+'</li>');continue;}
+    if(list){out.push('</ul>');list=false;}
+    if(!line.trim())continue;
+    const h=line.match(/^(#{1,4})\s+(.*)$/);
+    if(h){out.push(`<h4${h[1].length===1?' class="upd-h1"':''}>${inline(h[2])}</h4>`);continue;}
+    out.push('<p>'+inline(line)+'</p>');
+  }
+  if(list)out.push('</ul>');
+  return out.join('');
 }
 function renderUpdate(info){
   const latest=info.latest||{},agent=info.agent||{},req=info.request;
@@ -864,7 +929,7 @@ function renderUpdate(info){
     ${latest.error?`<p class="hint">查询 GitHub 失败：${noTr(latest.error)}</p>`:''}
     ${!info.available&&!running&&latest.version?'<p class="hint">已是最新版本。</p>':''}
     ${updateProgressHtml(info)}
-    ${info.available&&latest.notes?`<div class="upd-notes" translate="no">${esc(latest.notes)}</div>`:''}
+    ${info.available&&latest.notes?`<div class="upd-notes" translate="no">${renderNotes(latest.notes)}</div>`:''}
     ${info.available&&!running?'<p class="hint">更新时会暂停派新单，等正在生成的任务完成后再换版本并重启（约 1～3 分钟）；新提交的任务排队等待，更新后自动继续。更新前自动备份代码和数据库，失败自动回滚。</p>':''}
     <div class="row">${action}
       ${latest.url?`<a class="btn" href="${esc(latest.url)}" target="_blank" rel="noopener">发布说明</a>`:''}
@@ -3272,7 +3337,7 @@ async function startStress(){
   catch(e){ /* 401 已在 api() 内触发 showLogin */ }
 })();
 timer=setInterval(()=>{if(autoRefresh)refresh();},10000);
-setInterval(checkUpdateBadge,10*60*1000);
+setInterval(checkUpdateBadge,5*60*1000);
 </script>
 </body>
 </html>

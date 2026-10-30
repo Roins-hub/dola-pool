@@ -1158,6 +1158,7 @@ async def resume_incomplete_tasks():
     for row in upscaling:
         asyncio.create_task(_run_upscale(row["id"]))
     asyncio.create_task(_update_loop())
+    asyncio.create_task(_update_check_loop())
     asyncio.create_task(_cred_refresher_loop())
     asyncio.create_task(_daily_quota_reset_loop())
     asyncio.create_task(_task_watchdog_loop())
@@ -1597,6 +1598,19 @@ def _update_busy() -> dict:
     jobs = (len(_running_add_jobs()) + (1 if ADD_ACCOUNT_SEM.locked() else 0)
             + sum(1 for job in TEST_JOBS.values() if job.get("status") == "running"))
     return {"running": running, "jobs": jobs}
+
+
+async def _update_check_loop() -> None:
+    """定时查一次 GitHub 最新正式版（间隔 UPDATE_CHECK_TTL），面板的「有新版本」提醒不用等人去点「检查更新」。"""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            latest = await updater.latest_release(force=True)
+            if latest.get("version") and updater.is_newer(latest["version"], APP_VERSION):
+                print(f"[update] 发现新版本 v{latest['version']}（当前 {APP_VERSION}）", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[update] 检查新版本失败: {exc}", flush=True)
+        await asyncio.sleep(config.UPDATE_CHECK_TTL)
 
 
 async def _update_loop() -> None:

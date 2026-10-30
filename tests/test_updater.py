@@ -171,3 +171,25 @@ def test_update_loop_busy_counts_running_tasks_and_jobs(tmp_path, monkeypatch):
     server.store.update("video_r1", status="processing")
     monkeypatch.setattr(server, "TEST_JOBS", {"t": {"status": "running"}, "u": {"status": "done"}})
     assert server._update_busy() == {"running": 1, "jobs": 1}
+
+
+def test_release_notes_render_escapes_html_and_keeps_structure():
+    """面板把 GitHub 发布说明（Markdown）渲染成 HTML：先转义，再还原标题 / 加粗 / 列表 / 链接。"""
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if not shutil.which("node"):
+        pytest.skip("needs node")
+    html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text(encoding="utf-8")
+    esc = re.search(r"\nfunction esc\(s\)\{[^\n]*\n", html).group(0)
+    start = html.index("function renderNotes(md){")
+    end = html.index("\nfunction renderUpdate(info){")
+    notes = ("# v2.6.7\n\n## 更新\n- **对话框**：见 [提交 3a0305e](https://github.com/x/y/commit/3a)\n"
+             "- 普通 `code`\n\n<script>alert(1)</script>\n[坏链接](javascript:alert(1))")
+    script = esc + html[start:end] + f"\nconsole.log(renderNotes({json.dumps(notes)}));"
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    assert '<h4 class="upd-h1">v2.6.7</h4>' in out and "<h4>更新</h4>" in out
+    assert "<li><strong>对话框</strong>：见 <a href=\"https://github.com/x/y/commit/3a\"" in out and "<code>code</code>" in out
+    assert "<script>" not in out and "&lt;script&gt;" in out
+    assert 'href="javascript' not in out
