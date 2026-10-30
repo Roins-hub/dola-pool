@@ -208,6 +208,12 @@ Dola 原片是 720p。创建任务时可以带 `resolution`：`720p`（或不传
   - 以上字段放在 `metadata`、`extra_body`、`parameters`、`params`、`options`、`config`、`generation_config`、`extra`、`input`、`settings` 里面也认；
   - 提示词里写 `--resolution 1080p` / `--rs 1080p`（这段会从提示词里去掉，不发给上游）。
   认不出的值（如 `quality: "high"`）按没写处理。
+  比例 `ratio` / `aspect_ratio` 和尺寸 `size` 也按同样规则找（顶层优先，其次 `metadata` 等），例如：
+
+  ```json
+  {"model": "seedance-2.0-fast", "prompt": "海边日落", "seconds": 10,
+   "metadata": {"ratio": "16:9", "resolution": "1080p"}}
+  ```
 - **确认有没有认出来**：创建和查询的返回里有 `resolution`（认出的档位，没写或认不出为 `null`）和 `upscale_note`（如「出片后自动超分到 1080p」「已超分到 1080p」，或没超分的原因）。要了 1080p 却看到 `resolution: null`，说明字段位置或写法不对。
 - 高清地址 `/v/<id>-1080p.mp4` 支持 GET 和 HEAD，返回 302 跳到成片。
 - 后台可选「没有 resolution 时按 `size` 判断」（按短边：1080 → 1080p、1440 → 2k、2160 → 4k）；默认不看 `size`，因为很多客户端默认就带 `1920x1080`。

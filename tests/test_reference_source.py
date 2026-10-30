@@ -253,3 +253,28 @@ def test_hd_short_link_answers_head(api):
                 r = await c.request(method, '/v/video_hd1-1080p.mp4')
                 assert r.status_code == 302 and r.headers['location'] == 'https://cdn.example/hd.mp4'
     run(scenario())
+
+
+def test_new_api_style_metadata_ratio_and_resolution(api):
+    """2026-10-30 线上原样请求：比例和分辨率都在 metadata 里，之前两样都没认出（比例 default、交 720p）。"""
+    import upscale
+    server, db, _ = api
+    upscale.save_settings(db, {'provider': 'fal', 'fal_key': 'k-123456789', 'auto': 'param_or_size'})
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url='http://test') as c:
+            r = await c.post('/v1/videos', json={
+                'model': 'doubao-seedance-2-0-fast-260128',
+                'prompt': '海边日落，镜头缓慢推进，海浪拍打礁石',
+                'seconds': 10,
+                'metadata': {'ratio': '16:9', 'resolution': '1080p'},
+            })
+            assert r.status_code in (200, 202), r.text
+            assert r.json()['resolution'] == '1080p'
+            row = db.get(r.json()['id'])
+            assert row['ratio'] == '16:9' and row['duration'] == 10 and row['model'] == 'seedance-2.0-fast'
+            assert row['requested_resolution'] == '1080p' and row['upscale_auto'] == 1
+            ark = await c.post('/api/v3/contents/generations/tasks', json={
+                'model': 'seedance-2.0-fast', 'duration': 5,
+                'content': [{'type': 'text', 'text': '白鹭'}], 'metadata': {'aspect_ratio': '9:16'}})
+            assert db.get(ark.json()['id'])['ratio'] == '9:16'
+    run(scenario())

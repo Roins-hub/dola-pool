@@ -91,7 +91,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.6.9"
+APP_VERSION = "2.6.10"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -660,6 +660,18 @@ def _request_resolution(raw, prompt: str = "") -> tuple[str | None, str, str]:
     if flag and upscale.normalize_resolution(flag.group(1)):
         return flag.group(1), _strip_resolution_flag(prompt), "prompt --resolution"
     return None, prompt, ""
+
+
+def _nested_value(raw, keys) -> str | None:
+    """顶层优先，再找 metadata / extra_body 等常见嵌套位置里的同名字段（比例、尺寸）。"""
+    raw = raw if isinstance(raw, dict) else {}
+    places = [raw] + [raw[nest] for nest in RESOLUTION_NESTS if isinstance(raw.get(nest), dict)]
+    for place in places:
+        for key in keys:
+            value = place.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
 
 
 def _strip_resolution_flag(prompt: str) -> str:
@@ -1407,7 +1419,9 @@ async def create_video(request: Request, authorization: str | None = Header(defa
         raise HTTPException(422, str(exc)) from exc
     # 时长来源优先级：duration → seconds → duration_seconds（new-api 的 sora 插件只发 seconds）。
     duration = req.duration or req.seconds or req.duration_seconds or 10
-    ratio = _resolve_ratio(req.size, req.ratio)
+    # 比例 / 尺寸也常被放进 metadata（如 new-api 风格 {"metadata": {"ratio": "16:9"}}）
+    size = req.size or _nested_value(raw, ("size",))
+    ratio = _resolve_ratio(size, req.ratio or _nested_value(raw, ("ratio", "aspect_ratio")))
     refs = _normalize_image_refs(
         req.reference_images, req.image_url, req.image,
         req.input_image, req.input_images,
@@ -1419,7 +1433,7 @@ async def create_video(request: Request, authorization: str | None = Header(defa
     _log_request_fields(raw, "openai", resolution, source)
     return await _submit_task(client, req.model, prompt, ratio, duration, refs,
                               reference_source=req.reference_source,
-                              resolution=resolution, size=req.size)
+                              resolution=resolution, size=size)
 
 
 def _data_url_from_upload(filename: str, data: bytes) -> str:
@@ -2173,7 +2187,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
     if not prompt:
         raise HTTPException(422, "content 中缺少 text 提示词")
     requested_model = body.get("model")
-    ratio = _map_ark_ratio(body.get("ratio"))
+    ratio = _map_ark_ratio(body.get("ratio") or _nested_value(body, ("ratio", "aspect_ratio")))
     if reference_images:
         print(f"[api] Ark 收到参考图 {len(reference_images)} 张: {reference_images[0][:80]}", flush=True)
     if sites.is_doubao_model(requested_model):
