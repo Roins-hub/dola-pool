@@ -91,7 +91,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.6.8"
+APP_VERSION = "2.6.9"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -2952,6 +2952,13 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         raise HTTPException(404, "account not found")
     if JOBS.get(name, {}).get("status") == "running":
         raise HTTPException(409, "该账号正在执行任务，稍后再试")
+    # 和客户 API 同一道时长检查：2.0-fast 网页只给 4～10 秒，直接请求 15 秒会被 dola 拒绝（2026-10-30 实测）
+    version = _model_version(body.model)
+    if (version == "seedance-2.0" and not sites.is_doubao_model(body.model)
+            and body.duration not in config.V20_DURATIONS):
+        raise HTTPException(
+            422, f"{_public_model(version)} 仅支持 {'/'.join(map(str, config.V20_DURATIONS))} 秒视频"
+                 f"（收到 {body.duration} 秒）")
     if not body.force:
         warnings = pool.test_generate_warnings(name, body.model, body.duration)
         if warnings:

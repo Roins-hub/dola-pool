@@ -463,3 +463,33 @@ def test_run_task_keeps_each_accounts_note(tmp_path, monkeypatch):
     assert "免费数量用完" in notes[0]["note"] and "45 分钟" in notes[1]["note"]
     assert row["upstream_wait"] == 2700
     assert row["attempt_started_at"] and row["attempt_started_at"] >= row["started_at"]
+
+
+def test_test_generate_rejects_15s_on_seedance_20(tmp_path, monkeypatch):
+    """2.0-fast 网页只给 4～10 秒，纯协议直接请求 15 秒被 dola 拒绝（2026-10-30 实测）：测试生成也要先拦下。"""
+    import server as server_mod
+    import store as store_mod
+    from fastapi import HTTPException
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
+    started = []
+
+    async def fake_test_generate(*a, **k):
+        started.append(a[0])
+        return {"ok": True}
+
+    monkeypatch.setattr(bp, "test_generate", fake_test_generate)
+    server_mod.pool = bp
+    server_mod.store = store_mod.TaskStore(str(tmp_path / "tasks.db"))
+    monkeypatch.setattr(server_mod, "_admin_auth", lambda key: None)
+
+    async def go():
+        body = server_mod.TestGenRequest(prompt="p", model="seedance-2.0-fast", duration=15, force=True)
+        with pytest.raises(HTTPException) as exc:
+            await server_mod.admin_test_generate("acc1", body, None)
+        assert exc.value.status_code == 422 and "5/10" in exc.value.detail and "15" in exc.value.detail
+        ok = server_mod.TestGenRequest(prompt="p", model="seedance-2.0-fast", duration=10, force=True)
+        await server_mod.admin_test_generate("acc1", ok, None)
+        await asyncio.sleep(0.2)
+
+    _run(go())
+    assert started == ["acc1"]                                                   # 只有 10 秒那条真的发了

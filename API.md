@@ -28,7 +28,7 @@ KEY=<你的 API Key>            # 在管理面板「API 密钥」里创建；环
 # 1) 提交一条 15 秒视频
 curl -s -X POST "$BASE/v1/videos/generations" \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"model":"seedance-2.0-fast","prompt":"一只猫在窗台上看雨","size":"720x1280","duration":15}'
+  -d '{"model":"seedance-2.0-fast","prompt":"一只猫在窗台上看雨","size":"720x1280","duration":10}'
 # -> {"id":"video_xxx","status":"queued","model":"seedance-2.0-fast","prompt":"..."}
 
 # 2) 轮询（建议 3~5 秒一次）
@@ -145,7 +145,7 @@ Content-Type: application/json
 | 模型 | 支持时长 | 每次出片扣点 | 一个号一天（默认 4 点）能出 |
 |---|---|---|---|
 | `seedance-2.5` | 5 / 10 / 30 秒（15 秒报价 12 点出不了；30 秒需 `DOLA_30S_MODE=pair`，见下） | 5 秒 2 点、10 秒 4 点、15 秒 12 点、30 秒 2 点（补后半段时共 4 点） | 5 秒 2 条 / 10 秒 1 条 / 30 秒 2 条 |
-| `seedance-2.0-fast` | 5 / 10 / 15 秒 | 5 / 10 / 15 秒均为 3 点 | 5 / 10 / 15 秒均为 1 条（剩 1 点） |
+| `seedance-2.0-fast` | 5 / 10 秒（15 秒已下线：网页只给 4～10 秒，直接请求会被拒绝） | 5 秒 2 点、10 秒 4 点 | 5 秒 2 条，或 5 秒 + 10 秒各 1 条，或 10 秒 1 条 |
 
 > `seedance-2.0-fast` 即 dola 网页上的「Seedance 2.0 Fast」。旧名 `seedance-2.0` 仍然收（按 2.0 Fast 处理，返回和落库的模型名是 `seedance-2.0-fast`），但 `/v1/models` 不再列出。
 
@@ -447,8 +447,8 @@ GET /videos/<文件名>.mp4      # 无需鉴权
 | `401` | `invalid api key` | Key 不对/被禁用/过期 |
 | `404` | `task not found` | 任务不存在，或不属于该 Key |
 | `409` | `video not ready` | 视频还没出完（仅内容端点） |
-| `422` | `seedance-2.0-fast 仅支持 5/10/15 秒视频（收到 30 秒）` | 模型与时长不匹配 |
-| `422` | `不支持的模型/时长组合：模型='x'，时长=7秒（seedance-2.5 仅支持 5/10/30 秒，seedance-2.0-fast 仅支持 5/10/15 秒）` | 同上，模型名无法识别时 |
+| `422` | `seedance-2.0-fast 仅支持 5/10 秒视频（收到 15 秒）` | 模型与时长不匹配 |
+| `422` | `不支持的模型/时长组合：模型='x'，时长=7秒（seedance-2.5 仅支持 5/10/30 秒，seedance-2.0-fast 仅支持 5/10 秒）` | 同上，模型名无法识别时 |
 | `422` | `当前 API Key 不允许生成 30 秒视频` | Key 的 `allowed_durations` 限制 |
 | `422` | `dola 自 2026-10-12 起单条视频最长 15 秒，30 秒无法直接生成…` | `DOLA_30S_MODE=reject`（默认）时请求 30 秒 |
 | `422` | `参考图片最多 30 张` / `参考文件不是有效图片` / `参考图片只支持 http/https 公网 URL` / `参考图片 URL 指向内网或保留地址` / `参考图片超过单文件大小限制` | 参考图校验失败 |
