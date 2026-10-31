@@ -738,8 +738,25 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     failure_seen = (None, 0)
     final_seen = (None, 0)
     limit_seen = 0
-    stall_key, stall_since, stall_noted = None, 0.0, False
+    stall_key, stall_since, stall_noted, stall_hits = None, 0.0, False, 0
+    answered = set()
     import config as _config
+
+    async def _answer(text):
+        """在会话输入框里回一句话（回复 dola 的追问）。"""
+        box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')
+        if not box:
+            return False
+        try:
+            await box.click()
+            await page.keyboard.type(text, delay=120)
+            await page.wait_for_timeout(300)
+            await page.keyboard.press("Enter")
+            print(f"[{account}] 已回复 dola: {text}", flush=True)
+            return True
+        except Exception as e:  # noqa: BLE001
+            print(f"[{account}] 回复 dola 失败: {str(e)[:100]}", flush=True)
+            return False
     last_shape = None
     last_wait = 0
     poll_errors = 0
@@ -802,6 +819,17 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                                 emit_feedback(on_poll, progress=f"dola 询问是否按 {duration} 秒直接生成，已回复确认，等待出片")
                         except Exception as e:
                             print(f"[{account}] 回复时长选择失败: {str(e)[:100]}", flush=True)
+        # ---- UI 把参考图单独发成一条附件消息，dola 偶尔当成「上一轮」的图，问用不用（A）：
+        # 新会话里「上一轮的图」只能是我们刚传的，确实有附件就回 A；没有就交给下面判【需要补充信息】。
+        if latest and not videos and latest.get("index") not in answered:
+            from upstream_reply import reference_reuse_reply
+            reuse = reference_reuse_reply("\n".join(texts), poll.get("userAttachments"))
+            if reuse:
+                answered.add(latest.get("index"))
+                if await _answer(reuse):
+                    emit_feedback(on_poll, progress=f"dola 问是否使用刚上传的 {poll.get('userAttachments')} 张参考图，"
+                                                    "已回复「A」（使用），等待出片")
+                    continue
         joined = "\n".join(texts)
         if not videos and (joined or latest):
             category = reply_failure(joined)
@@ -849,29 +877,41 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             failure_seen = (None, 0)
         if latest:
             shape = (latest.get("index"), bool(latest.get("finished")),
-                     tuple(t.get("status") for t in latest.get("tools") or []), bool(poll.get("anyTool")), len(videos))
+                     tuple(t.get("status") for t in latest.get("tools") or []), bool(latest.get("videoGen")),
+                     bool(latest.get("clarifying")), bool(poll.get("anyTool")), bool(poll.get("anyVideoGen")),
+                     len(videos))
             if shape != last_shape:
                 last_shape = shape
                 print(f"[{account}] 上游最新回复 idx={shape[0]} finished={shape[1]} tools={list(shape[2])} "
-                      f"anyTool={shape[3]} videos={shape[4]}: {latest_text[:80]!r}", flush=True)
-        # ---- 兜底：认不出的追问。dola 说完了、整个会话没挂过生成卡片、也没报预计时间，
-        # 这样持续 STALL_REPLY_SECONDS 不变 → 它在等我们答话，空等只会等到出片超时。
-        # 没有卡片 = 没开始生成、不扣点；结束任务并给出 dola 原话，不替客户乱答。
-        stalled = (_config.STALL_REPLY_SECONDS > 0 and latest and latest_text and not videos
-                   and latest.get("finished") and not latest.get("tools") and not poll.get("anyTool")
-                   and not wait_seconds_from_reply("\n".join(poll.get("assistantTexts") or [latest_text])))
-        if stalled:
+                      f"videoGen={shape[3]} clarifying={shape[4]} anyTool={shape[5]} anyVideoGen={shape[6]} "
+                      f"videos={shape[7]}: {latest_text[:80]!r}", flush=True)
+        # ---- 兜底：dola 在等我们答话（认不出的追问）就别空等到出片超时。
+        # 2026-10-31 实测链：受理消息带 has_video_gen=1（之后才在新消息里挂生成卡片），
+        # 追问带 is_creation_clarifying=1。会话里任何一条受理过 / 有卡片 / 报过预计时间，就绝不判卡住。
+        #   - 追问标记 + 已说完 + 连续两轮不变 → 立即结束；
+        #   - 没有标记、但同样「说完了却没开始生成」持续 STALL_REPLY_SECONDS → 结束。
+        # 没开始生成就没扣点；结束时给出 dola 原话，不替客户乱答。
+        accepted = bool(videos or poll.get("anyTool") or poll.get("anyVideoGen")
+                        or wait_seconds_from_reply("\n".join(poll.get("assistantTexts") or [latest_text])))
+        waiting = (_config.STALL_REPLY_SECONDS > 0 and latest and latest_text and latest.get("finished")
+                   and not latest.get("tools") and not accepted)
+        if waiting:
             key = (latest.get("index"), latest_text)
             if key != stall_key:
-                stall_key, stall_since, stall_noted = key, now, False
-            elif not stall_noted and now - stall_since >= 30:
+                stall_key, stall_since, stall_noted, stall_hits = key, now, False, 0
+            stall_hits += 1
+            if latest.get("clarifying") and stall_hits >= 2:
+                raise UpstreamReplyError(
+                    "上游在等待回复",
+                    f"dola 在追问、等待答复（尚未开始生成，未扣点），程序无法代为回答：{latest_text[:1500]}")
+            if not stall_noted and now - stall_since >= 30:
                 stall_noted = True
                 emit_feedback(on_poll, progress="dola 已回复但没有开始生成，可能在等答复；"
                                                 f"{_config.STALL_REPLY_SECONDS} 秒内仍无进展将结束任务（不扣点）")
             if now - stall_since >= _config.STALL_REPLY_SECONDS:
                 raise UpstreamReplyError(
                     "上游在等待回复",
-                    f"dola 回复后 {int(now - stall_since)} 秒没有开始生成（会话里没有生成卡片，未扣点），"
+                    f"dola 回复后 {int(now - stall_since)} 秒没有开始生成（未受理、未扣点），"
                     f"可能在追问需要补充的信息：{latest_text[:1500]}")
         else:
             stall_key = None

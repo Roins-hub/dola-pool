@@ -77,6 +77,7 @@ async ({conversationId, msToken, fp}) => {
   const assistantTexts = [];
   const assistantMessages = [];
   const userIndices = [];
+  let userAttachments = 0;
   const videos = [];
   const videoModels = [];
   const addText = (target, text) => {
@@ -104,6 +105,8 @@ async ({conversationId, msToken, fp}) => {
     let hasText = false;
     for (const block of content) {
       if (!block || typeof block !== 'object') continue;
+      // 10052 = 我们上传的图片附件（UI 先单独发一条附件消息，再发文字）
+      if (userType === 1 && Number(block.block_type) === 10052) userAttachments += 1;
       const text = (((block.content || {}).text_block) || {}).text || "";
       if (typeof text === 'string' && text.trim()) {
         hasText = true;
@@ -139,6 +142,9 @@ async ({conversationId, msToken, fp}) => {
         text: messageTexts.join('\n'),
         resCode: String(ext.ai_creation_res_code ?? ''),
         finished: String(ext.is_finish ?? '') === '1',
+        // 2026-10-31 实测链：受理消息 has_video_gen=1；追问 is_creation_clarifying=1（与措辞、语言无关）
+        videoGen: String(ext.has_video_gen ?? '') === '1',
+        clarifying: String(ext.is_creation_clarifying ?? '') === '1',
         tools: (Array.isArray(tools) ? tools : []).filter(t => t && typeof t === 'object')
           .map(t => ({status: Number(t.status), failCode: String(t.fail_code ?? '')})),
       });
@@ -157,7 +163,9 @@ async ({conversationId, msToken, fp}) => {
           assistantCount: assistantMessages.length,
           // anyTool: 会话里任何一条回复挂过生成卡片（受理过）。没有卡片、也没报预计时间、
           // 最新回复已说完却迟迟不动 = dola 在等我们答话（不认识的追问），见 poll_conversation。
-          anyTool: assistantMessages.some(m => m.tools.length > 0)};
+          anyTool: assistantMessages.some(m => m.tools.length > 0),
+          anyVideoGen: assistantMessages.some(m => m.videoGen),
+          userAttachments};
 }
 """
 

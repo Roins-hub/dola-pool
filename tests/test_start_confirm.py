@@ -169,9 +169,12 @@ def _stall_run(polls, *, after=None, seconds=180):
     return exc.value
 
 
-def _poll(text, *, finished=True, tools=(), any_tool=False, index='5'):
+def _poll(text, *, finished=True, tools=(), any_tool=False, index='5', video_gen=False, any_video_gen=None,
+          clarifying=False, attachments=0):
     return {'texts': [text], 'assistantTexts': [text], 'assistantCount': 1, 'anyTool': any_tool,
+            'anyVideoGen': video_gen if any_video_gen is None else any_video_gen, 'userAttachments': attachments,
             'latestAssistant': {'id': 'm' + index, 'index': index, 'text': text, 'finished': finished,
+                                'videoGen': video_gen, 'clarifying': clarifying,
                                 'tools': [{'status': s, 'failCode': '0'} for s in tools]},
             'videos': []}
 
@@ -201,3 +204,60 @@ def test_stall_window_restarts_when_dola_says_something_new():
 def test_stall_watchdog_can_be_disabled():
     err = _stall_run([_poll(UNKNOWN_Q)] * 6, seconds=0)
     assert err.category == '网络失败'
+
+
+# 2026-10-31 实测链（0ebb25d700 / a1077925c2）：受理消息已说完、没有卡片、has_video_gen=1，
+# 卡片要等出片后在新消息里才出现。下面这条连预计时间都没说——只靠 has_video_gen 也绝不能判卡住。
+def test_accepted_message_without_eta_is_protected_by_has_video_gen():
+    err = _stall_run([_poll('動画の生成を開始しました。完了したらお送りします。', video_gen=True)] * 8)
+    assert err.category == '网络失败'
+    err = _stall_run([_poll('補足：背景を少し明るくします。', index='7', any_video_gen=True)] * 8)
+    assert err.category == '网络失败'                 # 受理在前一条，最新一条是纯文字
+
+
+def test_clarifying_flag_ends_the_task_within_two_polls():
+    """e6e8 实测：追问消息 is_creation_clarifying=1，不必等 3 分钟。"""
+    clock_polls = [_poll(UNKNOWN_Q, clarifying=True)] * 3
+    err = _stall_run(clock_polls, seconds=180)
+    assert err.category == '上游在等待回复' and '无法代为回答' in str(err)
+
+
+def test_reuse_question_is_answered_with_a_when_we_uploaded_attachments():
+    typed = []
+
+    class Keyboard:
+        async def type(self, text, delay=0): typed.append(text)
+        async def press(self, key): typed.append(key)
+
+    class Box:
+        async def click(self): pass
+
+    class Context:
+        async def cookies(self, *a): return []
+
+    question = _poll(MISSING_REF, clarifying=True, attachments=2, index='4')
+    accepted = _poll('動画は5分以内に生成されます。', video_gen=True, index='6', attachments=2)
+
+    class Page:
+        keyboard = Keyboard()
+        calls = 0
+        async def evaluate(self, *a):
+            self.calls += 1
+            if self.calls > 4:
+                raise ConnectionError('end')
+            return question if self.calls == 1 else accepted
+        async def query_selector(self, *a): return Box()
+        async def wait_for_timeout(self, *a): pass
+
+    async def no_wait(*a): pass
+    progress = []
+    fn = load_worker_function(
+        'poll_conversation', cookie_value=lambda *a: '',
+        asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for),
+        POLL_JS='', emit_feedback=lambda cb, **kw: progress.append(kw.get('progress')),
+        DAILY_LIMIT_PATTERN=re.compile('x^'), FREE_LIMIT_REPLY=re.compile('x^'),
+        _parse_balance_texts=lambda x: (None, None, ''))
+    with pytest.raises(UpstreamReplyError, match='网络失败'):          # 回了 A 之后正常等出片，直到脚本结束
+        _run(fn('acc141', Page(), Context(), 'c1', 1800, duration=10, on_poll=lambda *a, **k: None))
+    assert typed == ['A', 'Enter']
+    assert any(p and '已回复「A」' in p for p in progress)

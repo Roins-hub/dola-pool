@@ -115,3 +115,22 @@ def test_any_tool_reports_a_creation_card_anywhere_in_the_conversation():
         {'user_type': 2, 'index_in_conv': 3, 'ext': {'is_finish': '1'}, 'content_block': [text_block('どちらにしますか？')]},
     ])
     assert question['anyTool'] is False and question['latestAssistant']['finished'] is True
+
+
+def test_video_gen_clarifying_flags_and_attachment_count():
+    """2026-10-31 实测链：受理 has_video_gen=1；追问 is_creation_clarifying=1；附件是单独一条用户消息（10052）。"""
+    result = poll_messages([
+        {'user_type': 1, 'index_in_conv': 1, 'content_block': [{'block_type': 10052}, {'block_type': 10052}]},
+        {'user_type': 1, 'index_in_conv': 2, 'content_block': [text_block('生成された動画：…')]},
+        {'user_type': 2, 'index_in_conv': 4, 'ext': {'is_finish': '1', 'is_creation_clarifying': '1'},
+         'content_block': [text_block('どちらにしますか？')]},
+    ])
+    assert result['userAttachments'] == 2 and result['anyVideoGen'] is False
+    assert result['latestAssistant']['clarifying'] is True and result['latestAssistant']['videoGen'] is False
+    accepted = poll_messages([
+        {'user_type': 1, 'index_in_conv': 1, 'content_block': [text_block('生成された動画：…')]},
+        {'user_type': 2, 'index_in_conv': 3, 'ext': {'is_finish': '1', 'has_video_gen': '1'},
+         'content_block': [text_block('5分以内に生成されます')]},
+    ])
+    assert accepted['anyVideoGen'] is True and accepted['latestAssistant']['videoGen'] is True
+    assert accepted['userAttachments'] == 0

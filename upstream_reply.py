@@ -155,3 +155,21 @@ def start_confirm_reply(text, duration):
     if re.search(r'[\u4e00-\u9fff]', clean):
         return f'确认，直接按{duration}秒开始生成。'
     return f'Yes, please start generating the {duration}-second video now.'
+
+
+# 2026-10-31 实测链：UI 先把参考图作为单独一条附件消息发出，再发文字。dola 偶尔把图片当成
+# 「上一轮」上传的，追问「今回のラウンドでは参照画像が提供されていません…A. 前回アップロードした
+# 画像2点を使用する / B. 今回のプロンプトからゼロで…」。新会话里「上一轮的图」只可能是我们刚传的，
+# 所以确实上传过附件时回 A；没有附件就不答（交给 reply_failure 判【需要补充信息】）。
+_REUSE_OPTION = re.compile(
+    r'(?<![A-Za-z])A\s*[.．、:：)）]?\s*(?:前回|先ほど|以前に?|之前|上一轮|上次|previously)'
+    r'[^\n]{0,30}?(?:アップロード|上传|上傳|uploaded)', re.I)
+
+
+def reference_reuse_reply(text, attachments):
+    """dola 让选「A=用之前上传的图」时，确实传过附件就回 'A'；否则 None。"""
+    if not text or not attachments:
+        return None
+    if reply_failure(text) != '需要补充信息' or not _REUSE_OPTION.search(text.replace('**', '')):
+        return None
+    return 'A'
