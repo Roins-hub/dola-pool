@@ -5,8 +5,8 @@
 有兴趣的可以加群交流
 <img width="1305" height="2321" alt="301130c1842c3b30432394fc276a7a58" src="https://github.com/user-attachments/assets/39207d3c-955f-49ec-adbc-8db471f23b79" />
 
-**当前版本：v2.6.10** — 请求分辨率 / 比例也从 metadata 等嵌套位置识别，返回里带上认出的分辨率；
-dola 反问「直接开始生成吗」时自动回复确认；seedance-2.0-fast 时长为 5/10 秒；按请求分辨率自动超分与面板一键更新。完整改动见 [更新日志](CHANGELOG.md)。
+**当前版本：v2.6.11** — 按 dola 自带的受理 / 追问标记判断：「用上一轮上传的图吗」自动回 A，认不出的追问不再空等到超时；
+请求分辨率 / 比例也从 metadata 识别；dola 反问「直接开始生成吗」时自动回复确认；按请求分辨率自动超分与面板一键更新。完整改动见 [更新日志](CHANGELOG.md)。
 
 把一组 [dola.com](https://www.dola.com)（字节 Seedance 视频模型国际版）和 [豆包 doubao.com](https://www.doubao.com)（国内版）账号组成号池，对外提供 **OpenAI 兼容的视频生成 / 生图 API**，并兼容火山方舟（Ark）任务式协议，可直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
 
