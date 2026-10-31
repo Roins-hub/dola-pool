@@ -119,3 +119,85 @@ def test_missing_reference_question_fails_fast_without_answering():
         _parse_balance_texts=lambda x: (None, None, ''))
     with pytest.raises(UpstreamReplyError, match='需要补充信息'):
         _run(fn('acc141', Page(), Context(), 'c1', 1800, duration=10, on_poll=lambda *a, **k: None))
+
+
+# ---------------------------------------------------------------- 兜底：认不出的追问
+UNKNOWN_Q = '生成の前に一つ教えてください：背景は夜と昼のどちらがよろしいでしょうか？'
+
+
+def _stall_run(polls, *, after=None, seconds=180):
+    """按 polls 依次返回；每次轮询时钟走 60 秒。polls 用完后连续抛网络错误让循环结束。"""
+    clock = {'t': 1_000_000.0}
+    typed = []
+
+    class Keyboard:
+        async def type(self, text, delay=0): typed.append(text)
+        async def press(self, key): pass
+
+    class Context:
+        async def cookies(self, *a): return []
+
+    class Page:
+        keyboard = Keyboard()
+        calls = 0
+        async def evaluate(self, *a):
+            self.calls += 1
+            clock['t'] += 60
+            if self.calls > len(polls):
+                raise ConnectionError('end of script')
+            return polls[self.calls - 1]
+        async def query_selector(self, *a): raise AssertionError('must not answer an unknown question')
+        async def wait_for_timeout(self, *a): pass
+
+    async def no_wait(*a): pass
+    import config
+    old = config.STALL_REPLY_SECONDS
+    config.STALL_REPLY_SECONDS = seconds
+    try:
+        fn = load_worker_function(
+            'poll_conversation', cookie_value=lambda *a: '',
+            asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for),
+            time=SimpleNamespace(time=lambda: clock['t']),
+            POLL_JS='', emit_feedback=lambda cb, **kw: None,
+            DAILY_LIMIT_PATTERN=re.compile('x^'), FREE_LIMIT_REPLY=re.compile('x^'),
+            _parse_balance_texts=lambda x: (None, None, ''))
+        with pytest.raises(UpstreamReplyError) as exc:
+            _run(fn('acc1', Page(), Context(), 'c1', 7200, duration=10, on_poll=lambda *a, **k: None))
+    finally:
+        config.STALL_REPLY_SECONDS = old
+    assert not typed
+    return exc.value
+
+
+def _poll(text, *, finished=True, tools=(), any_tool=False, index='5'):
+    return {'texts': [text], 'assistantTexts': [text], 'assistantCount': 1, 'anyTool': any_tool,
+            'latestAssistant': {'id': 'm' + index, 'index': index, 'text': text, 'finished': finished,
+                                'tools': [{'status': s, 'failCode': '0'} for s in tools]},
+            'videos': []}
+
+
+def test_unknown_question_ends_the_task_after_the_stall_window():
+    err = _stall_run([_poll(UNKNOWN_Q)] * 5)
+    assert err.category == '上游在等待回复' and '未扣点' in str(err) and UNKNOWN_Q in str(err)
+
+
+@pytest.mark.parametrize('poll', [
+    _poll('動画は**Dreamina Seedance 2.0高速モデル**を使用して、5分分後に生成されます。'),   # 报了预计时间 = 已受理
+    _poll('動画が生成されました。', any_tool=True),                                         # 会话里挂过生成卡片
+    _poll(UNKNOWN_Q, tools=(2,)),                                                          # 最新回复带生成中卡片
+    _poll(UNKNOWN_Q, finished=False),                                                      # 还没说完
+])
+def test_accepted_or_running_generations_are_never_treated_as_stalled(poll):
+    err = _stall_run([poll] * 8)                                  # 8 分钟，远超 3 分钟窗口
+    assert err.category == '网络失败'                              # 只因脚本结束而停，不是判卡住
+
+
+def test_stall_window_restarts_when_dola_says_something_new():
+    polls = [_poll(UNKNOWN_Q)] * 2 + [_poll('もう一つ質問です：音楽は必要ですか？', index='6')] * 2
+    err = _stall_run(polls)                                       # 每段都没满 3 分钟
+    assert err.category == '网络失败'
+
+
+def test_stall_watchdog_can_be_disabled():
+    err = _stall_run([_poll(UNKNOWN_Q)] * 6, seconds=0)
+    assert err.category == '网络失败'

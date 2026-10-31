@@ -77,6 +77,10 @@ UPSCALE_POLL_SECONDS = max(1.0, float(os.getenv("DOLA_UPSCALE_POLL_SECONDS", "8"
 # 2026-10-30：13 条里 2 条一次就失败，退回 0.4 MB/5 秒的低码率源并失去直链交付。
 HIGH_BITRATE_ATTEMPTS = max(1, int(os.getenv("DOLA_HIGH_BITRATE_ATTEMPTS", "3")))
 
+# dola 已回复完、整个会话没有生成卡片、也没报预计时间，并且这样持续 N 秒不变 → 判定它在等我们答话
+# （认不出的追问），结束任务而不是空等到出片超时。0 = 关闭。没有卡片就没开始生成，不扣点。
+STALL_REPLY_SECONDS = int(os.getenv("DOLA_STALL_REPLY_SECONDS", "180"))
+
 # SQLite 任务库
 DB_PATH = os.getenv("DOLA_DB_PATH", "tasks.db")
 

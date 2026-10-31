@@ -154,7 +154,10 @@ async ({conversationId, msToken, fp}) => {
   // assistantCount: a daily-limit reply is final only when it is the conversation's only
   // assistant turn (10-28: an earlier turn had already accepted a generation).
   return {ok: true, status: resp.status, texts, assistantTexts, latestAssistant, videos, videoModels,
-          assistantCount: assistantMessages.length};
+          assistantCount: assistantMessages.length,
+          // anyTool: 会话里任何一条回复挂过生成卡片（受理过）。没有卡片、也没报预计时间、
+          // 最新回复已说完却迟迟不动 = dola 在等我们答话（不认识的追问），见 poll_conversation。
+          anyTool: assistantMessages.some(m => m.tools.length > 0)};
 }
 """
 

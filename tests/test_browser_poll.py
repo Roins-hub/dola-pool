@@ -101,3 +101,17 @@ def test_poll_keeps_videos_and_deduplicates_modern_and_legacy_blocks():
     assert result['texts'] == ['已生成']
     assert result['videos'] == ['https://example.invalid/one.mp4', 'https://example.invalid/two.mp4']
     assert result['videoModels'] == ['model-one', 'model-two']
+
+
+def test_any_tool_reports_a_creation_card_anywhere_in_the_conversation():
+    """10-28：受理（带卡片）在前面一条，最新一条是纯文字——anyTool 仍为真，兜底不能判「在等答话」。"""
+    card = {'ai_creation_tool_list': json.dumps([{'status': 2, 'fail_code': '0'}]), 'is_finish': '1'}
+    result = poll_messages([
+        {'user_type': 2, 'index_in_conv': 3, 'ext': card, 'content_block': [text_block('5分後に生成されます')]},
+        {'user_type': 2, 'index_in_conv': 4, 'ext': {'is_finish': '1'}, 'content_block': [text_block('補足です')]},
+    ])
+    assert result['anyTool'] is True and result['latestAssistant']['tools'] == []
+    question = poll_messages([
+        {'user_type': 2, 'index_in_conv': 3, 'ext': {'is_finish': '1'}, 'content_block': [text_block('どちらにしますか？')]},
+    ])
+    assert question['anyTool'] is False and question['latestAssistant']['finished'] is True

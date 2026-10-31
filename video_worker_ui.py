@@ -738,6 +738,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     failure_seen = (None, 0)
     final_seen = (None, 0)
     limit_seen = 0
+    stall_key, stall_since, stall_noted = None, 0.0, False
+    import config as _config
+    last_shape = None
     last_wait = 0
     poll_errors = 0
     from upstream_reply import wait_seconds_from_reply
@@ -844,6 +847,34 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 on_balance(balance, source)
         else:
             failure_seen = (None, 0)
+        if latest:
+            shape = (latest.get("index"), bool(latest.get("finished")),
+                     tuple(t.get("status") for t in latest.get("tools") or []), bool(poll.get("anyTool")), len(videos))
+            if shape != last_shape:
+                last_shape = shape
+                print(f"[{account}] 上游最新回复 idx={shape[0]} finished={shape[1]} tools={list(shape[2])} "
+                      f"anyTool={shape[3]} videos={shape[4]}: {latest_text[:80]!r}", flush=True)
+        # ---- 兜底：认不出的追问。dola 说完了、整个会话没挂过生成卡片、也没报预计时间，
+        # 这样持续 STALL_REPLY_SECONDS 不变 → 它在等我们答话，空等只会等到出片超时。
+        # 没有卡片 = 没开始生成、不扣点；结束任务并给出 dola 原话，不替客户乱答。
+        stalled = (_config.STALL_REPLY_SECONDS > 0 and latest and latest_text and not videos
+                   and latest.get("finished") and not latest.get("tools") and not poll.get("anyTool")
+                   and not wait_seconds_from_reply("\n".join(poll.get("assistantTexts") or [latest_text])))
+        if stalled:
+            key = (latest.get("index"), latest_text)
+            if key != stall_key:
+                stall_key, stall_since, stall_noted = key, now, False
+            elif not stall_noted and now - stall_since >= 30:
+                stall_noted = True
+                emit_feedback(on_poll, progress="dola 已回复但没有开始生成，可能在等答复；"
+                                                f"{_config.STALL_REPLY_SECONDS} 秒内仍无进展将结束任务（不扣点）")
+            if now - stall_since >= _config.STALL_REPLY_SECONDS:
+                raise UpstreamReplyError(
+                    "上游在等待回复",
+                    f"dola 回复后 {int(now - stall_since)} 秒没有开始生成（会话里没有生成卡片，未扣点），"
+                    f"可能在追问需要补充的信息：{latest_text[:1500]}")
+        else:
+            stall_key = None
         if videos:
             emit_feedback(on_poll, progress="上游已返回视频，正在获取下载地址")
             video_models = poll.get("videoModels", [])
