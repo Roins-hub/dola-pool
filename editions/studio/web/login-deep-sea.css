@@ -1,0 +1,124 @@
+/* This stylesheet is isolated to the shared login surface. */
+body.login-deep-sea{margin:0;background:#06172a;color:#edf8ff;font-family:"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;color-scheme:dark;font-synthesis:none}
+.login-deep-sea *{box-sizing:border-box}
+.login-deep-sea ::selection{background:#a4d7e7;color:#071422}
+.login-deep-sea{scrollbar-color:#46677b #0b1522;scrollbar-width:thin}
+.login-deep-sea [hidden]{display:none!important}
+.login-deep-sea button,.login-deep-sea input{font:inherit}
+.login-deep-sea button,.login-deep-sea a{-webkit-tap-highlight-color:transparent}
+.login-deep-sea button{cursor:pointer}
+.login-deep-sea button:disabled{cursor:wait;opacity:.65}
+.login-deep-sea button:focus-visible,.login-deep-sea a:focus-visible{outline:3px solid #9df7f0;outline-offset:5px}
+.login-deep-sea a{color:inherit;text-decoration:none}
+.login-deep-sea .stage{position:relative;isolation:isolate;display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,440px);grid-template-rows:auto minmax(min-content,1fr) auto;column-gap:clamp(32px,5vw,90px);row-gap:35px;min-height:100vh;min-height:100svh;padding:32px clamp(28px,6vw,108px) 25px;overflow:hidden;background:#06172a}
+.login-deep-sea .scene,.login-deep-sea .scene-tone{position:absolute;inset:0;pointer-events:none}
+.login-deep-sea .scene{z-index:-3;background:#06318d url("assets/login-deep-sea/poster.webp") 35% center/cover no-repeat}
+.login-deep-sea .scene video{width:100%;height:100%;object-fit:cover;object-position:35% center;display:block}
+.login-deep-sea .scene-tone{z-index:-2;background:linear-gradient(90deg,#041a360d 20%,#061b3824 60%,#04152c4a)}
+.login-deep-sea .stage-header{grid-column:1/-1;grid-row:1;display:flex;justify-content:space-between;align-items:center;gap:24px;position:relative;z-index:2}
+.login-deep-sea .brand{display:inline-flex;align-items:center;gap:11px;font-size:20px;font-weight:650;letter-spacing:.02em;background:#04213cbb;padding:7px 11px;margin:-7px -11px;box-shadow:0 1px 0 #ffffff10}
+.login-deep-sea .brand-mark{display:grid;place-items:center;width:34px;height:34px;border:1px solid #e9fbff;font-size:19px;font-weight:500}
+.login-deep-sea .brand-api{font-size:.9em;font-weight:400;margin-left:3px}
+.login-deep-sea .stage-kicker{font-size:11px;letter-spacing:.13em;color:#c3dfea}
+.login-deep-sea .cover-content,.login-deep-sea .login-panel{grid-row:2;grid-column:2;align-self:center;justify-self:end;position:relative;width:100%;z-index:1}
+.login-deep-sea .cover-content{padding:32px 0;min-height:420px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center}
+.login-deep-sea .cover-content h1,.login-deep-sea .cover-content h2{font-size:clamp(43px,4.7vw,68px);line-height:1.3;font-weight:550;letter-spacing:-.035em;margin:0 0 20px;color:#f6fdff}
+.login-deep-sea .cover-content h1 span,.login-deep-sea .cover-content h2 span{font-weight:400;color:#a2f0ec}
+.login-deep-sea .cover-description{font-size:14px;line-height:1.9;letter-spacing:.04em;color:#b6d0df;margin:0 0 32px}
+.login-deep-sea .entry-caption{font:9px/1.5 "Segoe UI",sans-serif;letter-spacing:.17em;margin-top:19px;color:#b0c9d6}
+/* Refracted glass controls: a dark core, a pearlescent edge, and bounded feedback. */
+.login-deep-sea .primary{--press-scale:1;--hover-lift:0px;position:relative;isolation:isolate;display:flex;align-items:center;justify-content:space-between;gap:18px;overflow:hidden;width:100%;height:58px;padding:0 23px;border:1px solid #b6d9e363;border-radius:12px;background:radial-gradient(150px circle at var(--light-x,22%) var(--light-y,0%),#a6d5e332,transparent 74%),linear-gradient(112deg,#1a364af2 0%,#101c2df5 56%,#2a243bed 100%);color:#f0faff;font-size:14px;font-weight:550;letter-spacing:.06em;text-align:left;box-shadow:0 9px 23px #020b1e42,inset 0 1px 0 #e2fcff24,inset 0 -1px 0 #030a1459;transform:translate3d(var(--hover-x,0px),calc(var(--hover-y,0px) + var(--hover-lift)),0) scale(var(--press-scale));transition:transform 220ms cubic-bezier(.16,1,.3,1),border-color 220ms,box-shadow 220ms,color 180ms;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.login-deep-sea .primary::before{content:'';position:absolute;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(110deg,transparent 12%,#a4edee14 34%,#e4e9ff17 54%,transparent 75%);opacity:0;transform:translateX(-36%);transition:opacity 240ms,transform 550ms cubic-bezier(.16,1,.3,1)}
+.login-deep-sea .primary:focus-visible{border-color:#c7f2ff;color:#fff;outline:2px solid #c2effb;outline-offset:5px}
+.login-deep-sea .primary:focus-visible::before{opacity:1;transform:translateX(0)}
+.login-deep-sea .primary:disabled{--hover-x:0px!important;--hover-y:0px!important;--hover-lift:0px;--press-scale:1;opacity:.7}
+.login-deep-sea .primary .arrow{box-sizing:content-box;flex:none;width:22px;height:22px;padding-left:20px;border-left:1px solid #c9e1ed33;color:#d9e9fa;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;transition:transform 260ms cubic-bezier(.16,1,.3,1),color 200ms}
+.login-deep-sea #enterBtn{width:234px;min-width:0;max-width:100%;height:60px}
+@media(hover:hover) and (pointer:fine){
+.login-deep-sea .primary:hover:not(:disabled){--hover-lift:-3px;border-color:#c4e6efb3;color:#fff;box-shadow:0 15px 28px #020b1e52,inset 0 1px 0 #e2fcff3d,inset 0 -1px 0 #030a1459}
+.login-deep-sea .primary:hover:not(:disabled)::before{opacity:1;transform:translateX(8%)}
+.login-deep-sea .primary:hover:not(:disabled) .arrow{color:#fff;transform:translate(3px,-2px)}
+}
+.login-deep-sea .primary:is(:active,[data-pressed=true]):not(:disabled){--press-scale:.97;--hover-lift:0px;border-color:#e1f7ff;box-shadow:0 3px 10px #020b1e3d,inset 0 2px 6px #0004;transition-duration:85ms}
+.login-deep-sea .login-panel{padding:40px 35px 31px;border:1px solid #c2dfeb3b;border-radius:14px;background:linear-gradient(145deg,#6c929d2c,transparent 32%),linear-gradient(165deg,#131f2bd4 0%,#081524de 57%,#1c1c32d9 100%);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);box-shadow:inset 0 1px 0 #d8effa1c,inset 0 -1px 0 #0208117a}
+.login-deep-sea .login-panel::before,.login-deep-sea .login-panel::after{content:'';position:absolute;pointer-events:none;opacity:.8}
+.login-deep-sea .login-panel::before{right:24px;top:-1px;width:62px;height:1px;background:linear-gradient(90deg,transparent,#e4f9ff,#b1bbea66)}
+.login-deep-sea .login-panel::after{right:-7px;top:23px;width:12px;height:38px;background:linear-gradient(155deg,#d8f9ffb8,#97b3f214);clip-path:polygon(100% 0,49% 100%,0 48%)}
+.login-deep-sea .login-panel #title{font-size:34px;line-height:1.3;letter-spacing:-.04em;font-weight:550;margin:0 0 10px;color:#f6fdff;overflow-wrap:anywhere}
+.login-deep-sea .login-panel #subtitle{font-size:13px;line-height:1.8;color:#b8cdd9;margin:0 0 31px}
+.login-deep-sea #tabs{display:flex;gap:4px;padding:4px;border:1px solid #9cceea24;border-radius:8px;background:#0209124d;margin:0 0 27px}
+.login-deep-sea #tabs button{flex:1;border:0;border-radius:5px;background:transparent;color:#a5bfd0;font-size:12px;line-height:1.5;padding:9px 14px;transition:background 160ms,color 160ms}
+.login-deep-sea #tabs button.on,.login-deep-sea #tabs button[aria-selected=true]{background:linear-gradient(120deg,#3e596961,#4d4d6a55);color:#f0fcff;box-shadow:inset 0 1px 0 #cde6f014}
+.login-deep-sea #tabs button:hover{color:#fff}
+.login-deep-sea .field{margin:0 0 21px}
+.login-deep-sea .field label,.login-deep-sea #authForm>label,.login-deep-sea #inviteRow>label{display:block;font-size:12px;font-weight:500;line-height:1.6;color:#e6f6ff;margin:0 0 9px}
+.login-deep-sea .input-wrap,.login-deep-sea .studio-field{display:flex;align-items:center;gap:12px;height:52px;padding:0 14px;border:1px solid #abcde438;border-radius:7px;background:linear-gradient(120deg,#020c1875,#13202f45);transition:border-color 180ms,background 180ms,box-shadow 180ms}
+.login-deep-sea #authForm>.input-wrap,.login-deep-sea #authForm>.studio-field{margin-bottom:21px}
+.login-deep-sea .input-wrap:focus-within,.login-deep-sea .studio-field:focus-within{border-color:#b6dce8;background:#13283a9c;box-shadow:0 0 0 3px #9ee9ed0d}
+.login-deep-sea .input-wrap svg,.login-deep-sea .studio-field svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.4;opacity:.65;flex-shrink:0;color:#b8d2df}
+.login-deep-sea .input-wrap input,.login-deep-sea .studio-field input{width:100%;height:100%;min-width:0;padding:0;border:0;border-radius:0;outline:none;background:transparent;color:#eefaff;font-size:14px;letter-spacing:.01em}
+.login-deep-sea input{caret-color:#c2effb}
+.login-deep-sea input::placeholder{color:#9ab2c1;opacity:1}
+.login-deep-sea input:-webkit-autofill{-webkit-text-fill-color:#eefaff;box-shadow:inset 0 0 0 1000px #123148;caret-color:#fff}
+.login-deep-sea #inviteRow{margin:0 0 21px}
+.login-deep-sea #submitBtn{margin-top:9px;padding-right:56px}
+.login-deep-sea #submitBtn::after{content:'';position:absolute;right:22px;top:50%;width:22px;height:22px;transform:translateY(-50%);background:currentColor;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12h14m-6-6 6 6-6 6' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12h14m-6-6 6 6-6 6' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;transition:transform 220ms cubic-bezier(.16,1,.3,1)}
+.login-deep-sea #submitBtn:hover:not(:disabled)::after{transform:translate(3px,-50%)}
+.login-deep-sea [data-busy=true] #submitBtn::after{content:'';width:17px;height:17px;top:calc(50% - 9px);border:1.5px solid #c8e4f13d;border-top-color:#e6f9ff;border-radius:50%;transform:none;background:none;mask:none;-webkit-mask:none;animation:login-sea-spin .7s linear infinite}
+.login-deep-sea #err,.login-deep-sea #ok{display:block;font-size:12px;line-height:1.8;padding:11px 13px;border-radius:7px;margin:0 0 18px;overflow-wrap:anywhere;outline:none}
+.login-deep-sea #err{background:#4f2337c7;border:1px solid #f2a8b54d;color:#ffcfdb}
+.login-deep-sea #ok{background:#194f50b8;border:1px solid #90e9cf42;color:#c6f5e8}
+.login-deep-sea #hint{color:#b0c9db;font-size:11px;line-height:1.8;border-top:1px solid #b1ddf024;padding-top:17px;margin-top:20px;overflow-wrap:anywhere}
+.login-deep-sea #hint a{color:#b3f3ef;text-decoration:underline;text-underline-offset:3px}
+.login-deep-sea .form-note,.login-deep-sea .foot{font-size:11px;line-height:1.8;color:#a2bac9;margin:19px 0 0;overflow-wrap:anywhere}
+.login-deep-sea #backBtn,.login-deep-sea #formStatusRetry{background:transparent;color:#b8d4e4;border:0;font-size:11px;padding:5px 0;line-height:1.6;margin-top:17px}
+.login-deep-sea #backBtn:hover,.login-deep-sea #formStatusRetry:hover{color:#fff}
+.login-deep-sea #formStatusRetry{text-decoration:underline;text-underline-offset:3px}
+.login-deep-sea .stage-footer{grid-row:3;grid-column:2;align-self:center;justify-self:end;position:relative;z-index:2;font:9px/1.7 Consolas,"Microsoft YaHei",sans-serif;letter-spacing:.09em;color:#b5cfde;text-align:right}
+.login-deep-sea .stage-footer span{display:block}
+.login-deep-sea .curtain,.login-deep-sea #curtain{visibility:hidden;position:absolute;inset:0;z-index:20;pointer-events:none;background:#07354a}
+.login-deep-sea #sceneStatus{position:absolute;left:24px;bottom:14px;z-index:21;color:#ddfff6;font-size:12px;line-height:1.6;margin:0;pointer-events:none}
+.login-deep-sea #stage[data-state=cover] #loginPanel,.login-deep-sea #stage[data-state=cover-busy] #loginPanel,.login-deep-sea #stage[data-state=revealing] #loginPanel{display:none}
+.login-deep-sea #stage[data-state=form] .cover-content,.login-deep-sea #stage[data-state=auth] .cover-content,.login-deep-sea #stage[data-state=entering] .cover-content{display:none}
+.login-deep-sea #stage[data-state=entering] #loginPanel{visibility:hidden}
+.login-deep-sea noscript{position:relative;display:block;padding:16px;color:#fff;background:#17364c}
+@keyframes login-sea-spin{to{transform:rotate(360deg)}}
+@media(max-width:1050px){.login-deep-sea .stage{grid-template-columns:minmax(0,1fr) minmax(310px,400px);column-gap:36px;padding-left:35px;padding-right:35px}.login-deep-sea .login-panel{padding:31px 27px 27px}.login-deep-sea .cover-content h1,.login-deep-sea .cover-content h2{font-size:52px}}
+@media(max-width:700px){
+.login-deep-sea .stage{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(min-content,1fr) auto;row-gap:30px;min-height:100svh;padding:25px 22px 20px}
+.login-deep-sea .stage-header{grid-row:1;grid-column:1}
+.login-deep-sea .brand{font-size:17px;gap:9px}
+.login-deep-sea .brand-mark{width:28px;height:28px;font-size:16px}
+.login-deep-sea .stage-kicker{display:none}
+.login-deep-sea .scene video{object-position:29% center}
+.login-deep-sea .scene-tone{background:linear-gradient(180deg,#0013240d,#00102266)}
+.login-deep-sea .cover-content,.login-deep-sea .login-panel{grid-column:1;grid-row:2;justify-self:center;width:100%;max-width:430px}
+.login-deep-sea .cover-content{min-height:470px;padding:45px 8px 38px}
+.login-deep-sea .cover-content h1,.login-deep-sea .cover-content h2{font-size:49px}
+.login-deep-sea .cover-description{font-size:13px}
+.login-deep-sea .login-panel{padding:34px 25px 28px;border-radius:14px;margin:6px 0}
+.login-deep-sea .login-panel #title{font-size:30px}
+.login-deep-sea .login-panel #subtitle{font-size:12px}
+.login-deep-sea .input-wrap input,.login-deep-sea .studio-field input{font-size:16px}
+.login-deep-sea .field{margin-bottom:20px}
+.login-deep-sea .stage-footer{grid-column:1;grid-row:3;justify-self:start;text-align:left;font-size:8px;margin-top:0}
+.login-deep-sea #sceneStatus{left:22px;bottom:7px}
+}
+@media(prefers-reduced-motion:reduce){.login-deep-sea *,.login-deep-sea *::before,.login-deep-sea *::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+@media(prefers-reduced-motion:reduce){.login-deep-sea .primary,.login-deep-sea .primary .arrow{transform:none!important}.login-deep-sea .primary::before{transform:none;transition:opacity 100ms!important}.login-deep-sea #submitBtn:hover:not(:disabled)::after{transform:translateY(-50%)}}
+
+/* Only concept 02 participates. One video; the masked backdrop filter removes
+   colour outside the pointer instead of painting fake colour over the video. */
+.login-deep-sea .deep-sea-reveal,.login-deep-sea .deep-sea-aurora{display:none;pointer-events:none!important}
+.login-deep-sea .theme-2 .scene{filter:none}
+.login-deep-sea .theme-2 .scene-tone{background:linear-gradient(90deg,#041a360d 20%,#061b3824 60%,#04152c4a)}
+.login-deep-sea .theme-2 .deep-sea-reveal{display:block;position:absolute;inset:0;z-index:-2;background:transparent;backdrop-filter:grayscale(.94) saturate(.65) brightness(.76);-webkit-backdrop-filter:grayscale(.94) saturate(.65) brightness(.76);mask-image:none;-webkit-mask-image:none}
+.login-deep-sea .theme-2 .deep-sea-reveal[data-revealing="true"]{mask-image:radial-gradient(circle var(--sea-radius,185px) at var(--sea-x,50%) var(--sea-y,50%),transparent 0%,transparent 19%,#00000009 32%,#00000035 49%,#0000008c 71%,#000000de 89%,#000 100%);-webkit-mask-image:radial-gradient(circle var(--sea-radius,185px) at var(--sea-x,50%) var(--sea-y,50%),transparent 0%,transparent 19%,#00000009 32%,#00000035 49%,#0000008c 71%,#000000de 89%,#000 100%)}
+.login-deep-sea .theme-2 .deep-sea-aurora{display:block;position:absolute;inset:0;width:100%;height:100%;z-index:-1;opacity:.95;contain:strict}
+.login-deep-sea .theme-2 .brand{background:#04213cbb;padding:7px 11px;margin:-7px -11px;box-shadow:0 1px 0 #ffffff10}
+@media(max-width:700px),(prefers-reduced-motion:reduce),(hover:none),(pointer:coarse){.login-deep-sea .theme-2 .deep-sea-aurora{display:none}.login-deep-sea .theme-2 .deep-sea-reveal{mask-image:none!important;-webkit-mask-image:none!important}}
+
+/* Static fallback uses the poster rather than a paused hardware video surface. */
+@media(max-width:700px),(prefers-reduced-motion:reduce),(hover:none),(pointer:coarse){.login-deep-sea .scene video{display:none}.login-deep-sea .scene{background-position:29% center}}
+@media(max-width:700px),(prefers-reduced-motion:reduce),(hover:none),(pointer:coarse){.login-deep-sea .theme-2 .deep-sea-reveal{display:none}.login-deep-sea .theme-2 .scene{filter:grayscale(.94) saturate(.65) brightness(.76)}}
+@media(max-width:700px){.login-deep-sea .theme-2 .scene-tone{background:linear-gradient(180deg,#04122470,#041224a3)}}

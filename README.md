@@ -10,6 +10,8 @@
 
 把一组 [dola.com](https://www.dola.com)（字节 Seedance 视频模型国际版）和 [豆包 doubao.com](https://www.doubao.com)（国内版）账号组成号池，对外提供 **OpenAI 兼容的视频生成 / 生图 API**，并兼容火山方舟（Ark）任务式协议，可直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
 
+可选的 [Studio 增强管理版](editions/studio/README.md) 提供独立的管理端、成员端、专家批量任务和素材管理，在单独的进程、端口及数据目录中运行；根目录继续使用本版主程序和部署方式。
+
 - 多账号号池：自动选号、额度记账、风控冷却、失败换号、每日额度重置
 - **两个站点的号混用**：dola 号接 `seedance-2.0-fast` / `seedance-2.5`，豆包号接 `doubao-seedance-*` 视频和 `doubao-seedream-*` 生图，按模型名自动分派、互不串号
 - 两种出片路径：纯 HTTP 协议（默认）与 Chromium 浏览器自动化（兜底，仅 dola）

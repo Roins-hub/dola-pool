@@ -1,0 +1,142 @@
+/* Night visual layer. The original ui.css remains the complete light theme. */
+.login-shell{display:contents}.login-art{display:none}
+.appearance-controls{display:flex;align-items:center;gap:8px;flex:none;font-size:12px;white-space:nowrap}
+.appearance-label{font-size:12px;color:var(--sub);margin:0}
+.appearance-theme,.appearance-motion{font:inherit;min-height:44px;min-width:44px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--card);color:var(--text)}
+.appearance-theme{display:inline-flex;align-items:center;justify-content:center}
+.login-app .appearance-controls{position:absolute;top:24px;right:28px;z-index:20}
+:root[data-theme=dark]{--bg:#101214;--card:#191c20;--line:#30363d;--text:#eceff2;--sub:#adb5be;--accent:#83cdb6;--accent-d:#a6dfcb;--red:#ff9b9b;--orange:#edc58c;--blue:#a4c7ff;--gray:#adb5be;--sidebar:#171a1e;--control:#20252a;--control-border:#687581;--hover:#262c32;--sidebar-width:216px;color-scheme:dark}
+:root[data-theme=dark] body{background:var(--bg);color:var(--text)}
+:root[data-theme=dark] ::selection{background:#36564c;color:#f1f7f4}
+:root[data-theme=dark] *{scrollbar-color:#59626c transparent}
+:root[data-theme=dark] :focus-visible{outline-color:#a6dfcb}
+:root[data-theme=dark] input::placeholder,:root[data-theme=dark] textarea::placeholder{color:#a4aeb8}
+:root[data-theme=dark] input:not([type=checkbox]):not([type=radio]),:root[data-theme=dark] select,:root[data-theme=dark] textarea{background-color:var(--control)!important;color:var(--text)!important;border-color:var(--control-border)!important}
+:root[data-theme=dark] input:-webkit-autofill{-webkit-text-fill-color:var(--text);-webkit-box-shadow:0 0 0 1000px var(--control) inset;caret-color:var(--accent)}
+:root[data-theme=dark] input[type=file]::file-selector-button{background:#343c44;color:var(--text);border:0;border-radius:5px;padding:6px 10px;margin-right:10px}
+:root[data-theme=dark] .sidebar{background:var(--sidebar);color:var(--text);border-right:1px solid var(--line);padding-top:29px}
+:root[data-theme=dark] .sidebar-brand{color:var(--text)}
+:root[data-theme=dark] .brand-mark{background:linear-gradient(145deg,#41474e,#22272d);border:1px solid #5a626c;color:#f3f5f7;font-weight:500;border-radius:8px}
+:root[data-theme=dark] .sidebar-brand small,:root[data-theme=dark] .nav-group,:root[data-theme=dark] .sidebar-footer,:root[data-theme=dark] .sidebar-footer .role-label{color:var(--sub)}
+:root[data-theme=dark] .sidebar nav button,:root[data-theme=dark] .sidebar nav a{color:#cbd1d8;min-height:46px}
+:root[data-theme=dark] .sidebar nav button:hover,:root[data-theme=dark] .sidebar nav a:hover{background:#252b31;color:#fff}
+:root[data-theme=dark] .sidebar nav button.on,:root[data-theme=dark] .sidebar nav a.on{background:#363d44;color:#f5f7f9;box-shadow:inset 0 0 0 1px #4c555f}
+:root[data-theme=dark] .app-header{min-height:94px;background:#15181b;border-bottom-color:var(--line)}
+:root[data-theme=dark] .app-header h1{font-weight:600;font-size:25px}
+:root[data-theme=dark] .app-main{padding-top:24px}
+:root[data-theme=dark] .card,:root[data-theme=dark] .summary-strip{background:var(--card);border-color:var(--line)}
+:root[data-theme=dark] .card{border-radius:12px}
+:root[data-theme=dark] .btn,:root[data-theme=dark] .primary{background:#20252a;border-color:#505a64;color:var(--text);min-height:40px}
+:root[data-theme=dark] .btn:hover{background:#2a3138;border-color:#8b9bA8;color:#fff}
+:root[data-theme=dark] .btn-p,:root[data-theme=dark] .primary{background:#b9c3ce;color:#152019;border-color:#d2d9df}
+:root[data-theme=dark] .btn-p:hover,:root[data-theme=dark] .primary:hover{background:#d6dee4;color:#101a15;border-color:#e3e9ed}
+:root[data-theme=dark] .btn-danger{color:var(--red)}
+:root[data-theme=dark] .btn-danger:hover{background:#3b2026;border-color:#ad626d;color:#ffc0c0}
+:root[data-theme=dark] .stat,:root[data-theme=dark] .stat.s1,:root[data-theme=dark] .stat.s2,:root[data-theme=dark] .stat.s3,:root[data-theme=dark] .stat.s4{background:var(--card);color:var(--text);border-color:var(--line);position:relative;isolation:isolate;overflow:hidden;padding:19px 22px}
+:root[data-theme=dark] .stat .v{font-weight:550;font-size:29px;letter-spacing:-.025em}
+:root[data-theme=dark] .stat.s2 .v{color:var(--red)}
+:root[data-theme=dark][data-hover-glow=on] .stat::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(180px at 90% 0,rgba(210,226,235,.07),transparent);opacity:0;transition:opacity .16s}
+:root[data-theme=dark][data-hover-glow=on] .stat:hover::after{opacity:1}
+:root[data-theme=dark] .attention{background:#332027;border-color:#70454e;color:var(--red)}
+:root[data-theme=dark] .attention small{color:#e4b7bb}
+:root[data-theme=dark] .attention.is-good{background:#182927;border-color:#36564f;color:var(--accent)}
+:root[data-theme=dark] .attention.is-good small{color:#b4d4ca}
+:root[data-theme=dark] .attention .ui-icon{width:26px;height:26px}
+:root[data-theme=dark] .resource-actions{flex-direction:row;flex-wrap:wrap}
+:root[data-theme=dark] .resource-actions .btn{flex:1}
+:root[data-theme=dark] .chart .bar{border-radius:2px 2px 0 0}
+:root[data-theme=dark] th{background:#252b31;color:#c0c8d0}
+:root[data-theme=dark] td,:root[data-theme=dark] th{border-bottom-color:#30363d}
+:root[data-theme=dark] tbody tr:hover{background:#20262b}
+:root[data-theme=dark] td .btn{min-height:34px}
+:root[data-theme=dark] .b-green{background:#203b32;color:#a2dfc4}
+:root[data-theme=dark] .b-red{background:#3b2026;color:#ffacac}
+:root[data-theme=dark] .b-blue{background:#23334c;color:#b4d0ff}
+:root[data-theme=dark] .b-orange{background:#403324;color:#f1d09c}
+:root[data-theme=dark] .b-gray{background:#2c3239;color:#c5cbd2}
+:root[data-theme=dark] .page-error,:root[data-theme=dark] .error-text{background:#3b2026;color:#ffb2b2;border-color:#70454e}
+:root[data-theme=dark] [style*="color:#c03237" i],:root[data-theme=dark] [style*="color: #c03237" i]{color:var(--red)!important}
+:root[data-theme=dark] [style*="color:#0a7a3f" i],:root[data-theme=dark] [style*="color: #0a7a3f" i]{color:var(--accent)!important}
+:root[data-theme=dark] [style*="color:#666" i],:root[data-theme=dark] [style*="color: #666" i]{color:var(--sub)!important}
+:root[data-theme=dark] [style*="background:#eef2f0" i],:root[data-theme=dark] [style*="background: #eef2f0" i]{background:var(--control)!important}
+:root[data-theme=dark] .detail-drawer,:root[data-theme=dark] .dialog .box,:root[data-theme=dark] .mask .box{background:#1c2025;color:var(--text)}
+:root[data-theme=dark] .detail-drawer{border:1px solid #515b65;box-shadow:-12px 14px 40px #0006}
+:root[data-theme=dark] .dialog,:root[data-theme=dark] .mask{background:#080b10b8}
+:root[data-theme=dark] .dialog .box,:root[data-theme=dark] .mask .box{box-shadow:0 18px 65px #0007}
+:root[data-theme=dark] .chip,:root[data-theme=dark] .group-item,:root[data-theme=dark] .proxy-group{background:var(--card);border-color:var(--line);color:var(--text)}
+:root[data-theme=dark] .chip:hover,:root[data-theme=dark] .account-view-button:hover{background:#28332f;color:var(--accent);border-color:#719d8e}
+:root[data-theme=dark] .group-summary:hover,:root[data-theme=dark] details>summary:hover{background:#252b31}
+:root[data-theme=dark] .sw i{background:#59616b}
+:root[data-theme=dark] .sw i::before{background:#d8dfe5}
+:root[data-theme=dark] .sw input:checked+i{background:#4d9580}
+:root[data-theme=dark] .preview-empty,:root[data-theme=dark] .key-value,:root[data-theme=dark] .keyfull{background:#12171b;color:var(--sub);border-color:var(--line)}
+:root[data-theme=dark] .code-block{background:#11171a;color:#d2e1dc}
+:root[data-theme=dark] .toast{background:#25483d;color:#e4f8ee;box-shadow:0 8px 24px #0006}
+:root[data-theme=dark] .toast.is-error{background:#5c2b35;color:#ffe5e7}
+:root[data-theme=dark] .empty .ui-icon,:root[data-theme=dark] .preview-empty .ui-icon{color:#a1b1bc}
+:root[data-theme=dark] .account-id{color:#c7d2dc}
+:root[data-theme=dark] .appearance-theme,:root[data-theme=dark] .appearance-motion{background:#20252a;border-color:#687581;color:var(--text)}
+:root[data-theme=dark] .appearance-motion:hover{background:#30373e}
+/* The login artwork owns its own layer; the form and controls stay above it. */
+:root[data-theme=dark] .login-app{display:flex;align-items:center;justify-content:center;min-height:100dvh;padding:28px;background:#101214}
+:root[data-theme=dark] .login-shell{display:grid;grid-template-columns:minmax(0,1fr) 410px;width:min(1500px,100%);min-height:min(760px,calc(100dvh - 56px));border:1px solid #343b43;border-radius:14px;background:#171b1f;overflow:hidden;position:relative;isolation:isolate}
+:root[data-theme=dark] .login-aside{min-height:720px;padding:32px 38px;background:#15191c;position:relative;isolation:isolate;overflow:hidden;justify-content:flex-start}
+:root[data-theme=dark] .login-aside::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;background:linear-gradient(180deg,transparent 60%,#15191ce8 100%)}
+:root[data-theme=dark] .login-art{display:block;position:absolute;inset:-12px;z-index:0;pointer-events:none;background:url('./assets/night-ribbons-v1.webp') center bottom/100% auto no-repeat;mask-image:linear-gradient(180deg,transparent,#000 24%);transform:scale(1.025);transform-origin:50% 65%}
+:root[data-theme=dark] .login-aside .sidebar-brand,:root[data-theme=dark] .login-intro,:root[data-theme=dark] .login-aside footer{z-index:10;position:relative}
+:root[data-theme=dark] .login-aside .sidebar-brand strong{font-size:22px;font-weight:550}
+:root[data-theme=dark] .login-aside .sidebar-brand small{font-size:12px;color:#b8c0c8}
+:root[data-theme=dark] .login-intro{max-width:660px;margin-top:64px;padding:0 12px;position:static}
+:root[data-theme=dark] .login-intro h2{font-size:clamp(34px,3.1vw,48px);line-height:1.28;font-weight:500;letter-spacing:-.035em;position:relative;z-index:10;margin:0 0 20px;text-wrap:balance}
+:root[data-theme=dark] .login-intro p{font-size:14px;color:#c1c9d1;position:relative;z-index:10;margin:0;max-width:540px}
+:root[data-theme=dark] .login-roles{position:absolute;bottom:70px;left:50px;right:26px;margin:0;gap:12px;z-index:10;max-width:610px}
+:root[data-theme=dark] .login-roles div{font-size:12px;color:#d4dce3;gap:10px}
+:root[data-theme=dark] .login-roles .ui-icon{color:#a6cfbf;width:17px;height:17px}
+:root[data-theme=dark] .login-aside footer{position:absolute;left:50px;bottom:27px;color:#aab5bf;font-size:11px}
+:root[data-theme=dark] .login-content{position:relative;z-index:10;padding:108px 38px 72px;background:#191d21;border-left:1px solid #343b43;align-items:center}
+:root[data-theme=dark] .login-content .panel{max-width:100%;width:100%}
+:root[data-theme=dark] .login-content h1{font-size:30px;font-weight:500;letter-spacing:-.025em;margin-bottom:8px}
+:root[data-theme=dark] .login-content .sub{color:#adb8c1;font-size:14px;margin-bottom:32px}
+:root[data-theme=dark] .login-content .tabs{background:#14181c;border:1px solid #515c67;padding:3px;border-radius:9px;gap:0}
+:root[data-theme=dark] .login-content .tabs button{border-radius:6px;min-height:38px;padding:7px;color:#b9c3cb}
+:root[data-theme=dark] .login-content .tabs .on{background:#363e46;color:#f3f5f7}
+:root[data-theme=dark] .login-content label{font-size:13px;color:#ccd3da;font-weight:400;margin-top:22px}
+:root[data-theme=dark] .login-content input{font-size:15px;min-height:48px;border-radius:9px;padding:12px 14px}
+:root[data-theme=dark] .login-content .primary{position:relative;isolation:isolate;min-height:48px;border-radius:9px;margin-top:28px;font-weight:600;background:#c9d1d9;color:#151c22;border-color:#e0e5e9;box-shadow:0 5px 18px #0003}
+:root[data-theme=dark] .login-content .primary::after{content:"";position:absolute;inset:1px;pointer-events:none;z-index:-1;border-radius:8px;background:linear-gradient(110deg,#e3e7ee80,#b9c5cf30)}
+:root[data-theme=dark] .login-content .hint{background:#252e32;color:#c8d5d4;border:1px solid #425451}
+:root[data-theme=dark] .login-content .foot{color:#a6b1bc;font-size:11px;line-height:1.8;margin-top:36px}
+:root[data-theme=dark] .login-app .appearance-controls{position:absolute;top:24px;right:24px}
+:root[data-theme=dark][data-motion=on][data-login-art=on] .login-art{animation:night-scene-drift 18s cubic-bezier(.37,0,.63,1) infinite alternate}
+@keyframes night-scene-drift{from{transform:translate3d(-4px,3px,0) scale(1.025)}to{transform:translate3d(4px,-3px,0) scale(1.033)}}
+:root[data-login-art=off] .login-art{display:none}
+:root[data-motion=off] .login-art,.login-aside[data-art-paused=true] .login-art{animation-play-state:paused!important;transition:none!important}
+@media(min-width:1900px){:root[data-theme=dark] .login-shell{min-height:800px}:root[data-theme=dark] .login-aside{min-height:800px}}
+@media(max-width:1280px){:root[data-theme=dark]{--sidebar-width:200px}:root[data-theme=dark] .login-shell{grid-template-columns:minmax(0,1fr) 385px}:root[data-theme=dark] .login-aside{padding:30px}:root[data-theme=dark] .login-intro{padding:0;margin-top:70px}:root[data-theme=dark] .login-roles{left:30px}:root[data-theme=dark] .login-aside footer{left:30px}:root[data-theme=dark] .login-content{padding-left:30px;padding-right:30px}}
+@media(max-width:1000px){:root[data-theme=dark] .login-app{padding:20px}:root[data-theme=dark] .login-shell{grid-template-columns:minmax(0,1fr) 350px}:root[data-theme=dark] .login-aside{min-height:700px;padding:28px}:root[data-theme=dark] .login-intro h2{font-size:34px}:root[data-theme=dark] .login-intro p{font-size:13px}:root[data-theme=dark] .login-roles{left:28px;right:20px}:root[data-theme=dark] .login-roles div{font-size:11px}:root[data-theme=dark] .login-content{padding:100px 25px 50px}}
+@media(max-width:767px){.appearance-controls>.appearance-label{display:none}.appearance-theme{max-width:105px;min-height:36px}.login-app>.appearance-controls{top:18px;right:20px}:root[data-theme=dark] .app-header{min-height:94px;padding:16px 14px}:root[data-theme=dark] .head-r{max-width:52%;gap:6px}:root[data-theme=dark] .head-r .btn{min-height:36px}:root[data-theme=dark] .app-header h1{font-size:21px}:root[data-theme=dark] .appearance-theme{max-width:84px}:root[data-theme=dark] .head-r #lastUpdate{display:none}:root[data-theme=dark] .app-main{padding:18px 14px 32px}:root[data-theme=dark] .sidebar{background:#171a1e}:root[data-theme=dark] .nav-open .sidebar-overlay{background:#080b10b8}:root[data-theme=dark] .btn,:root[data-theme=dark] td .btn{min-height:44px}:root[data-theme=dark] .login-app{display:block;padding:16px;min-height:100dvh}:root[data-theme=dark] .login-shell{display:block;min-height:calc(100dvh - 32px)}:root[data-theme=dark] .login-aside{min-height:105px;padding:24px 22px;background:#171b1f;overflow:visible}:root[data-theme=dark] .login-art,:root[data-theme=dark] .login-aside::after{display:none}:root[data-theme=dark] .login-aside .sidebar-brand small{max-width:170px;font-size:11px}:root[data-theme=dark] .login-content{padding:26px 24px 38px;border-left:0;border-top:1px solid #343b43;min-height:480px}:root[data-theme=dark] .login-content h1{font-size:28px}:root[data-theme=dark] .login-content input{font-size:16px}:root[data-theme=dark] .login-content .sub{margin-bottom:26px}:root[data-theme=dark] .login-app>.appearance-controls{top:39px;right:38px}:root[data-theme=dark] .appearance-motion{display:none}}
+@media(max-width:420px){:root[data-theme=dark] .head-r .refresh-label{display:none}:root[data-theme=dark] .app-header .page-description{max-width:170px}:root[data-theme=dark] .head-r{max-width:50%}:root[data-theme=dark] .appearance-theme{padding-left:5px;padding-right:5px;max-width:76px}:root[data-theme=dark] .login-aside .sidebar-brand small{font-size:10px;max-width:145px}:root[data-theme=dark] .login-aside .sidebar-brand strong{font-size:19px}:root[data-theme=dark] .login-aside .sidebar-brand{gap:10px}:root[data-theme=dark] .login-content{padding-left:22px;padding-right:22px}}
+@media(min-width:768px) and (max-width:1100px){:root[data-theme=dark] .table-scroll table{min-width:720px}}
+@media(max-width:767px){.appearance-theme{min-height:44px}:root[data-theme=dark] .head-r .btn,:root[data-theme=dark] .btn.mobile-menu{min-height:44px;min-width:44px}:root[data-theme=dark] .login-app .appearance-controls{top:22px;right:22px}}
+@media(prefers-reduced-motion:reduce),(hover:none),(pointer:coarse){.login-art{animation:none!important;transition:none!important}}
+/* Full-viewport surfaces; only the form's reading width is constrained. */
+:root[data-theme] .login-app{display:block;padding:0;min-height:100dvh}
+:root[data-theme] .login-shell{display:grid;grid-template-columns:minmax(0,1fr) clamp(400px,32vw,640px);width:100%;max-width:none;min-height:100dvh;margin:0;border:0;border-radius:0}
+:root[data-theme] .login-aside{min-height:100dvh;padding:clamp(30px,3.4vw,68px)}
+:root[data-theme] .login-content{min-height:100dvh;padding:100px clamp(28px,3.1vw,64px) 64px}
+:root[data-theme] .login-content .panel{width:100%;max-width:400px}
+:root[data-theme=dark] .login-intro{margin-top:clamp(70px,9vh,112px);padding:0;max-width:700px}
+:root[data-theme=dark] .login-intro h2{font-size:clamp(38px,3vw,58px)}
+:root[data-theme=dark] .login-roles{left:clamp(30px,3.4vw,68px);bottom:78px}
+:root[data-theme=dark] .login-aside footer{left:clamp(30px,3.4vw,68px);bottom:36px}
+.member-app .app-main{max-width:none;margin-left:var(--sidebar-width);margin-right:0}
+@media(max-width:900px){
+  :root[data-theme] .login-shell{display:block;min-height:100dvh}
+  :root[data-theme] .login-aside{min-height:108px;padding:24px}
+  :root[data-theme] .login-intro,:root[data-theme] .login-aside footer,:root[data-theme] .login-art,:root[data-theme] .login-aside::after{display:none}
+  :root[data-theme] .login-content{min-height:calc(100dvh - 108px);padding:36px 24px 44px;border-left:0}
+  :root[data-theme] .login-app .appearance-controls{top:24px;right:24px}
+  :root[data-theme] .appearance-motion{display:none}
+  :root[data-theme] .login-app .appearance-controls>.appearance-label{display:none}
+}
+@media(max-width:767px){.member-app .app-main{margin-left:0;margin-right:0;width:100%}}

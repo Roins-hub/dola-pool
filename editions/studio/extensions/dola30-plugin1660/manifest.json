@@ -1,0 +1,93 @@
+{
+  "manifest_version": 3,
+  "name": "苏生阁AI · 30秒无水印助手",
+  "short_name": "苏生阁助手",
+  "version": "1.6.60",
+  "description": "豆包与 Dola 原生参数选择、Debugger 网络调试、真实响应诊断、时间轴转换与视频资源提取。",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "tabs",
+    "scripting",
+    "downloads",
+    "debugger",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*/*"
+  ],
+  "background": {
+    "service_worker": "service-worker-v1.6.60.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.doubao.com/*"
+      ],
+      "js": [
+        "doubao-generation-intent-main.js",
+        "doubao-auto-confirm-main.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "*://*.doubao.com/*",
+        "*://*.dola.com/*"
+      ],
+      "js": [
+        "direct-video-utils.js",
+        "media-capture-main.js",
+        "video-request-schema.js",
+        "generation-evidence-main.js",
+        "model-selection-main.js",
+        "skill-pack-main.js",
+        "resolution-main.js",
+        "timeline-progress-main.js",
+        "two-part-main.js",
+        "media-upload-main.js",
+        "dola-silent-expert-main.js",
+        "protocol-send-main.js",
+        "resolution-native-main.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "*://*.doubao.com/*",
+        "*://*.dola.com/*"
+      ],
+      "js": [
+        "duration-main.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "*://*.doubao.com/*",
+        "*://*.dola.com/*",
+        "*://*.qianwen.com/*",
+        "*://*.jianying.com/*"
+      ],
+      "js": [
+        "direct-video-utils.js",
+        "content-panel.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "苏生阁AI · 30秒无水印助手",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
+}

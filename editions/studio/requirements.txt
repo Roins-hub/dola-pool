@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+aiohttp
+pydantic>=2,<3
+patchright
+python-dotenv
+pillow
+requests[socks]>=2.32.0,<3
+aiohttp-socks
+numpy
+opencv-python-headless

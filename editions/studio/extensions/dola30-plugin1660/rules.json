@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/dola-skill-pack-response.json"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://([^/]+\\.)?dola\\.com/samantha/skill/pack(?:[/?].*)?$",
+      "resourceTypes": ["xmlhttprequest"]
+    }
+  }
+]

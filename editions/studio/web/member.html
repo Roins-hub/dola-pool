@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>成员工作台 · 路过api</title>
+<script src="/appearance-init.js?v=night-only-20261026-r1"></script>
+<link rel="stylesheet" href="/ui.css?v=delete-notice-20261028">
+<link rel="stylesheet" href="/appearance.css?v=night-only-20261026-r1">
+<script src="/appearance.js?v=admin-motion-20261026-r4" defer></script>
+<link rel="stylesheet" href="/appearance-motion.css?v=night-only-20261026-r1">
+<script src="/appearance-motion.js?v=night-only-20261026-r1" defer></script>
+</head>
+<body class="member-app">
+<a class="skip-link" href="#mainContent">跳到主要内容</a>
+<aside class="sidebar" aria-label="成员导航">
+<div class="sidebar-brand"><span class="brand-mark" aria-hidden="true">路</span><div><strong>路过api</strong><small>成员工作台 · v0.8.15</small></div></div>
+<nav aria-label="主要导航">
+<button class="on" data-view="create" aria-current="page"><span data-icon="home"></span>创作工作台</button>
+<button data-view="tasks"><span data-icon="tasks"></span>我的任务</button>
+<button data-view="keys"><span data-icon="key"></span>我的 API 密钥</button>
+<button data-view="docs"><span data-icon="book"></span>接入说明</button>
+</nav>
+<div class="sidebar-footer"><div class="role-label"><span data-icon="users"></span>个人工作台</div>自己的创作、任务与密钥</div>
+</aside>
+<button id="sidebarOverlay" class="sidebar-overlay" aria-label="关闭导航" tabindex="-1"></button>
+<header class="app-header">
+<button class="btn icon-button mobile-menu" id="sideToggle" aria-label="打开导航" aria-expanded="false"><span data-icon="menu"></span></button>
+<div class="header-title"><h1 id="pageTitle">创作工作台</h1><p class="page-description" id="pageDescription">提交视频，查看自己的任务与结果</p></div>
+<div class="head-r"><span id="who" class="identity"></span><span id="lastUpdate"></span><button class="btn" id="refreshBtn" aria-label="手动刷新"><span data-icon="refresh"></span><span class="refresh-label">刷新</span></button><button class="btn" id="logoutBtn" aria-label="退出登录"><span data-icon="logout"></span><span class="logout-label">退出</span></button></div>
+</header>
+<main id="mainContent" class="app-main" tabindex="-1">
+<div id="pageError" class="page-error" role="alert" hidden></div>
+<section id="view-create">
+<div id="memberSummary" class="summary-strip"><div class="summary-item"><span data-icon="check"></span><div><span>今日完成</span><strong>—</strong></div></div><div class="summary-item"><span data-icon="video"></span><div><span>今日提交</span><strong>—</strong></div></div><div class="summary-item"><span data-icon="key"></span><div><span>所选密钥剩余</span><strong>—</strong></div></div></div>
+<div id="keyNotice" class="page-error" role="status" hidden></div>
+<div class="compose-layout">
+<div class="card"><h2>生成视频</h2>
+<form class="compose" id="memberForm">
+<div class="field"><label for="memberPlatform">生成平台</label><select id="memberPlatform"><option value="dola">Dola</option><option value="doubao">豆包</option></select><small id="memberPlatformNotice" role="status"></small></div>
+<div class="field" id="memberProfileField"><label for="memberProfile">生成入口</label><select id="memberProfile"><option value="">普通模式</option></select><small id="memberQuotaNotice">普通Fast 10秒：每账号每天1次，北京时间凌晨01:00重置；专家Fast：每账号4次申请，每次使用满7天恢复1次，一次双片也只计1次。</small></div>
+<div class="field"><label for="memberKey">使用密钥</label><select id="memberKey" disabled><option>正在加载密钥…</option></select><small id="selectedKeyInfo">仅使用自己的 API 密钥</small></div>
+<div class="field"><label for="memberPrompt">提示词</label><textarea id="memberPrompt" placeholder="描述你想生成的视频画面…" required maxlength="10000"></textarea></div>
+<div class="optrow">
+<div class="field"><label for="memberBatchCount">申请数量</label><input id="memberBatchCount" type="number" min="1" max="20" step="1" value="1" inputmode="numeric"><small>1～20次申请；确认会话后继续提交，视频在后台分别生成。</small></div>
+<div class="field"><label for="memberModel">模型</label><select id="memberModel"><option value="seedance-2.0">Fast 2.0</option><option value="seedance-1.0" hidden disabled>Seedance 1.0（试用）</option><option value="seedance-2.5" hidden disabled>Seedance 2.5（已下架）</option></select></div>
+<div class="field"><label for="memberDuration">时长</label><select id="memberDuration" disabled><option>—</option></select></div>
+<div class="field"><label for="memberRatio">比例</label><select id="memberRatio"><option value="default">自动</option><option value="16:9">16:9 横屏</option><option value="9:16">9:16 竖屏</option><option value="1:1">1:1 方形</option><option value="3:4">3:4</option><option value="4:3">4:3</option></select></div>
+</div>
+<p class="hint" id="memberFast15Hint" hidden></p>
+<p class="hint" id="memberFast30Hint" hidden>Fast 30秒为试验档，实际扣点和成片时长待确认；以Dola回执及成片核对为准</p>
+<div class="field">
+<label for="memberRefFiles">参考图片（可选）</label><input id="memberRefFiles" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+<details class="reference-more"><summary>更多导入方式</summary>
+<div class="reference-extra"><label for="memberRefFolder">从文件夹导入图片</label><input id="memberRefFolder" type="file" webkitdirectory multiple></div>
+<div class="reference-extra" id="memberRefLinks"><label for="memberRefs">图片链接</label><input id="memberRefs" type="text" placeholder="https://example.com/ref.jpg，多张用逗号分隔"></div>
+</details>
+<small id="memberRefHelp">支持 JPG、PNG、WebP，点击“生成视频”时上传。</small>
+<div id="memberRefPreview" class="reference-previews"></div><p id="memberRefError" class="hint" role="alert" style="color:var(--red)"></p>
+</div>
+<p class="hint" id="memberRefUrlNotice" hidden>当前模型不能使用已填写的图片链接。<button class="text-button" type="button" id="memberRefClearLinks">清空图片链接</button>后可使用本地图片。</p>
+<div class="field">
+<label for="memberMediaFiles">参考音频 / 视频（可选） <span class="badge b-blue">新功能</span></label>
+<input id="memberMediaFiles" type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,.mp4,.mov,.webm" multiple>
+<small id="memberMediaHelp">选择音频或视频文件，点击“生成视频”时一起上传。</small>
+<small>在提示词中说明素材用途，例如“参考音频的节奏，参考视频的运镜”。素材类型按所选平台的已验证能力开放。</small>
+<div id="memberMediaPreview" class="reference-previews media-previews"></div><p id="memberMediaError" class="hint" role="alert" style="color:var(--red)"></p>
+</div>
+<div class="actions"><button class="btn btn-p" id="memberSubmit" type="submit" disabled>生成视频</button><button class="text-button" type="button" data-view="docs">查看接入说明</button></div>
+<div class="status" id="memberStatus" role="status" style="display:none"></div>
+</form></div>
+<div class="card"><h2>任务与结果</h2><div id="memberResult"><div class="preview-empty"><span data-icon="video"></span><strong>提交任务后查看结果</strong><span>也可以在我的任务中选择一条记录</span></div></div><p class="hint" style="margin:16px 0 0">仅显示自己的任务。提交后按真实状态更新，不估算完成时间。</p></div>
+</div>
+<div class="card"><div class="toolbar"><h2>我的最近任务</h2><button class="text-button" data-view="tasks">查看我的任务</button></div><div id="memberRecent" class="loading">正在加载个人任务…</div></div>
+</section>
+<section id="view-tasks" hidden>
+<div class="card"><div class="toolbar"><h2>我的任务</h2><span class="hint">只显示名下密钥关联的任务</span></div>
+<div class="filter-row"><label class="sr-only" for="memberTaskPlatform">任务平台</label><select id="memberTaskPlatform"><option value="all">全部平台</option><option value="dola">Dola</option><option value="doubao">豆包</option></select><label class="sr-only" for="memberTaskSearch">搜索个人任务</label><input id="memberTaskSearch" class="search-input" placeholder="搜索任务 ID 或提示词"><label class="sr-only" for="memberTaskState">任务状态</label><select id="memberTaskState"><option value="all">全部状态</option><option value="processing">生成中</option><option value="queued">排队中</option><option value="completed">已完成</option><option value="failed">失败</option></select><label class="sr-only" for="memberTaskRange">读取范围</label><select id="memberTaskRange"><option value="50">最近 50 条</option><option value="100">最近 100 条</option><option value="200">最近 200 条</option></select><span id="memberTaskCount" class="filter-count"></span></div>
+<div id="memberTasks"></div></div>
+</section>
+<section id="view-keys" hidden><div class="card"><div class="toolbar"><h2>我的 API 密钥</h2><span class="hint">启用状态与限额由管理员维护</span></div><div id="memberKeys"></div></div></section>
+<section id="view-docs" hidden>
+<div class="card"><h2>API 接入</h2><dl class="detail-fields"><dt>调用地址</dt><dd><span id="memberApiBase" class="mono">—</span></dd><dt>身份认证</dt><dd><code>Authorization: Bearer YOUR_API_KEY</code></dd><dt>提交任务</dt><dd><span class="api-method">POST</span><span class="api-path">/v1/videos/generations</span></dd><dt>查询任务</dt><dd><span class="api-method">GET</span><span class="api-path">/v1/videos/{id}</span></dd></dl><p class="hint">使用自己的有效密钥。提交返回任务 ID 后，可查询任务状态，完成时获取视频链接。</p></div>
+<div class="card"><div class="toolbar"><h2>请求示例</h2><button class="btn" id="copyExample"><span data-icon="copy"></span>复制示例</button></div><p class="hint">PowerShell 示例使用密钥占位符，填写自己的密钥后运行。模型与时长按当前可用参数生成。</p><pre class="code-block" id="memberExample"></pre></div>
+</section>
+</main>
+<script src="/ui.js?v=20261021-platforms"></script>
+<script src="/task-results-ui.js?v=quota-renewal-20261031"></script>
+<script src="/platform-ui.js?v=expert-mode-20261029"></script>
+<script src="/reference-images.js?v=expert30-doubao-images-v088"></script>
+<script src="/task-evidence.js?v=expert-mode-20261029"></script>
+<script src="/member.js?v=quota-renewal-20261031"></script>
+</body>
+</html>
