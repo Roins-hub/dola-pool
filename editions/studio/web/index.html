@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>路过api 管理面板</title>
+<script src="/appearance-init.js?v=night-only-20261026-r1"></script>
+<link rel="stylesheet" href="/ui.css?v=delete-notice-20261028">
+<link rel="stylesheet" href="/appearance.css?v=night-only-20261026-r1">
+<script src="/appearance.js?v=admin-motion-20261026-r4" defer></script>
+<link rel="stylesheet" href="/appearance-motion.css?v=night-only-20261026-r1">
+<link rel="stylesheet" href="/dashboard-trend.css?v=aurora-20261031-r3">
+<script src="/appearance-motion.js?v=night-only-20261026-r1" defer></script>
+</head>
+<body class="admin-app">
+<a class="skip-link" href="#mainContent">跳到主要内容</a>
+<div id="loginMask" class="mask" style="display:none">
+  <div class="box">
+    <h2>管理面板登录</h2>
+    <div class="tiny" style="margin:-6px 0 12px">此入口使用「管理面板密码」（DOLA_ADMIN_KEY）。未启用时请改用邮箱登录。</div>
+    <input id="loginKey" type="password" placeholder="管理面板密码" onkeydown="if(event.key==='Enter')submitLogin()">
+    <div class="err" id="loginErr">密码错误</div>
+    <button class="btn btn-p" onclick="submitLogin()">登录</button>
+    <div class="tiny" style="margin-top:14px;text-align:center">或 <a href="/login">使用邮箱登录</a></div>
+  </div>
+</div>
+
+<aside class="sidebar" aria-label="管理员导航">
+  <div class="sidebar-brand"><span class="brand-mark" aria-hidden="true">路</span><div><strong>路过api</strong><small>管理控制台 · v0.8.35 · 双平台号池</small></div></div>
+  <nav aria-label="主要导航">
+    <div class="nav-group">运行监控</div>
+    <button class="on" data-tab="dash" onclick="switchTab('dash')" aria-current="page"><span data-icon="home"></span>仪表盘</button>
+    <button data-tab="tasks" onclick="switchTab('tasks')"><span data-icon="tasks"></span>任务列表</button>
+    <button data-tab="gallery" onclick="switchTab('gallery')"><span data-icon="video"></span>视频创作</button>
+    <div class="nav-group">资源管理</div>
+    <button data-tab="accounts" onclick="switchTab('accounts')"><span data-icon="accounts"></span>账号管理</button>
+    <button data-tab="proxies" onclick="switchTab('proxies')"><span data-icon="proxy"></span>代理与 IP</button>
+    <div class="nav-group">访问管理</div>
+    <button data-tab="keys" onclick="switchTab('keys')"><span data-icon="key"></span>API 密钥</button>
+    <button data-tab="users" onclick="switchTab('users')"><span data-icon="users"></span>成员管理</button>
+  </nav>
+  <div class="sidebar-footer"><div class="role-label"><span data-icon="users"></span>管理员</div>运行监控与资源管理</div>
+</aside>
+<button id="sidebarOverlay" class="sidebar-overlay" aria-label="关闭导航" tabindex="-1"></button>
+<header class="app-header">
+  <button class="btn icon-button mobile-menu" id="sideToggle" aria-label="打开导航" aria-expanded="false"><span data-icon="menu"></span></button>
+  <div class="header-title"><h1 id="pageTitle">运行概览</h1><p class="page-description" id="pageDescription">查看任务结果与资源状态</p></div>
+  <div class="head-r">
+    <label><input type="checkbox" id="autoCk" checked onchange="autoRefresh=this.checked">自动刷新</label>
+    <span id="lastUpdate"></span>
+    <button class="btn" onclick="refresh()" aria-label="手动刷新"><span data-icon="refresh"></span><span class="refresh-label">手动刷新</span></button>
+    <button class="btn" onclick="logout()" aria-label="退出登录"><span data-icon="logout"></span><span class="logout-label">退出</span></button>
+  </div>
+</header>
+
+<main id="mainContent" class="app-main" tabindex="-1">
+  <div id="pageError" class="page-error" role="alert" hidden></div>
+  <section id="tab-dash">
+    <div id="dashAttention"></div>
+    <div class="cards" id="statCards"><div class="stat"><div class="l">运行数据</div><div class="v">—</div><div class="stat-note">正在加载</div></div></div>
+    <div class="dashboard-grid">
+      <div class="card trend-card"><div class="toolbar"><h2>近 7 日出片趋势</h2><div class="legend"><span><i></i>完成</span><span><i class="failed"></i>失败</span></div></div><div class="chart-axis"><span>任务数</span><span id="chartScale"></span></div><div class="chart" id="chart"></div></div>
+      <div class="card"><h2>资源概况</h2><div id="dashResources" class="loading">正在加载资源状态…</div></div>
+    </div>
+    <div class="card"><div class="toolbar"><h2>最近失败任务</h2><button class="text-button" onclick="AdminUI.goFailures()">查看失败任务</button></div><div id="dashFailures" class="loading">正在加载最近任务…</div></div>
+    <div class="card"><div class="toolbar"><h2>账号概况</h2><button class="text-button" onclick="switchTab('accounts')">查看所有账号</button></div><div id="perAccount"></div><div class="hint" style="margin-top:12px">首页显示最多 12 个账号，异常状态优先；额度为本地记录值。</div></div>
+  </section>
+
+  <section id="tab-accounts" style="display:none">
+    <div class="card"><label for="accountPlatform">账号平台</label><select id="accountPlatform"><option value="dola">Dola 号池</option><option value="doubao">豆包号池</option></select><p class="hint">两个平台独立管理账号、额度和轮询；共用线路统一调度。</p></div>
+    <div id="dolaAccountPane">
+    <div class="card">
+      <div class="toolbar">
+        <h2 style="margin:0">账号列表</h2>
+        <div class="toolbar-actions">
+          <button class="btn" id="btnVerifyAll" onclick="verifyAllAccounts(this)">检测失效号</button>
+          <button class="btn btn-danger" onclick="deleteInvalidAccounts(this)">删除失效号</button>
+          <button class="btn" onclick="openTrash()">回收站</button>
+          <button class="btn" onclick="resetAllAccounts(this)">恢复全部满状态</button>
+          <button class="btn" onclick="openImportCK()"><span data-icon="plus"></span>导入 CK</button>
+          <button class="btn btn-p" onclick="openBatchImportCK()">批量导入 CK</button>
+          <button class="btn" onclick="openGoogleImport()">导入 Google 账号</button>
+        </div>
+      </div>
+      <div class="toolbar" role="group" aria-label="Fast日／周独立额度">
+        <div><strong>Fast日／周独立额度</strong><p class="hint" id="accountQuotaCurrent" role="status">正在读取当前额度方案…</p></div>
+        <div class="toolbar-actions">
+          <button class="btn" id="accountQuotaFast" type="button" hidden disabled aria-pressed="false" onclick="AdminUI.setQuotaPolicy('fast',this)">Fast：每号每天4次</button>
+          <button class="btn" id="accountQuota25" type="button" hidden disabled aria-pressed="false" onclick="AdminUI.setQuotaPolicy('seedance25',this)">2.5档：每号每天2次</button>
+        </div>
+      </div>
+      <p class="hint">仅调整本地每日上限，今日已用继续累计；Dola余额与限流仍生效。</p>
+      <p id="accountQuotaError" class="error-text" role="alert" hidden></p>
+      <div id="accountCategories" class="account-categories" aria-label="账号分类调度"><p class="hint">正在加载分类…</p></div>
+      <p class="hint category-help">分类开关控制新任务分配；已受理的视频继续查询。启用分类后，账号仍遵循单号开关、登录状态及额度限制。</p>
+      <p id="accountCategoryError" class="error-text" role="alert"></p>
+      <div id="accountViews" class="account-views" role="group" aria-label="按调度启停分页"></div>
+      <p class="hint account-view-help">已停用账号可点击“恢复使用”单独启用，不影响其他账号。登录状态与额度限制仍生效。</p>
+      <div class="filter-row"><label class="sr-only" for="accountSearch">搜索账号或邮箱</label><input class="search-input" id="accountSearch" placeholder="搜索账号或邮箱" oninput="AdminUI.filterAccounts()"><label class="sr-only" for="accountCategory">账号分类</label><select id="accountCategory" onchange="AdminUI.filterAccounts()"><option value="all">全部分类</option><option value="disposable">日抛号</option><option value="long_term">接码长期号</option></select><label class="sr-only" for="accountState">账号状态</label><select id="accountState" onchange="AdminUI.filterAccounts()"><option value="all">全部状态</option><option value="invalid">失效</option><option value="birthday">待生日验证</option><option value="limited">限流 / 积分不足 / 冷却</option><option value="busy">出片中</option><option value="valid">有效</option><option value="unverified">未验证</option></select><span id="accountCount" class="filter-count"></span></div>
+      <div id="accountSupplementError" class="hint" role="status"></div>
+      <div id="accountsTable"></div>
+    </div>
+    </div>
+    <div id="doubaoAccountPane" hidden>
+      <div class="card">
+        <div class="toolbar"><h2>豆包号池</h2><div class="toolbar-actions"><button class="btn btn-p" id="doubaoBrowserLogin">打开登录浏览器</button><button class="btn" id="doubaoLogin">网页扫码添加账号</button><button class="btn" id="doubaoImport">导入豆包 CK</button><button class="btn" id="doubaoTrash">豆包回收站</button><button class="btn" id="doubaoQuota">豆包本地额度</button></div></div>
+        <p id="doubaoAccountNotice" class="hint" role="status">正在读取豆包状态…</p>
+        <p id="doubaoAccountError" class="error-text" role="alert"></p>
+        <div id="doubaoAccountsTable"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-proxies" style="display:none">
+    <div class="cards" id="proxyStats"></div>
+    <div class="card" id="proxyQuota"></div>
+    <div class="card">
+      <div class="toolbar">
+        <h2 style="margin:0">出口 IP 分组</h2>
+        <div>
+          <button class="btn" onclick="openImportProxy()">导入代理</button>
+          <button class="btn" onclick="testAllProxies(this)">检测全部</button>
+        </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px">每个账号可绑定一个静态代理（ISP / 住宅 IP）。多个账号填同一个代理串，就是「几号一 IP」。生成浏览器默认使用德文，并匹配德国地区和时区；管理后台和中文提示词不受影响。</div>
+      <div id="proxyGlobal" class="tiny" style="margin-bottom:12px"></div>
+      <div id="proxyGroups"></div>
+    </div>
+    <div class="card">
+      <div class="toolbar">
+        <h2 style="margin:0">账号 → 出口 IP 明细</h2>
+        <div id="proxyBulk" style="display:none;align-items:center;gap:8px">
+          <span class="tiny">已选 <b id="selCount">0</b> 个账号</span>
+          <button class="btn" onclick="clearSelectedProxies()">清除所选代理</button>
+          <button class="btn btn-p" onclick="openBulkProxy()">批量设置同一 IP</button>
+        </div>
+      </div>
+      <div class="hint" style="margin-bottom:12px">勾选多个账号后点「批量设置同一 IP」，就能把几个号绑到同一条代理（几号一 IP）；想一号一 IP 就每次只勾一个。</div>
+      <div class="filter-row"><label class="sr-only" for="proxySearch">搜索代理账号</label><input class="search-input" id="proxySearch" placeholder="搜索账号、邮箱或代理地址" oninput="filterProxyTable()"><span id="proxyCount" class="filter-count"></span></div>
+      <div id="proxyTable"></div>
+    </div>
+  </section>
+
+  <section id="tab-tasks" style="display:none">
+    <div class="card"><div class="toolbar"><h2>任务列表</h2><span class="hint">筛选仅作用于当前读取范围</span></div><div class="filter-row"><label class="sr-only" for="taskPlatform">任务平台</label><select id="taskPlatform"><option value="all">全部平台</option><option value="dola">Dola</option><option value="doubao">豆包</option></select><label class="sr-only" for="taskSearch">搜索任务</label><input class="search-input" id="taskSearch" placeholder="搜索任务 ID、提示词或账号" oninput="AdminUI.renderTasks()"><label class="sr-only" for="taskState">任务状态</label><select id="taskState" onchange="AdminUI.renderTasks()"><option value="all">全部状态</option><option value="failed">失败</option><option value="processing">生成中</option><option value="queued">排队中</option><option value="completed">已完成</option></select><label class="sr-only" for="taskRange">读取范围</label><select id="taskRange" onchange="loadTasks().catch(e=>UI.setError(e.message,refresh))"><option value="50">最近 50 条</option><option value="100">最近 100 条</option><option value="200">最近 200 条</option></select><span id="taskCount" class="filter-count"></span></div><div id="tasksTable"></div></div>
+  </section>
+
+  <section id="tab-gallery" style="display:none">
+    <div class="compose-layout">
+    <div class="card">
+      <div class="toolbar">
+        <h2 style="margin:0">生成视频</h2>
+        <span class="hint">Dola 生成前自动检查账号的无水印设置；收片核对原片来源</span>
+      </div>
+      <div class="compose">
+        <div class="field"><label for="genPlatform">生成平台</label><select id="genPlatform"><option value="dola">Dola</option><option value="doubao">豆包</option></select><p id="genPlatformNotice" class="hint" role="status"></p></div>
+<div class="field" id="genProfileField"><label for="genProfile">生成入口</label><select id="genProfile"><option value="">普通模式</option></select><small id="genQuotaNotice">普通Fast 10秒：每账号每天1次，北京时间凌晨01:00重置；专家Fast：每账号4次申请，每次使用满7天恢复1次，一次双片也只计1次。</small></div>
+        <label class="sr-only" for="genPrompt">视频提示词</label><textarea id="genPrompt" placeholder="描述你想要的视频，例如：一只可爱的橘猫在窗台上慵懒地晒太阳，暖光，特写镜头"></textarea>
+        <div class="optrow">
+          <div class="field"><label for="genBatchCount">申请数量</label><input id="genBatchCount" type="number" min="1" max="20" step="1" value="1" inputmode="numeric"><small>1～20次申请；确认会话后继续提交，视频在后台分别生成。</small></div>
+<div class="field">
+            <label for="genModel">模型</label>
+            <select id="genModel">
+              <option value="seedance-2.0">Fast 2.0（约 10 分钟出片）</option>
+              <option value="seedance-1.0" hidden disabled>Seedance 1.0（试用）</option>
+              <option value="seedance-2.5" hidden disabled>Seedance 2.5（已下架）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="genDuration">时长</label>
+            <select id="genDuration">
+              <option value="10">10 秒</option>
+              <option value="5">5 秒</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="genRatio">比例</label>
+            <select id="genRatio">
+              <option value="default">自动</option>
+              <option value="9:16">9:16（竖屏）</option>
+              <option value="16:9">16:9（横屏）</option>
+              <option value="1:1">1:1（方形）</option>
+              <option value="3:4">3:4</option>
+              <option value="4:3">4:3</option>
+            </select>
+          </div>
+          <p class="hint field-wide" id="genFast15Hint" hidden></p>
+          <p class="hint field-wide" id="genFast30Hint" hidden>Fast 30秒为试验档，实际扣点和成片时长待确认；以Dola回执及成片核对为准</p>
+          <div class="field field-wide">
+            <label for="genRefFiles">参考图片（可选）</label>
+            <input type="file" id="genRefFiles" accept="image/jpeg,image/png,image/webp" multiple>
+            <details class="reference-more"><summary>使用图片链接</summary>
+              <div id="genRefLinks" class="reference-extra"><label for="genRef">图片链接</label>
+              <input type="text" id="genRef" placeholder="https://example.com/ref.jpg，多张用逗号分隔"></div>
+            </details>
+            <p class="hint" id="genRefHelp">从电脑选择 JPG、PNG、WebP，点击“生成视频”时上传。</p>
+            <div id="genRefPreview" class="reference-previews"></div>
+            <p id="genRefError" class="hint" role="alert" style="color:var(--red)"></p>
+            <p class="hint" id="genRefUrlNotice" hidden>当前模型不能使用已填写的图片链接。<button class="text-button" type="button" id="genRefClearLinks">清空图片链接</button>后可使用本地图片。</p>
+          </div>
+          <div class="field field-wide">
+            <label for="genMediaFiles">参考音频 / 视频（可选） <span class="badge b-blue">新功能</span></label>
+            <input type="file" id="genMediaFiles" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,.mp4,.mov,.webm" multiple>
+            <p class="hint" id="genMediaHelp">选择音频或视频文件，点击“生成视频”时一起上传。</p>
+            <p class="hint">在提示词中说明用途，例如“参考音频的节奏，参考视频的运镜”。能否采用取决于 Dola 当前模型和账号支持情况。</p>
+            <div id="genMediaPreview" class="reference-previews media-previews"></div>
+            <p id="genMediaError" class="hint" role="alert" style="color:var(--red)"></p>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-p" id="genBtn" onclick="submitGenerate()">生成视频</button>
+          <span class="status" id="genStatus"></span>
+        </div>
+      </div>
+    </div>
+    <div class="card"><h2>任务与结果</h2><div id="adminResult"></div><p class="hint" style="margin-top:14px">管理端提交不计入成员密钥的每日限额。生成状态以任务记录为准。</p></div>
+    </div>
+    <div class="card"><div class="toolbar"><h2>最近任务</h2><button class="text-button" onclick="switchTab('tasks')">查看任务列表</button></div><div id="adminRecentTasks"></div></div>
+  </section>
+
+  <section id="tab-keys" style="display:none">
+    <div class="card">
+      <div class="toolbar">
+        <h2 style="margin:0">API 密钥</h2>
+        <button class="btn btn-p" onclick="openCreateKey()"><span data-icon="plus"></span>创建密钥</button>
+      </div>
+      <div class="hint" style="margin-bottom:12px">每个 Key 可独立设置每日额度、并发数和允许时长；0 表示不限。环境变量里的 key 始终有效、不在此列表。</div>
+      <div class="filter-row"><label class="sr-only" for="keySearch">搜索密钥</label><input id="keySearch" class="search-input" placeholder="搜索密钥名称或成员" oninput="AdminUI.filterSimple('keysTable',this.value)"></div>
+      <div id="keysTable"></div>
+    </div>
+  </section>
+
+  <section id="tab-users" style="display:none">
+    <div class="card">
+      <div class="toolbar">
+        <h2 style="margin:0">成员管理</h2>
+        <button class="btn btn-p" onclick="openCreateUser()"><span data-icon="plus"></span>新建成员</button>
+      </div>
+      <div class="hint" style="margin-bottom:12px">成员登录后只能看到自己的 API Key 与任务；管理员可看完整面板。成员登录入口：<a href="/login" target="_blank">/login</a></div>
+      <div class="filter-row"><label class="sr-only" for="userSearch">搜索成员</label><input id="userSearch" class="search-input" placeholder="搜索成员邮箱或角色" oninput="AdminUI.filterSimple('usersTable',this.value)"></div>
+      <div id="usersTable"></div>
+    </div>
+  </section>
+</main>
+
+<div id="dlg" class="dialog" style="display:none"><div class="box" id="dlgBox"></div></div>
+<div id="videoModal" class="dialog" style="display:none">
+  <div class="box" style="width:640px">
+    <h2>视频预览</h2>
+    <video id="videoEl" controls autoplay style="width:100%;border-radius:8px"></video>
+    <div class="row"><button class="btn" onclick="closeVideo()">关闭</button></div>
+  </div>
+</div>
+
+<script src="/ui.js?v=20261021-platforms"></script>
+<script>
+const LS_KEY='dola_admin_key';
+const LS_TOKEN='dola_token';
+let adminKey=localStorage.getItem(LS_KEY)||'';
+let autoRefresh=true, curTab='dash', timer=null;
+let PROXY_DATA={accounts:[],groups:[]},proxyPage=1;
+let PINFO={},PSHARE={},PTEST={};
+let SELECTED=new Set(),DLG_NAMES=[];
+
+function q(s){return document.querySelector(s);}
+function show(id){document.getElementById(id).style.display='flex';}
+function hide(id){document.getElementById(id).style.display='none';}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmt(ts){if(!ts)return '-';const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
+function fmtHM(ts){const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}`;}
+
+async function api(path,opts={}){
+  const headers={'Content-Type':opts.file?(opts.file.type||'application/octet-stream'):'application/json',...(opts.headers||{})};
+  if(adminKey)headers['X-Admin-Key']=adminKey;
+  const st=localStorage.getItem(LS_TOKEN);
+  if(st)headers['Authorization']='Bearer '+st;
+  const read=(opts.method||'GET').toUpperCase()==='GET';
+  // Only local read APIs have a short deadline. Submissions/uploads are not retried
+  // or cancelled here; querying the upstream conversation can legitimately be slow.
+  const controller=read&&!path.endsWith('/conversation')?new AbortController():null;
+  const deadline=controller?setTimeout(()=>controller.abort(),15000):null;
+  try{
+  const r=await fetch(path,{method:opts.method||'GET',headers,cache:read?'no-store':'default',signal:controller?.signal,body:opts.file||(opts.body?JSON.stringify(opts.body):undefined)});
+  const text=await r.text();
+  let data={};try{data=text?JSON.parse(text):{};}catch(e){}
+  if(r.status===401){const e=new Error('unauthorized');e.status=401;throw e;}
+  if(r.status===403){const e=new Error(UI.detailError(data.detail||'没有权限'));e.status=403;throw e;}
+  if(!r.ok){const e=new Error(UI.detailError(data.detail||(`${r.status} ${text.slice(0,120)}`)));e.status=r.status;throw e;}
+  return data;
+  }catch(error){if(controller?.signal.aborted)throw new Error('读取状态超时，将在下一次刷新重试');throw error;}
+  finally{if(deadline!==null)clearTimeout(deadline);}
+}
+
+function handleUnauthorized(){
+  fetch('/api/auth/status').then(r=>r.json()).then(st=>{
+    if(st.admin_key_mode){showLogin();}else{location.href='/login';}
+  }).catch(()=>{location.href='/login';});
+}
+
+function showLogin(){hide('dlg');show('loginMask');q('#loginErr').style.display='none';}
+async function submitLogin(){
+  const key=q('#loginKey').value;
+  let r;
+  try{r=await api('/api/admin/login',{method:'POST',body:{key}});}
+  catch(e){q('#loginErr').style.display='block';return;}
+  if(r&&r.auth_required===false){location.href='/login';return;}
+  adminKey=key;localStorage.setItem(LS_KEY,key);
+  hide('loginMask');refresh();
+}
+function logout(){
+  const st=localStorage.getItem(LS_TOKEN);
+  if(st)fetch('/api/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+st}}).catch(()=>{});
+  localStorage.removeItem(LS_TOKEN);
+  adminKey='';localStorage.removeItem(LS_KEY);
+  fetch('/api/auth/status').then(r=>r.json()).then(s=>{
+    if(s.admin_key_mode)showLogin();else location.href='/login';
+  }).catch(()=>{location.href='/login';});
+}
+
+
+
+
+
+/* ---- 仪表盘 ---- */
+
+
+function accLabel(x){return x.email?`<div>${esc(x.email)}</div>`:'<span class="tiny">未录入邮箱</span>';}
+function statusBadge(a){
+  if(a.onboarding_state&&a.onboarding_state!=='ready')return '<span class="badge b-orange">'+({queued:'等待登录',running:'正在登录',attention:'登录待处理'}[a.onboarding_state]||'待登录')+'</span>';
+  if(a.login_ok===0)return '<span class="badge b-red">'+(a.login_reason?'登录失效':'失效')+'</span>';
+  if(a.verification_required==='birthday')return '<span class="badge b-orange">待生日验证</span>';
+  if(a.busy)return '<span class="badge b-blue">出片中</span>';
+  if(a.rate_limited)return '<span class="badge b-orange">限流至 '+fmt(a.rate_limited_until)+'</span>';
+  if(a.quota_blocked)return '<span class="badge b-orange">积分不足至 '+fmt(a.quota_blocked_until)+'</span>';
+  if(a.cooling)return '<span class="badge b-orange">冷却至 '+fmtHM(a.cooldown_until)+'</span>';
+  if(a.login_ok===1)return '<span class="badge b-green">有效</span>';
+  return '<span class="badge b-gray">未验证</span>';
+}
+
+function table(heads,rows){
+  return `<div class="table-scroll" tabindex="0" role="region" aria-label="数据表格，可横向滚动"><table><thead><tr>${heads.map(h=>`<th scope="col">${h}</th>`).join('')}</tr></thead>
+    <tbody>${rows.length?rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${heads.length}" class="empty">暂无数据</td></tr>`}</tbody></table></div>`;
+}
+
+async function setSched(name,on){
+  try{await api('/api/admin/accounts/'+name,{method:'PATCH',body:{scheduling:on}});}catch(e){alert(e.message);}refresh();
+}
+
+/* ---- 通用：账号自然排序（1,2,3…16 而不是 1,10,11,2） ---- */
+function natKey(s){return String(s==null?'':s).split(/(\d+)/).map(x=>/^\d+$/.test(x)?('0'.repeat(Math.max(0,12-x.length))+x):x).join('');}
+function natSort(arr,key){return (arr||[]).slice().sort((a,b)=>{const x=natKey(key?key(a):a),y=natKey(key?key(b):b);return x<y?-1:(x>y?1:0);});}
+
+/* ---- 账号管理 ---- */
+
+
+let lastVerifyToken=null;
+
+async function verify(name,btn){
+  btn.disabled=true;const old=btn.textContent;btn.textContent='验证中…';
+  try{const r=await api('/api/admin/accounts/'+name+'/verify',{method:'POST'});
+    const st=r.status||(r.ok===true?'valid':r.ok===false?'invalid':'unknown');
+    alert(name+' 登录态：'+(st==='valid'?'有效✓':st==='invalid'?'失效✗':'无法判断（网络/代理/超时，未改判）'));
+  }catch(e){alert(e.message);}
+  btn.disabled=false;btn.textContent=old;refresh();
+}
+
+async function delAccount(name){
+  if(!confirm('确定删除账号 '+name+'？其 profile 会移入回收站，可还原。'))return;
+  try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(e.message);}refresh();
+}
+
+let verifyPollTimer=null;
+
+async function verifyAllAccounts(btn){
+  btn.disabled=true;const old=btn.textContent;btn.textContent='检测中…';
+  try{
+    const r=await api('/api/admin/accounts/verify-all',{method:'POST'});
+    lastVerifyToken=r.token||null;
+    if(r.already_running)alert('已有一轮检测在后台进行，继续显示其进度。');
+    else alert('检测已开始：共 '+r.total+' 个号，后台运行（并发 2，约 20-40 分钟）。可随时刷新页面，进度不丢。');
+    pollVerify(btn,old);
+  }catch(e){btn.disabled=false;btn.textContent=old;alert(e.message);}
+}
+
+async function pollVerify(btn,old){
+  clearTimeout(verifyPollTimer);
+  try{
+    const r=await api('/api/admin/accounts/verify-progress');
+    if(r.token)lastVerifyToken=r.token;
+    if(r.running){
+      btn.textContent='检测中 '+r.done+'/'+r.total+'（有效 '+r.valid+' · 失效 '+(r.invalid||[]).length+' · 未知 '+(r.unknown||[]).length+'）';
+      verifyPollTimer=setTimeout(()=>pollVerify(btn,old),2000);
+      return;
+    }
+    const bad=r.invalid||[],unk=r.unknown||[];
+    let msg='检测完成：共 '+r.total+' 个。';
+    if(bad.length)msg+='\n\n确认失效 '+bad.length+' 个：\n'+bad.join('、')+'\n（确认失效才可点「删除失效号」清理。）';
+    else msg+='\n\n未发现确认失效的账号。';
+    if(unk.length)msg+='\n\n另有 '+unk.length+' 个无法判断（已自动重试仍是网络/代理抖动，未改判，请勿删除）：\n'+unk.join('、');
+    alert(msg);refresh();
+  }catch(e){
+    // 单次轮询失败（网络/代理抖动）不放弃：3 秒后重试，检测还在后台跑
+    verifyPollTimer=setTimeout(()=>pollVerify(btn,old),3000);return;
+  }
+  btn.disabled=false;btn.textContent=old;
+}
+
+// 页面加载时恢复检测进度：后台任务还在跑就继续轮询，刷新/关页面 token 和进度都不丢
+(async function resumeVerify(){
+  try{
+    const r=await api('/api/admin/accounts/verify-progress');
+    if(!r||!r.token)return;
+    lastVerifyToken=r.token;
+    if(!r.running)return;
+    const btn=q('#btnVerifyAll');
+    if(!btn){setTimeout(resumeVerify,500);return;}
+    btn.disabled=true;pollVerify(btn,btn.textContent);
+  }catch(e){}
+})();
+
+async function deleteInvalidAccounts(btn){
+  if(btn.disabled)return;
+  btn.disabled=true;const old=btn.textContent;btn.textContent='读取名单…';
+  const skippedText=items=>items?.length?'\n跳过 '+items.length+' 个：\n'+items.map(x=>'· '+x.name+'：'+x.reason).join('\n'):'';
+  try{
+    const preview=await api('/api/admin/accounts/delete-invalid/preview',{method:'POST'});
+    const names=preview.accounts||[];
+    if(!names.length){alert('当前没有可清理的失效账号。'+skippedText(preview.skipped));return;}
+    if(!confirm('将以下 '+names.length+' 个已标记失效的账号移入回收站：\n\n'+names.join('\n')+'\n\n可在「回收站」还原。确认继续？'+skippedText(preview.skipped)))return;
+    btn.textContent='清理中…';
+    const r=await api('/api/admin/accounts/delete-invalid?token='+encodeURIComponent(preview.token),{method:'POST'});
+    alert('已清理 '+r.deleted.length+' 个失效账号（已移入回收站，可还原）。'+skippedText([...(preview.skipped||[]),...(r.skipped||[])]));
+  }catch(e){alert(e.message);}
+  finally{btn.disabled=false;btn.textContent=old;refresh();}
+}
+
+async function resetAllAccounts(btn){
+  if(!confirm('将一键恢复所有账号为「满状态」：\n\n· 清除冷却 / 限流 / 额度封锁\n· 重新打开所有关闭调度的号\n· 清零今日用量（今日剩余恢复满额）\n\n此操作不影响账号登录态与积分余额。确认继续？'))return;
+  btn.disabled=true;const old=btn.textContent;btn.textContent='恢复中…';
+  try{
+    const r=await api('/api/admin/accounts/reset-all',{method:'POST'});
+    alert('已恢复完成：\n\n· 账号总数：'+r.total_accounts+'\n· 清除限制状态：'+r.cleared_meta+' 条\n· 重新打开调度：'+r.opened_scheduling+' 个\n· 清零今日用量：'+r.cleared_usage_rows+' 条');
+  }catch(e){alert(e.message);}
+  btn.disabled=false;btn.textContent=old;refresh();
+}
+
+async function openTrash(){
+  let r;try{r=await api('/api/admin/trash');}catch(e){return alert(e.message);}
+  const items=r.items||[];
+  if(!items.length)return alert('回收站是空的。');
+  const lines=items.map(x=>'· '+x.name+'（备份：'+x.backup+'）').join('\n');
+  const backup=prompt('回收站（软删除的账号，可还原）：\n'+lines+'\n\n输入要还原的备份名（backup），留空取消：');
+  if(!backup)return;
+  try{
+    const rr=await api('/api/admin/trash/restore?backup='+encodeURIComponent(backup.trim()),{method:'POST'});
+    alert('已还原账号：'+rr.name);refresh();
+  }catch(e){alert(e.message);}
+}
+
+function openImportCK(){
+  const def='ck_'+Date.now().toString(36);
+  showDlg(`<h2>导入 CK</h2>
+    <p class="hint">选择扫码工具导出的 CK.txt，或直接粘贴完整 CK。</p>
+    <label for="ckFile">CK 文件</label><input id="ckFile" type="file" accept=".txt,.json,text/plain,application/json" onchange="readCKFile(this)">
+    <label for="ckName">保存名称</label><input id="ckName" value="${def}" maxlength="64" autocomplete="off">
+    <label for="ckCategory">账号分类</label><select id="ckCategory"><option value="long_term">接码长期号</option><option value="disposable">日抛号</option></select>
+    <label for="ckText">完整 CK</label><textarea id="ckText" rows="5" spellcheck="false" autocomplete="off" style="width:100%;min-height:120px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;resize:vertical" placeholder="sessionid=…; key=value"></textarea>
+    <label for="ckProxy">ISP 代理（选填）</label><input id="ckProxy" type="password" autocomplete="new-password" placeholder="host:port:user:pass 或 http://user:pass@host:port">
+    <p class="hint">留空会随机绑定一条已配置的 ISP；也可以填写指定线路。没有 ISP 线路时使用默认代理。</p>
+    <p id="ckError" class="hint" role="alert" style="color:var(--red)"></p>
+    <div class="row"><button class="btn" onclick="hide('dlg');q('#dlgBox').replaceChildren()">取消</button><button id="ckSubmit" class="btn btn-p" onclick="submitImportCK()">确认导入</button></div>`);
+}
+async function readCKFile(input){
+  const file=input.files[0];if(!file)return;
+  const error=q('#ckError'),button=q('#ckSubmit');error.textContent='';
+  if(file.size>131072){error.textContent='文件过大，请选择单个账号的 CK.txt。';return;}
+  button.disabled=true;
+  try{
+    const text=(await file.text()).replace(/^\uFEFF/,'').trim();
+    if(!input.isConnected||input.files[0]!==file)return;
+    q('#ckText').value=text;
+    const name=file.name.replace(/\.(txt|json)$/i,'').replace(/^cookie_/i,'').replace(/[^A-Za-z0-9_-]/g,'_').slice(0,64);
+    if(name)q('#ckName').value=name;
+  }catch(e){if(error.isConnected)error.textContent='无法读取这个文件，请重新选择 CK.txt。';}
+  finally{if(button.isConnected)button.disabled=false;}
+}
+async function submitImportCK(){
+  const button=q('#ckSubmit'),error=q('#ckError');if(button.disabled)return;
+  const body={name:q('#ckName').value.trim(),ck:q('#ckText').value.trim(),proxy:q('#ckProxy').value.trim(),category:q('#ckCategory').value};
+  error.textContent='';
+  if(!body.name||!body.ck){error.textContent='请选择 CK 文件或粘贴完整 CK，并填写保存名称。';return;}
+  if(body.ck.length>131072){error.textContent='CK 内容过大，请使用单个账号的 CK 文件。';return;}
+  button.disabled=true;button.textContent='导入中…';
+  try{
+    const result=await api('/api/admin/accounts/import-ck',{method:'POST',body});
+    hide('dlg');q('#dlgBox').replaceChildren();
+    alert((result.existing?'这个 CK 已在账号池中，无需重复导入：':'CK 已导入：')+result.name+'（'+result.cookie_count+' 项 Cookie）。可点击列表中的“验证”检查登录状态。');
+    await refresh();
+  }catch(e){
+    if(error.isConnected)error.textContent=[404,405].includes(e.status)
+      ?'后台尚未加载 CK 导入接口，请重启 dola2 服务后按 Ctrl+F5 刷新页面。'
+      :e.message;
+  }
+  finally{if(button.isConnected){button.disabled=false;button.textContent='确认导入';}}
+}
+
+
+/* ---- 代理 / IP ---- */
+function applyProxyData(p){
+  PROXY_DATA=p||{accounts:[],groups:[]};
+  PINFO={};PSHARE={};
+  (PROXY_DATA.accounts||[]).forEach(x=>PINFO[x.name]=x);
+  (PROXY_DATA.groups||[]).forEach(g=>(g.accounts||[]).forEach(n=>PSHARE[n]=g.accounts.length));
+}
+function sourceLabel(src){
+  const m={file:'<span class="badge b-green">专属文件</span>',map:'<span class="badge b-blue">映射表</span>',
+    map_default:'<span class="badge b-gray">默认映射</span>',global:'<span class="badge b-gray">全局默认</span>',
+    none:'<span class="badge b-red">未配置</span>'};
+  return m[src]||'—';
+}
+function proxyTestText(name){
+  const t=PTEST[name];if(!t)return '';
+  return t.ok?('可用 '+t.ip+(t.country?' '+t.country:'')):('失败 '+(t.error||'检测失败'));
+}
+function proxyBadge(name){
+  const p=PINFO[name];
+  if(!p)return '<span class="tiny">—</span>';
+  if(p.source==='none')return `<button class="badge b-red" type="button" data-proxy-settings="${esc(name)}">未配置</button>`;
+  const addr=p.host?(p.host+':'+p.port):'';
+  const n=PSHARE[name]||1;
+  const cls=p.own?(n>1?'b-blue':'b-green'):'b-gray';
+  const route=p.route_label||(p.own?'地区待识别':'默认线路');
+  const sharing=p.own?(n>1?n+' 个账号共用':'此账号独立使用'):'使用默认代理';
+  const t=PTEST[name];
+  const tip=t?(t.ok?`<div class="tiny">${esc(t.ip)} ${esc(t.country||'')} · ${t.latency_ms}ms</div>`:`<div class="tiny" style="color:var(--red)">检测失败</div>`):'';
+  const qq=p.quota;
+  const qline=qq?`<div class="tiny" style="color:${(qq.exhausted||qq.paused)?'var(--red)':(qq.warn?'var(--orange)':'var(--sub)')}">${qq.unlimited?`ISP 已统计 ${UI.number(qq.used)} 次 · 次数不限`:`ISP 额度 ${UI.number(qq.used)} / ${UI.number(qq.limit)}（剩 ${UI.number(qq.remaining)}）`}</div>`:'';
+  return `<button class="badge ${cls}" type="button" data-proxy-settings="${esc(name)}">${esc(route)}</button>`
+    +`<div class="tiny">${sharing}</div><div class="tiny" style="font-family:ui-monospace,Consolas,monospace">${esc(addr)}</div>${qline}${tip}`;
+}
+function quotaBar(q){
+  if(!q||q.unlimited||!q.limit)return '';
+  const pct=Math.max(0,Math.min(100,Math.round(q.used/q.limit*100)));
+  const color=q.exhausted?'#c03237':(q.warn?'#d97706':'#00b875');
+  return `<div style="height:8px;border-radius:6px;background:#eef2f0;overflow:hidden;margin:6px 0 6px">
+    <div style="height:100%;width:${pct}%;background:${color};transition:width .3s"></div></div>`;
+}
+function quotaState(q){
+  if(!q)return '';
+  if(q.exhausted)return '<span class="badge b-red">额度已用完</span>';
+  if(q.paused)return '<span class="badge b-red">已暂停</span>';
+  if(q.unlimited)return '<span class="badge b-green">次数不限</span>';
+  if(q.warn)return '<span class="badge b-orange">接近上限</span>';
+  return '<span class="badge b-green">可用</span>';
+}
+function quotaLine(q){
+  if(!q)return '';
+  if(q.unlimited)return `${quotaState(q)} <span class="tiny">已统计 <b>${UI.number(q.used)}</b> 次</span>`;
+  return `${quotaState(q)} <span class="tiny">已用 <b>${q.used}</b> / ${q.limit} 次，剩余 <b>${q.remaining}</b> 次</span>`;
+}
+function quotaButtons(q){
+  if(!q||!q.key)return '';
+  const k=q.key;
+  return `<button class="btn" onclick="quotaAction('${k}',{paused:${q.paused?'false':'true'}},this)">${q.paused?'恢复':'暂停'}</button>`
+    +`<button class="btn" onclick="quotaAction('${k}',{reset:true},this)">重置已用</button>`
+    +(q.unlimited?'':`<button class="btn" onclick="quotaSetLimit('${k}',${q.limit},this)">改上限</button>`);
+}
+async function quotaAction(key,body,btn){
+  if(btn){btn.disabled=true;}
+  try{
+    await api('/api/admin/proxies/quota/'+key,{method:'PATCH',body:body});
+    await loadProxies();
+  }catch(e){
+    alert('操作失败：'+(e.message||e));
+  }finally{
+    if(btn){btn.disabled=false;}
+  }
+}
+async function quotaSetLimit(key,cur,btn){
+  const v=prompt('这条 ISP 的请求总上限（当前 '+cur+'）：',String(cur));
+  if(v===null)return;
+  const n=parseInt(v,10);
+  if(!n||n<1){alert('请输入大于 0 的整数');return;}
+  await quotaAction(key,{limit:n},btn);
+}
+
+function toggleProxyForm(){
+  const on=q('#p_enable').checked,f=q('#p_form');
+  f.style.opacity=on?'1':'.45';f.style.pointerEvents=on?'auto':'none';
+}
+function openProxyDialog(names){
+  names=(names||[]).filter(Boolean);
+  if(!names.length)return;
+  DLG_NAMES=names.slice();
+  const multi=names.length>1;
+  const name=names[0];
+  const p=multi?{}:(PINFO[name]||{});
+  const own=!!p.own;
+  const fallback=p.source&&p.source!=='none'&&!p.own;
+  const t=multi?null:PTEST[name];
+  const cur=multi
+    ? '将把 <b>'+names.length+'</b> 个账号设为<b>同一条代理</b>（几号一 IP）'
+    : (own?'当前出口：<b>'+esc(p.host||'')+':'+esc(p.port||'')+'</b>'
+       :(fallback?'当前使用'+(p.source==='global'?'全局默认代理':'默认映射代理'):'当前未配置专属代理'));
+  const head=multi
+    ? '<div class="tiny" style="margin:-8px 0 10px">账号：'+names.map(function(n){return '<b>'+esc(n)+'</b>';}).join('、')+'<br>'+cur+'</div>'
+    : '<div class="tiny" style="margin:-8px 0 10px">账号 <b>'+esc(name)+'</b> '+(p.email?'· '+esc(p.email):'')+'<br>'+cur+'</div>';
+  showDlg('<h2>代理 / IP 设置'+(multi?'（批量）':'')+'</h2>'
+    +head
+    +'<div class="swrow"><span class="sw"><input type="checkbox" id="p_enable" '+((multi||own)?'checked':'')+' onchange="toggleProxyForm()"><i></i></span><span>'+(multi?'为这些账号启用同一条专属代理':'为这个账号启用专属代理')+'</span></div>'
+    +'<div id="p_form" style="'+((multi||own)?'':'opacity:.45;pointer-events:none')+'">'
+    +'<div class="grid2">'
+    +'<div><label>代理类型</label><select id="p_scheme"><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks5">SOCKS5</option></select></div>'
+    +'<div><label>端口</label><input id="p_port" value="'+esc(p.port||'')+'" placeholder="8080"></div>'
+    +'</div>'
+    +'<label>主机 / IP</label><input id="p_host" value="'+esc(p.host||'')+'" placeholder="例如 103.12.34.56">'
+    +'<label>代理账号（可选）</label><input id="p_user" value="'+esc(p.user||'')+'" placeholder="没有可留空">'
+    +'<label>代理密码'+(multi?'（批量设置必须重填）':'（留空 = 不修改）')+'</label><input id="p_pass" type="password" placeholder="••••••••">'
+    +(multi?'<div class="tiny" style="color:var(--orange);margin-top:8px">批量设置会覆盖这些账号原有的专属代理；若代理需要认证，请在这里重新填写密码。</div>':'')
+    +'<div style="display:flex;gap:8px;margin-top:12px">'
+    +'<button class="btn" onclick="pasteProxy()">粘贴</button>'
+    +'<button class="btn" onclick="testProxyForm(this)">检测代理</button>'
+    +'</div>'
+    +'<div id="p_result" class="tiny" style="margin-top:10px">'+(t?(t.ok?('上次检测：出口 <b>'+esc(t.ip)+'</b> '+esc(t.country||'')+' · '+t.latency_ms+'ms'):('上次检测失败：'+esc(t.error||''))):'尚未检测')+'</div>'
+    +'</div>'
+    +'<div class="row" style="justify-content:space-between">'
+    +'<div>'+((!multi&&own)?'<button class="btn btn-danger" onclick="clearProxy()">清除该号代理</button>':(multi?'<button class="btn btn-danger" onclick="clearProxy()">清除所选代理</button>':''))+'</div>'
+    +'<div style="display:flex;gap:8px"><button class="btn" onclick="hide(\'dlg\')">取消</button><button class="btn btn-p" onclick="saveProxy()">确定</button></div>'
+    +'</div>');
+  if(!multi&&own){const s=q('#p_scheme');if(s)s.value=(p.scheme==='socks5h'?'socks5':(p.scheme||'http'));}
+}
+function openProxy(name){openProxyDialog([name]);}
+function proxyFormBody(){
+  const host=q('#p_host').value.trim(),port=q('#p_port').value.trim();
+  if(!host||!port){alert('请先填写主机和端口');return null;}
+  return {scheme:q('#p_scheme').value,host,port,username:q('#p_user').value.trim(),password:q('#p_pass').value};
+}
+async function pasteProxy(){
+  let t='';
+  try{t=(await navigator.clipboard.readText()).trim();}catch(e){}
+  if(!t)return alert('剪贴板为空或无法读取，请手动填写主机 / 端口');
+  fillProxyFields(t);
+}
+function fillProxyFields(raw){
+  raw=String(raw||'').trim();
+  let scheme='http',user='',pass='',host='',port='';
+  const m=raw.match(/^([a-zA-Z0-9]+):\/\/(?:([^:@\/]+)(?::([^@\/]*))?@)?([^:\/\s]+):(\d+)/);
+  if(m){scheme=m[1].toLowerCase();user=m[2]||'';pass=m[3]||'';host=m[4];port=m[5];}
+  else{
+    const parts=raw.replace(/\s+/g,'').split(':');
+    if(parts.length>=2){host=parts[0];port=parts[1];if(parts.length>=3)user=parts[2];if(parts.length>=4)pass=parts[3];}
+  }
+  if(scheme==='socks5h')scheme='socks5';
+  if(['http','https','socks5'].indexOf(scheme)<0)scheme='http';
+  if(!host)return alert('无法识别这段代理，请手动填写主机 / 端口');
+  q('#p_scheme').value=scheme;q('#p_host').value=host;q('#p_port').value=port;
+  q('#p_user').value=user;q('#p_pass').value=pass;
+  q('#p_result').textContent='已粘贴，点「检测代理」可验证出口 IP';
+}
+async function testProxyForm(btn){
+  const body=proxyFormBody();if(!body)return;
+  const name=DLG_NAMES[0]||'';
+  btn.disabled=true;const old=btn.textContent;btn.textContent='检测中…';
+  q('#p_result').textContent='正在通过代理访问公网…';
+  try{
+    const r=await api('/api/admin/proxies/test',{method:'POST',body:{...body,name}});
+    const res=(r.results||[])[0]||{};
+    if(res.ok){
+      if(name)PTEST[name]={ok:true,ip:res.ip,country:res.country,latency_ms:res.latency_ms};
+      q('#p_result').innerHTML='出口 IP <b>'+esc(res.ip)+'</b> '+esc(res.country||'')+' · 延迟 '+res.latency_ms+'ms';
+    }else{
+      if(name)PTEST[name]={ok:false,error:res.error||'失败'};
+      q('#p_result').innerHTML='<span style="color:#c03237">检测失败：'+esc(res.error||'未知错误')+'</span>';
+    }
+  }catch(e){q('#p_result').innerHTML='<span style="color:#c03237">'+esc(e.message)+'</span>';}
+  btn.disabled=false;btn.textContent=old;
+}
+async function saveProxy(){
+  const names=DLG_NAMES.slice();
+  if(!names.length)return;
+  if(!q('#p_enable').checked){return clearProxy(names,true);}
+  const body=proxyFormBody();if(!body)return;
+  try{
+    for(const n of names){await api('/api/admin/accounts/'+n+'/proxy',{method:'PATCH',body:{...body,name:n}});}
+  }catch(e){return alert(e.message);}
+  SELECTED.clear();
+  hide('dlg');refresh();
+}
+async function clearProxy(names,silent){
+  if(!names)names=DLG_NAMES.slice();
+  if(typeof names==='string')names=[names];
+  names=(names||[]).filter(Boolean);
+  if(!names.length)return;
+  if(!silent&&!confirm('清除账号 '+names.join('、')+' 的专属代理？将回退到全局默认。'))return;
+  try{
+    for(const n of names){await api('/api/admin/accounts/'+n+'/proxy',{method:'DELETE'});}
+  }catch(e){return alert(e.message);}
+  if(!silent)hide('dlg');
+  SELECTED.clear();
+  refresh();
+}
+async function testGroup(csv,btn){
+  const names=String(csv||'').split(',').filter(Boolean);
+  if(!names.length)return;
+  btn.disabled=true;const old=btn.textContent;btn.textContent='检测中…';
+  try{
+    // 同一组账号共用同一条出口，只探测一次，避免重复扣 ISP 额度。
+    const r=await api('/api/admin/proxies/test',{method:'POST',body:{name:names[0]}});
+    const res=(r.results||[])[0]||{};
+    const val=res.ok?{ok:true,ip:res.ip,country:res.country,latency_ms:res.latency_ms}:{ok:false,error:res.error};
+    names.forEach(function(n){
+      PTEST[n]=val;
+      const el=document.getElementById('pt_'+n);if(el)el.textContent=proxyTestText(n);
+    });
+  }catch(e){alert(e.message);}
+  btn.disabled=false;btn.textContent=old;
+}
+async function testAllProxies(btn){
+  btn.disabled=true;const old=btn.textContent;btn.textContent='检测中…';
+  try{
+    const r=await api('/api/admin/proxies/test',{method:'POST',body:{all:true}});
+    (r.results||[]).forEach(res=>{
+      PTEST[res.name]=res.ok?{ok:true,ip:res.ip,country:res.country,latency_ms:res.latency_ms}:{ok:false,error:res.error};
+    });
+  }catch(e){alert(e.message);}
+  btn.disabled=false;btn.textContent=old;
+  loadProxies();
+}
+function openImportProxy(){
+  const sel=natSort(Array.from(SELECTED));
+  const all=natSort((PROXY_DATA.accounts||[]).map(function(x){return x.name;}));
+  const targets=sel.length?sel:all;
+  const shown=targets.slice(0,10).map(esc).join('、')+(targets.length>10?' …':'');
+  const targetHtml=sel.length
+    ? '将分配给<b>已勾选</b>的 '+sel.length+' 个账号：'+shown
+    : '未勾选账号，将按顺序分配给全部 '+all.length+' 个账号：'+shown;
+  showDlg(`<h2>批量导入代理</h2>
+    <div class="tiny" style="margin-bottom:8px">直接粘贴代理，一行一条即可。支持 <code>host:port:user:pass</code>、<code>http://user:pass@host:port</code>、<code>socks5://...</code>；也支持每行写 <code>账号 代理串</code> 指定某个账号。</div>
+    <label>分配方式</label>
+    <select id="imp_mode" onchange="onImpModeChange()">
+      <option value="shared_n" selected>N 号一 IP：每条代理绑定 N 个账号（推荐）</option>
+      <option value="one_per_account">一号一 IP：每条代理分给一个账号</option>
+      <option value="shared_first">全部共用一条：这些账号共用第一条代理</option>
+    </select>
+    <div id="imp_per_wrap" style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <label style="margin:0">每条代理绑定</label>
+      <input id="imp_per" type="number" min="1" max="1000" value="10" style="width:90px;padding:6px;border:1px solid var(--line);border-radius:8px">
+      <span class="tiny">个账号（填 10 = 一个代理十个号）</span>
+    </div>
+    <div class="tiny" id="imp_targets" style="margin:8px 0;line-height:1.6">${targetHtml}</div>
+    <textarea id="imp_text" oninput="updateImpSummary()" style="width:100%;height:170px;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:12px" placeholder="192.0.2.15:11000:user:pass&#10;192.0.2.14:11000:user:pass"></textarea>
+    <div id="imp_summary" class="tiny" style="margin-top:6px;color:#0a7a3f;font-weight:600"></div>
+    <div id="imp_result" class="tiny" style="margin-top:8px"></div>
+    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitImportProxy(this)">导入</button></div>`);
+  onImpModeChange();
+}
+function onImpModeChange(){
+  const m=q('#imp_mode').value;
+  const w=q('#imp_per_wrap');
+  if(w)w.style.display=(m==='shared_n')?'flex':'none';
+  updateImpSummary();
+}
+function updateImpSummary(){
+  const el=q('#imp_summary');
+  if(!el)return;
+  const raw=(q('#imp_text')?q('#imp_text').value:'')||'';
+  let n=0;
+  raw.split('\n').forEach(function(line){
+    line=line.trim();
+    if(!line||line.charAt(0)==='#')return;
+    n++;
+  });
+  if(!n){el.textContent='';return;}
+  const m=q('#imp_mode').value;
+  const per=Math.max(1,parseInt((q('#imp_per')?q('#imp_per').value:'1'),10)||1);
+  if(m==='shared_n'){
+    el.textContent='\u8bc6\u522b\u5230\u7ea6 '+n+' \u6761\u4ee3\u7406\uff1b\u6bcf\u6761\u7ed1\u5b9a '+per+' \u4e2a\u53f7\uff0c\u6700\u591a\u8986\u76d6 '+(n*per)+' \u4e2a\u8d26\u53f7';
+  }else if(m==='shared_first'){
+    el.textContent='\u8bc6\u522b\u5230\u7ea6 '+n+' \u6761\u4ee3\u7406\uff1b\u672c\u6b21\u53ea\u4f7f\u7528\u7b2c 1 \u6761\uff0c\u76ee\u6807\u8d26\u53f7\u5168\u90e8\u5171\u7528';
+  }else{
+    el.textContent='\u8bc6\u522b\u5230\u7ea6 '+n+' \u6761\u4ee3\u7406\uff1b\u4e00\u53f7\u4e00 IP\uff0c\u6700\u591a\u8986\u76d6 '+n+' \u4e2a\u8d26\u53f7';
+  }
+}
+async function submitImportProxy(btn){
+  const text=q('#imp_text').value;
+  if(!text.trim())return alert('请先粘贴代理');
+  const mode=q('#imp_mode').value;
+  const perEl=q('#imp_per');
+  const per_proxy=perEl?Math.max(1,parseInt(perEl.value||'1',10)||1):1;
+  const sel=natSort(Array.from(SELECTED));
+  let old='';
+  if(btn){btn.disabled=true;old=btn.textContent;btn.textContent='导入中…';}
+  try{
+    const r=await api('/api/admin/proxies/import',{method:'POST',body:{text,mode,per_proxy,accounts:sel}});
+    const list=r.assigned||[],errs=r.errors||[];
+    q('#imp_result').innerHTML='<div style="color:#0a7a3f;font-weight:600;margin-bottom:6px">已导入 '+r.ok+' 条</div>'
+      +(list.length?'<div style="max-height:170px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">'+list.map(function(a){
+          return '<div style="font-family:ui-monospace,Consolas,monospace">'+esc(a.name)+' → '+esc(a.server)+'</div>';
+        }).join('')+'</div>':'')
+      +(errs.length?'<div style="color:#c03237;margin-top:6px">失败 '+errs.length+' 条：'+errs.map(function(e){return esc(e.line||e.name||'')+(e.error?('（'+esc(e.error)+'）'):'');}).join('；')+'</div>':'')
+      +'<div style="margin-top:8px;color:#666">导入后可在下方账号明细里点「检测」确认出口 IP。</div>';
+    SELECTED.clear();
+    await loadProxies();
+  }catch(e){
+    q('#imp_result').innerHTML='<span style="color:#c03237">'+esc(e.message)+'</span>';
+  }
+  if(btn){btn.disabled=false;btn.textContent=old;}
+}
+
+/* ---- 代理明细表 & 批量操作 ---- */
+function proxyNames(){
+  const search=q('#proxySearch').value.trim().toLowerCase();
+  return natSort((PROXY_DATA.accounts||[]).filter(p=>!search||`${p.name} ${p.email||''} ${p.server||p.host||''} ${p.port||''}`.toLowerCase().includes(search)).map(p=>p.name));
+}
+function proxyPageNames(){return proxyNames().slice((proxyPage-1)*50,proxyPage*50);}
+function filterProxyTable(){proxyPage=1;renderProxyTable();}
+function changeProxyPage(delta){proxyPage+=delta;renderProxyTable();}
+function renderProxyTable(){
+  const all=(PROXY_DATA.accounts||[]).map(p=>p.name),names=proxyNames(),pages=Math.max(1,Math.ceil(names.length/50));
+  proxyPage=Math.min(Math.max(1,proxyPage),pages);
+  Array.from(SELECTED).forEach(function(n){if(!all.includes(n))SELECTED.delete(n);});
+  q('#proxyCount').textContent=UI.number(names.length)+' / '+UI.number(all.length)+' 个账号';
+  const rows=proxyPageNames().map(function(n){
+    const p=PINFO[n]||{};
+    const sel=SELECTED.has(n)?'checked':'';
+    return [
+      '<input type="checkbox" class="pchk" aria-label="选择 '+esc(n)+'" data-name="'+esc(n)+'" '+sel+' onchange="toggleSelect(this)">',
+      '<span class="account-id">'+esc(n)+'</span>',
+      '<span class="tiny">'+esc(p.email||'')+'</span>',
+      proxyBadge(n),
+      sourceLabel(p.source),
+      '<div class="toolbar-actions"><button class="btn" data-proxy-settings="'+esc(n)+'">设置</button><button class="btn" data-proxy-test="'+esc(n)+'">检测</button></div>'
+    ];
+  });
+  UI.render('#proxyTable',(rows.length?table(['<input type="checkbox" id="pchkAll" aria-label="选择本页所有账号" class="pchk" onchange="toggleSelectAll(this)">','内部账号','邮箱','出口 IP','来源','操作'],rows):UI.empty('没有匹配的代理账号','调整搜索条件或为账号设置代理。'))+(names.length>50?'<div class="pagination"><span>每页 50 个账号 · 勾选保留在所有页</span><div class="pages"><button class="btn" onclick="changeProxyPage(-1)" '+(proxyPage===1?'disabled':'')+'>上一页</button><span>'+proxyPage+' / '+pages+'</span><button class="btn" onclick="changeProxyPage(1)" '+(proxyPage===pages?'disabled':'')+'>下一页</button></div></div>':''));
+  updateBulkBar();
+}
+function updateBulkBar(){
+  const bar=q('#proxyBulk');if(!bar)return;
+  const n=SELECTED.size,names=proxyPageNames(),total=names.length,selected=names.filter(name=>SELECTED.has(name)).length;
+  bar.style.display=n?'flex':'none';
+  const c=q('#selCount');if(c)c.textContent=n;
+  const all=document.getElementById('pchkAll');
+  if(all){all.checked=total>0&&selected===total;all.indeterminate=selected>0&&selected<total;}
+}
+function toggleSelect(el){
+  const n=el.getAttribute('data-name');
+  if(el.checked)SELECTED.add(n);else SELECTED.delete(n);
+  updateBulkBar();
+}
+function toggleSelectAll(el){
+  const names=proxyPageNames();
+  names.forEach(function(n){if(el.checked)SELECTED.add(n);else SELECTED.delete(n);});
+  renderProxyTable();
+}
+function openBulkProxy(){
+  if(!SELECTED.size)return alert('请先勾选账号');
+  openProxyDialog(natSort(Array.from(SELECTED)));
+}
+async function clearSelectedProxies(){
+  const names=natSort(Array.from(SELECTED));
+  if(!names.length)return alert('请先勾选账号');
+  await clearProxy(names);
+}
+async function testOne(name,btn){
+  btn.disabled=true;const old=btn.textContent;btn.textContent='检测中…';
+  try{
+    const r=await api('/api/admin/proxies/test',{method:'POST',body:{name:name}});
+    const res=(r.results||[])[0]||{};
+    PTEST[name]=res.ok?{ok:true,ip:res.ip,country:res.country,latency_ms:res.latency_ms}:{ok:false,error:res.error};
+    loadProxies();
+  }catch(e){alert(e.message);btn.disabled=false;btn.textContent=old;}
+}
+
+/* ---- 任务列表 ---- */
+
+
+function playVideo(url){q('#videoEl').src=url;show('videoModal');}
+function closeVideo(){q('#videoEl').pause();q('#videoEl').src='';hide('videoModal');}
+
+/* ---- 视频创作 ---- */
+
+
+/* ---- API 密钥 ---- */
+async function loadKeys(){
+  const r=await api('/api/admin/keys');
+  if(!USERS.length){try{const u=await api('/api/admin/users');USERS=u.users||[];}catch(e){}}
+  const mask=k=>'sk-'+k.slice(3,9)+'…'+k.slice(-4);
+  const opts=k=>['<option value="0">未分配</option>']
+    .concat(USERS.map(u=>`<option value="${u.id}" ${k.owner_user_id===u.id?'selected':''}>${esc(u.email)}</option>`)).join('');
+  const rows=r.keys.map(k=>[
+    '<span style="font-family:monospace">'+mask(k.key)+'</span>',
+    k.name||'—',
+    `<select onchange="setKeyOwner('${k.key}',this.value)" style="max-width:170px;padding:6px 8px;border:1px solid var(--line);border-radius:8px">${opts(k)}</select>`,
+    (k.allowed_platforms||['dola']).map(p=>p==='doubao'?'豆包':'Dola').join(' / ')+'<br>'+(k.allowed_durations||[]).join(' / ')+' 秒',
+    (k.daily_limit?`${k.today_total} / ${k.daily_limit}`:`${k.today_total} / 不限`),
+    (k.concurrency_limit?`${k.today_active} / ${k.concurrency_limit}`:`${k.today_active} / 不限`)+(k.today_queued?` <span class=\"tiny\">排队 ${k.today_queued}</span>`:''),
+    `<label class="sw"><input type="checkbox" ${k.enabled?'checked':''} onchange="setKey('${k.key}',this.checked)"><i></i></label>`,
+    fmt(k.last_used_at),
+    `<button class="btn" style="margin-right:6px" onclick="openEditKey('${k.key}')">设置</button><button class="btn btn-danger" onclick="delKey('${k.key}')">删除</button>`
+  ]);
+  q('#keysTable').innerHTML=table(['Key','名称','归属成员','允许时长','今日任务','并发','启用','最近使用','操作'],rows)
+    +(r.env_keys>0?`<div class="hint" style="margin-top:10px">另有 ${r.env_keys} 个环境变量 key（永久有效，面板只读）</div>`:'');
+}
+async function setKeyOwner(key,uid){
+  const n=Number(uid||0);
+  try{
+    await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{owner_user_id:n}});
+  }catch(e){alert(e.message);}
+  loadKeys();
+}
+async function setKey(key,on){
+  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{enabled:on}});}catch(e){alert(e.message);}refresh();
+}
+async function delKey(key){
+  if(!confirm('删除该密钥？调用方将立即失效。'))return;
+  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'DELETE'});}catch(e){alert(e.message);}refresh();
+}
+function durationChecks(values){
+  values=values||[5,10,15,30];
+  return [5,10,15,30].map(v=>`<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px"><input type="checkbox" id="f_d${v}" ${values.includes(v)?'checked':''}>${v}秒</label>`).join('');
+}
+function platformChecks(values=['dola']){return [['dola','Dola'],['doubao','豆包']].map(([id,label])=>`<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px"><input type="checkbox" id="f_platform_${id}" ${values.includes(id)?'checked':''}>${label}</label>`).join('');}
+function selectedPlatforms(){return ['dola','doubao'].filter(id=>q('#f_platform_'+id)?.checked);}
+function openCreateKey(){
+  showDlg(`<h2>创建 API 密钥</h2>
+    <label>名称（可选）</label><input id="f_kname" placeholder="例如：客户A">
+    <label>每日任务上限（0 = 不限）</label><input id="f_daily" type="number" min="0" value="0">
+    <label>同时生成上限（0 = 不限）</label><input id="f_conc" type="number" min="0" value="0">
+    <label>允许的平台</label><div style="padding:8px 0">${platformChecks()}</div>
+    <label>允许的视频时长</label><div style="padding:8px 0">${durationChecks()}</div>
+    <label>过期时间戳（可选，留空 = 永久）</label><input id="f_exp" type="number" min="0" placeholder="Unix 时间戳">
+    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitCreateKey()">创建</button></div>`);
+}
+function selectedDurations(){return [5,10,15,30].filter(v=>q('#f_d'+v)?.checked);}
+async function submitCreateKey(){
+  const name=q('#f_kname').value.trim();
+  const allowed=selectedDurations();
+  if(!allowed.length)return alert('至少选择一个视频时长');
+  const allowed_platforms=selectedPlatforms();if(!allowed_platforms.length)return alert('至少选择一个平台');
+  const body={name,daily_limit:Number(q('#f_daily').value||0),concurrency_limit:Number(q('#f_conc').value||0),allowed_durations:allowed,allowed_platforms};
+  const exp=q('#f_exp').value.trim();if(exp)body.expires_at=Number(exp);
+  try{
+    const r=await api('/api/admin/keys',{method:'POST',body});
+    const k=r.created.key;
+    hide('dlg');
+    showDlg(`<h2>创建成功，请保存密钥</h2>
+      <div class="tiny">完整 key 只在此显示一次：</div>
+      <div class="keyfull" id="newKey">${esc(k)}</div>
+      <div class="row"><button class="btn" onclick="copyFromNewKey()">复制</button><button class="btn btn-p" onclick="hide('dlg');loadKeys()">完成</button></div>`);
+  }catch(e){alert(e.message);}
+}
+async function openEditKey(key){
+  const r=await api('/api/admin/keys');const k=r.keys.find(x=>x.key===key);if(!k)return;
+  showDlg(`<h2>设置 API 密钥</h2>
+    <div class="tiny" style="margin-bottom:8px">${esc(k.name||key)}</div>
+    <label>每日任务上限（0 = 不限）</label><input id="f_daily" type="number" min="0" value="${k.daily_limit}">
+    <label>同时生成上限（0 = 不限）</label><input id="f_conc" type="number" min="0" value="${k.concurrency_limit}">
+    <label>允许的平台</label><div style="padding:8px 0">${platformChecks(k.allowed_platforms||['dola'])}</div>
+    <label>允许的视频时长</label><div style="padding:8px 0">${durationChecks(k.allowed_durations)}</div>
+    <label>过期时间戳（0 = 永久）</label><input id="f_exp" type="number" min="0" value="${k.expires_at||0}">
+    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitEditKey('${key}')">保存</button></div>`);
+}
+async function submitEditKey(key){
+  const allowed=selectedDurations();if(!allowed.length)return alert('至少选择一个视频时长');
+  const allowed_platforms=selectedPlatforms();if(!allowed_platforms.length)return alert('至少选择一个平台');
+  try{await api('/api/admin/keys/'+encodeURIComponent(key),{method:'PATCH',body:{daily_limit:Number(q('#f_daily').value||0),concurrency_limit:Number(q('#f_conc').value||0),allowed_durations:allowed,allowed_platforms,expires_at:Number(q('#f_exp').value||0)}});hide('dlg');refresh();}catch(e){alert(e.message);}
+}
+function copyFromNewKey(){copy(q('#newKey').textContent.trim());}
+async function copy(text){
+  try{await navigator.clipboard.writeText(text);}catch(e){
+    const t=document.createElement('textarea');t.value=text;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();
+  }
+}
+
+/* ---- 成员管理 ---- */
+let USERS=[];
+function maskKey(k){return k.length>16?'sk-'+k.slice(3,9)+'…'+k.slice(-4):k;}
+async function loadUsers(){
+  const r=await api('/api/admin/users');
+  USERS=r.users||[];
+  if(!USERS.length){q('#usersTable').innerHTML='<div class="empty">还没有成员账号。点击右上角「新建成员」创建，或让成员自行在 <a href="/login" target="_blank">/login</a> 注册（需开启注册）。</div>';return;}
+  const rows=USERS.map(u=>{
+    const keys=(u.keys||[]).map(k=>`<div class="tiny" style="font-family:monospace">${maskKey(k.key)} ${k.enabled?'':'<span class="badge b-red">停用</span>'}</div>`).join('')||'<span class="tiny">未分配</span>';
+    const usage=u.usage||{total:0,completed:0};
+    return [
+      '<span class="account-id">#'+u.id+'</span>',
+      esc(u.email),
+      u.role==='admin'?'<span class="badge b-blue">管理员</span>':'<span class="badge b-gray">成员</span>',
+      u.status==='active'?'<span class="badge b-green">正常</span>':'<span class="badge b-red">已禁用</span>',
+      keys,
+      usage.completed+' / '+usage.total,
+      fmt(u.last_login_at),
+      `<button class="btn" style="margin-right:6px" onclick="openUserKey(${u.id})">发 Key</button>`+
+      `<button class="btn" style="margin-right:6px" onclick="openEditUser(${u.id})">设置</button>`+
+      `<button class="btn btn-danger" onclick="delUser(${u.id})">删除</button>`
+    ];
+  });
+  q('#usersTable').innerHTML=table(['ID','邮箱','角色','状态','API Key','今日完成/总数','最近登录','操作'],rows);
+}
+function openCreateUser(){
+  showDlg(`<h2>新建成员</h2>
+    <label>邮箱</label><input id="u_email" type="email" placeholder="member@example.com">
+    <label>初始密码（至少 8 位）</label><input id="u_pw" type="password" placeholder="至少 8 位">
+    <label>角色</label><select id="u_role" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px"><option value="member">成员（只能看自己的 API）</option><option value="admin">管理员（完整面板）</option></select>
+    <label style="margin-top:12px"><input type="checkbox" id="u_mkkey" checked style="width:auto"> 同时生成一个 API Key</label>
+    <div id="u_keyopts">
+      <label>每日任务上限（0 = 不限）</label><input id="u_daily" type="number" min="0" value="0">
+      <label>同时生成上限（0 = 不限）</label><input id="u_conc" type="number" min="0" value="0">
+      <label>允许的视频时长</label><div style="padding:8px 0">${durationChecks()}</div>
+    </div>
+    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitCreateUser()">创建</button></div>`);
+}
+async function submitCreateUser(){
+  const email=q('#u_email').value.trim(), password=q('#u_pw').value;
+  if(!email||password.length<8)return alert('请填写邮箱，密码至少 8 位');
+  const body={email,password,role:q('#u_role').value,create_key:q('#u_mkkey').checked,
+    daily_limit:Number(q('#u_daily')?.value||0),concurrency_limit:Number(q('#u_conc')?.value||0),
+    allowed_durations:selectedDurations()};
+  try{
+    const r=await api('/api/admin/users',{method:'POST',body});
+    hide('dlg');
+    if(r.created){
+      showDlg(`<h2>成员已创建，请保存 API Key</h2><div class="tiny">完整 key 只在此显示一次：</div>
+        <div class="keyfull" id="newKey">${esc(r.created.key)}</div>
+        <div class="row"><button class="btn" onclick="copyFromNewKey()">复制</button><button class="btn btn-p" onclick="hide('dlg');loadUsers()">完成</button></div>`);
+    }else{loadUsers();}
+  }catch(e){alert(e.message);}
+}
+async function openUserKey(id){
+  if(!confirm('为该成员生成一个新的 API Key？'))return;
+  try{
+    const r=await api('/api/admin/users/'+id+'/keys',{method:'POST'});
+    showDlg(`<h2>API Key 已生成</h2><div class="tiny">完整 key 只在此显示一次，请复制发给成员：</div>
+      <div class="keyfull" id="newKey">${esc(r.created.key)}</div>
+      <div class="row"><button class="btn" onclick="copyFromNewKey()">复制</button><button class="btn btn-p" onclick="hide('dlg');loadUsers()">完成</button></div>`);
+  }catch(e){alert(e.message);}
+}
+function openEditUser(id){
+  const u=USERS.find(x=>x.id===id);if(!u)return;
+  showDlg(`<h2>设置成员</h2>
+    <div class="tiny" style="margin-bottom:8px">${esc(u.email)}</div>
+    <label>角色</label><select id="e_role" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px">
+      <option value="member" ${u.role==='member'?'selected':''}>成员</option>
+      <option value="admin" ${u.role==='admin'?'selected':''}>管理员</option></select>
+    <label>状态</label><select id="e_status" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px">
+      <option value="active" ${u.status==='active'?'selected':''}>正常</option>
+      <option value="disabled" ${u.status==='disabled'?'selected':''}>禁用（踢下线）</option></select>
+    <label>重置密码（留空 = 不改）</label><input id="e_pw" type="password" placeholder="至少 8 位">
+    <label>备注</label><input id="e_note" value="${esc(u.note||'')}">
+    <div class="row"><button class="btn" onclick="hide('dlg')">取消</button><button class="btn btn-p" onclick="submitEditUser(${id})">保存</button></div>`);
+}
+async function submitEditUser(id){
+  const body={role:q('#e_role').value,status:q('#e_status').value,note:q('#e_note').value};
+  const pw=q('#e_pw').value;if(pw)body.password=pw;
+  try{await api('/api/admin/users/'+id,{method:'PATCH',body});hide('dlg');loadUsers();}catch(e){alert(e.message);}
+}
+async function delUser(id){
+  if(!confirm('删除该成员？其 API Key 会保留但解除归属。'))return;
+  try{await api('/api/admin/users/'+id,{method:'DELETE'});loadUsers();}catch(e){alert(e.message);}
+}
+
+function showDlg(html){const box=q('#dlgBox');box.innerHTML=html;box.querySelectorAll('label:not([for])').forEach((label,index)=>{const input=label.nextElementSibling;if(input?.matches('input,select,textarea')){if(!input.id)input.id='dialogField'+index;label.htmlFor=input.id;}});show('dlg');}
+
+/* 启动：探测鉴权，401 才弹登录遮罩（ADMIN_KEY 留空时免登录） */
+document.addEventListener('DOMContentLoaded',async function boot(){
+  try{ await api('/api/admin/accounts'); hide('loginMask'); refresh(); }
+  catch(e){ if(e.status===401)handleUnauthorized(); }
+});
+timer=setInterval(()=>{if(autoRefresh)refresh({background:true});},5000);
+</script>
+<script src="/task-results-ui.js?v=quota-renewal-20261031"></script>
+<script src="/platform-ui.js?v=expert-mode-20261029"></script>
+<script src="/doubao-accounts.js?v=auth-v0812-72d495204ae1"></script>
+<script src="/reference-images.js?v=expert30-doubao-images-v088"></script>
+<script src="/ck-batch-import.js?v=20261014-categories1"></script>
+<script src="/google-import.js?v=20261015-google1"></script>
+<script src="/task-evidence.js?v=expert-mode-20261029"></script>
+<script src="/dola-clean-download-plugin.js?v=task-download-20261029"></script>
+<script src="/dashboard-trend.js?v=aurora-20261031-r3"></script>
+<script src="/admin-ui.js?v=aurora-20261031-r3"></script>
+</body>
+</html>

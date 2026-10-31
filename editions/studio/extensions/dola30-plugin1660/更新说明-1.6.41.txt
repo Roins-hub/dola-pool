@@ -1,0 +1,13 @@
+1.6.41：Dola 原生专家模式与无水印源解析
+
+安装：在 Chrome 扩展管理页对 dola30 点击“重新加载”，随后刷新 Dola 对话页。扩展版本应显示 1.6.41，不要同时启用旧版。重启控制台后端，再关闭并重新打开账号浏览器，使执行器 v13 生效。
+
+修复：
+- 不再依赖早期 sendMessage 草稿里尚未存在的 option；点击视频发送时，先选中 Dola 原生“专家模式”，确认后再发送。
+- 无水印捕获新增 video_model 结构解析，支持普通 JSON、SSE 及嵌套 JSON 字符串。
+- 从 video_list 排序选择无水印 main_url，支持 base64 和 qAAB/key_seed 解码，不再把页面播放直链冒充无水印源。
+
+诊断：
+- silentExpert.uiSwitchCount 增加：原生菜单已自动切换。
+- silentExpert.last.method=native_ui：发送路由已经由原生界面确认。
+- mediaCapture.capturedModels 大于 0：已捕获 video_model 原片描述。

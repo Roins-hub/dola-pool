@@ -1,0 +1,12 @@
+{
+  "source": "https://github.com/Roins-hub/dola-pool",
+  "commit": "c910f3a40ea9282a7b7d7e0799269d93bef89b69",
+  "local_patches": [
+    "dola_pure_api.py: handle duplicate cookie names across domains when checking authentication cookies"
+  ],
+  "sha256": {
+    "dola_pure_api.py": "79eea3882e96843627789dc348558e33f01727bdcbc1007e75a5f0fa72e7a029",
+    "js/bdms_sign_url.js": "61fa778bc7b4ad5a671798e724cddb1149501f552c2bfeaee312252a19889e9d",
+    "js/bdms-sdk.js": "eda630a31c1bc3fc5201a479f5ff44463e5512d685b387d3df260434aa4e5c88"
+  }
+}

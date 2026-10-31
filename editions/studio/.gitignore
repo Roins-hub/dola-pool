@@ -1,0 +1,38 @@
+# Local configuration and credentials
+.env*
+!.env.example
+cookies.txt
+proxies.json
+*.key
+
+# Account sessions, databases, generated media and backups
+accounts/
+data/
+downloads/
+uploads/
+cache/
+backups/
+outputs/
+.result_provenance/
+.clean_download/
+*.db
+*.db-*
+*.db.*
+*.bak*
+
+# Runtime and diagnostic output
+logs/
+.runlogs/
+.impeccable/
+*.log
+*.out
+*.jsonl
+/_*
+/probe-*
+/server.err*
+
+# Python and local tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

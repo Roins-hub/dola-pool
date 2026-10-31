@@ -1,0 +1,39 @@
+/* Only the dashboard's daily trend; task and quota colours elsewhere are intact. */
+.trend-card .legend i{width:18px;height:2px;border-radius:2px;background:linear-gradient(90deg,#83d9ba,#82e5ed,#94bafa)}
+.trend-card .legend i.failed{background:linear-gradient(90deg,#f7a6b8,#dba8e6,#f3a0ad)}
+.trend-card .chart-axis{border:0;padding-bottom:0}
+#chart.aurora-chart{display:block;position:relative;height:218px;padding:7px 0 0;gap:0;min-width:0;font-variant-numeric:tabular-nums}
+.aurora-chart [hidden]{display:none!important}
+.aurora-chart .empty{height:100%;display:grid;place-items:center;margin:0}
+.trend-plot{position:relative;margin-left:28px;height:210px;isolation:isolate}
+.trend-svg{position:absolute;top:0;left:0;width:100%;height:184px;overflow:visible;pointer-events:none}
+.trend-line{stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.trend-glow{stroke-width:8;opacity:.2;filter:blur(3px);stroke-linecap:round;animation:trend-breathe 7s ease-in-out infinite;animation-play-state:paused}
+.trend-flow,.trend-flow-halo{stroke-linecap:round;stroke-dasharray:16 84;stroke-dashoffset:0;animation:trend-flow 14s linear infinite;animation-play-state:paused;pointer-events:none}
+.trend-flow{stroke-width:2.1;opacity:.5;filter:brightness(1.3)}
+.trend-flow-halo{stroke-width:10;opacity:.23;filter:blur(4px)}
+.trend-glow.trend-failed{animation-delay:-3.5s}
+.trend-flow.trend-failed,.trend-flow-halo.trend-failed{animation-duration:17s;animation-delay:-7s}
+.aurora-chart[data-motion-visible=true] :is(.trend-glow,.trend-flow,.trend-flow-halo){animation-play-state:running}
+:root[data-motion=off] .aurora-chart :is(.trend-glow,.trend-flow,.trend-flow-halo),:root[data-trend-page-visible=false] .aurora-chart :is(.trend-glow,.trend-flow,.trend-flow-halo){animation-play-state:paused}
+@keyframes trend-flow{to{stroke-dashoffset:-100}}
+@keyframes trend-breathe{0%,100%{opacity:.15}50%{opacity:.28}}
+.trend-grid{position:absolute;inset:0;pointer-events:none}
+.trend-tick{position:absolute;left:0;right:0;height:1px;background:color-mix(in srgb,var(--line) 48%,transparent)}
+.trend-tick span{position:absolute;right:calc(100% + 9px);top:0;transform:translateY(-50%);font-size:10px;color:var(--sub);opacity:1}
+.trend-days{position:absolute;inset:0;display:flex;z-index:2}
+.trend-day{flex:1;min-width:0;position:relative;display:flex;align-items:flex-end;justify-content:center;padding:0 0 2px;border:0;background:transparent;color:var(--sub);font:inherit;cursor:crosshair;outline:none;-webkit-tap-highlight-color:transparent}
+.trend-date{font-size:11px;line-height:1.5;padding:3px 4px;border-radius:4px;transition:color 140ms,background 140ms}
+.trend-day.is-active .trend-date{color:var(--text);background:color-mix(in srgb,var(--accent) 11%,transparent)}
+.trend-day:focus-visible .trend-date{outline:2px solid var(--accent);outline-offset:2px}
+.trend-guide{position:absolute;top:12px;height:160px;border-left:1px dashed #cbd9e84d;transform:translateX(-50%);pointer-events:none}
+.trend-point{position:absolute;width:6px;height:6px;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:1}
+.trend-point-completed{background:#a3eee8;box-shadow:0 0 8px #82e5ed40}
+.trend-point-failed{background:#efb9de;box-shadow:0 0 8px #e4a8db40}
+.trend-tooltip{position:absolute;top:5px;left:clamp(76px,var(--point-x),calc(100% - 76px));transform:translateX(-50%);width:150px;padding:11px 13px;background:var(--card);border:1px solid var(--line);border-radius:9px;box-shadow:0 8px 24px #0003;color:var(--text);pointer-events:none;z-index:3}
+.trend-tooltip-date{display:block;font-size:11px;font-weight:500;margin-bottom:9px;color:var(--sub)}
+.trend-tooltip-row{display:flex;align-items:center;justify-content:space-between;gap:20px;font-size:12px;line-height:1.8}
+.trend-tooltip-row b{font-weight:600}
+.trend-complete-label{color:#97dcd5}.trend-failed-label{color:#e6afce}
+@media(max-width:767px){.trend-plot{margin-left:23px}.trend-date{font-size:10px;padding:3px 0}.trend-card .legend{gap:11px}.trend-card .legend i{width:13px}.trend-tooltip{width:138px;left:clamp(69px,var(--point-x),calc(100% - 69px))}}
+@media(prefers-reduced-motion:reduce){.trend-date{transition:none}.aurora-chart :is(.trend-glow,.trend-flow,.trend-flow-halo){animation:none}.trend-flow,.trend-flow-halo{display:none}}

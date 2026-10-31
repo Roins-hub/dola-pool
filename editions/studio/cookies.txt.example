@@ -1,0 +1,4 @@
+# 每行一个 dola.com 账号 cookie（必须含 msToken= / s_v_web_id= / sessionid= 三个字段）
+# 获取方式：登录 https://www.dola.com 后 F12 -> Network -> 任意请求 -> Headers -> 完整 Cookie
+# 用 # 开头表示注释。示例（占位，替换为真实 cookie）：
+# msToken=xxxx; s_v_web_id=ver_xxxx; sessionid=xxxx; passport_auth_status=xxxx; sid_guard=xxxx

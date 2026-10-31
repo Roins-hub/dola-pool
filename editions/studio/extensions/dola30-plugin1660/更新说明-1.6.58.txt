@@ -1,0 +1,8 @@
+苏生阁AI · 30秒无水印助手 v1.6.58
+
+1. 修复把带 lr=video_gen_watermark_dyn 的 video_model 播放流误标为“原片”的问题。
+2. 同一视频同时出现 video_model 与 fallback_api 时，优先使用明确请求 logo_type=unwatermarked 的底层接口结果。
+3. video_model 只有带水印候选时会明确拒绝，不再提供错误的“无水印”下载按钮。
+4. 页面中的带水印播放直链只用于继续解析原片，不再显示为可下载结果。
+
+安装：重新打开账号浏览器即可自动加载 v1.6.58；普通 Chrome 手动加载的扩展请在 chrome://extensions 点击“重新加载”，并刷新 Dola 页面。
