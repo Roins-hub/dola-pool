@@ -81,3 +81,41 @@ def test_pure_path_picks_the_confirmation_but_not_after_acceptance():
     assert pure_api_gen._start_confirm_text(dola, ['PROMPT 10 秒', JA], 10) == 'はい、10秒で生成を開始してください。'
     assert pure_api_gen._start_confirm_text(dola, [JA, '生成を開始しました。クレジットを 2 消費'], 10) is None
     assert pure_api_gen._start_confirm_text(dola, ['PROMPT only'], 10) is None
+
+
+MISSING_REF = ('只ひとつ確認させてください：現在のところ動画生成は4秒から15秒まで対応しており、10秒は有効です。'
+               'ただし、リクエストに「図1」「図2」と記載されていますが、今回のラウンドでは参照画像が提供されていません。'
+               '正しく生成するにはどちらかを選んでください： A. 前回アップロードした画像2点を使用する '
+               'B. 今回のプロンプトからゼロで10秒動画を生成する A を選ぶ場合は「A」とだけ返信してください。'
+               '確認後、10秒・16:9で直接生成します。')
+
+
+def test_missing_reference_question_fails_fast_without_answering():
+    """2026-10-31 线上：dola 说这一轮没收到参照图、让选 A/B；之前不认识，任务空等 30 分钟超时。"""
+    from upstream_reply import reply_failure
+    assert reply_failure(MISSING_REF) == '需要补充信息'
+    assert start_confirm_reply(MISSING_REF, 10) is None and duration_reply(MISSING_REF, 10) is None
+    # 只是顺带说明、照常生成的不算
+    assert reply_failure('参照画像が提供されていませんので、テキストから動画を生成します。') is None
+
+    class Context:
+        async def cookies(self, *a): return []
+
+    class Page:
+        calls = 0
+        async def evaluate(self, *a):
+            self.calls += 1
+            assert self.calls <= 2                     # 两次确认就结束，不等到超时
+            return {'texts': [MISSING_REF], 'assistantTexts': [MISSING_REF], 'assistantCount': 1,
+                    'latestAssistant': {'id': 'q', 'text': MISSING_REF, 'finished': True}, 'videos': []}
+        async def query_selector(self, *a): raise AssertionError('must not answer A/B for the customer')
+
+    async def no_wait(*a): pass
+    fn = load_worker_function(
+        'poll_conversation', cookie_value=lambda *a: '',
+        asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for),
+        POLL_JS='', emit_feedback=lambda cb, **kw: None,
+        DAILY_LIMIT_PATTERN=re.compile('x^'), FREE_LIMIT_REPLY=re.compile('x^'),
+        _parse_balance_texts=lambda x: (None, None, ''))
+    with pytest.raises(UpstreamReplyError, match='需要补充信息'):
+        _run(fn('acc141', Page(), Context(), 'c1', 1800, duration=10, on_poll=lambda *a, **k: None))
