@@ -173,3 +173,42 @@ def reference_reuse_reply(text, attachments):
     if reply_failure(text) != '需要补充信息' or not _REUSE_OPTION.search(text.replace('**', '')):
         return None
     return 'A'
+
+
+# 2026-11-01 线上：参数 16:9、提示词写「9:16竖幅」，dola 问「この動画生成リクエストには複数のアスペクト比が
+# 記載されています。どちらで生成しますか？ A. 9:16 縦幅 B. 16:9 横幅 C. その他」。同一请求另一条直接按 9:16 出片，
+# 所以按提示词里写明的比例回答（提示词没写或写了几个不同的，才用请求参数）。
+_KNOWN_RATIOS = {'16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21', '3:2', '2:3'}
+_RATIO_IN_TEXT = re.compile(r'(?<![\d.])(\d{1,2})\s*[:：比]\s*(\d{1,2})(?![\d.])')
+_RATIO_OPTION = re.compile(r'(?<![A-Za-z])([A-D])\s*[.．、)）]\s*(\d{1,2})\s*[:：]\s*(\d{1,2})')
+_RATIO_ASK = re.compile(r'アスペクト比|縦横比|比例|画面比|aspect ratio|which ratio|どちら|哪个|哪一个|选择|選んで|choose|select', re.I)
+_PORTRAIT_WORDS = re.compile(r'竖幅|竖屏|竖版|竖构图|縦長|縦型|portrait|vertical', re.I)
+_LANDSCAPE_WORDS = re.compile(r'横幅|横屏|横版|横构图|横長|横型|landscape|horizontal', re.I)
+
+
+def prompt_ratio(prompt):
+    """提示词里写明的唯一画面比例；没写或写了几个不同的返回 None。"""
+    found = {f'{a}:{b}' for a, b in _RATIO_IN_TEXT.findall(str(prompt or '')) if f'{a}:{b}' in _KNOWN_RATIOS}
+    if _PORTRAIT_WORDS.search(str(prompt or '')):
+        found.add('9:16') if not found or found == {'9:16'} else found.add('portrait?')
+    if _LANDSCAPE_WORDS.search(str(prompt or '')):
+        found.add('16:9') if not found or found == {'16:9'} else found.add('landscape?')
+    return next(iter(found)) if len(found) == 1 else None
+
+
+def ratio_choice_reply(text, prompt=None, ratio=None):
+    """dola 列出 A/B/C 比例选项问用哪个 → 回提示词写明的比例（否则用请求参数）对应的选项；对不上就 None。"""
+    if not text or reply_failure(text):
+        return None
+    clean = text.replace('**', '')
+    options = [(m.group(1).upper(), f'{int(m.group(2))}:{int(m.group(3))}') for m in _RATIO_OPTION.finditer(clean)]
+    if len(options) < 2 or not _RATIO_ASK.search(clean):
+        return None
+    want = prompt_ratio(prompt)
+    if not want and ratio:
+        r = str(ratio).replace('：', ':').strip()
+        want = r if r in _KNOWN_RATIOS else None
+    for letter, value in options:
+        if value == want:
+            return f'{letter}. {value}'
+    return None

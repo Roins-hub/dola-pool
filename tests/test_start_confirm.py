@@ -261,3 +261,61 @@ def test_reuse_question_is_answered_with_a_when_we_uploaded_attachments():
         _run(fn('acc141', Page(), Context(), 'c1', 1800, duration=10, on_poll=lambda *a, **k: None))
     assert typed == ['A', 'Enter']
     assert any(p and '已回复「A」' in p for p in progress)
+
+
+RATIO_Q = ('この動画生成リクエストには複数のアスペクト比が記載されています。どちらで生成しますか？ '
+           'A. 9:16 縦幅 B. 16:9 横幅 C. その他（指定してください）')
+PROMPT_916 = '8K写实古风写真，9:16竖幅，蝶梦主题。女子穿淡粉青纱唐风齐胸襦裙'
+
+
+def test_ratio_question_follows_the_prompt_then_the_parameter():
+    """2026-11-01：参数 16:9、提示词 9:16。同一请求另一条直接出了 720x1280，所以按提示词答。"""
+    from upstream_reply import ratio_choice_reply, prompt_ratio
+    assert ratio_choice_reply(RATIO_Q, PROMPT_916, '16:9') == 'A. 9:16'
+    assert ratio_choice_reply(RATIO_Q, '海边日落', '16:9') == 'B. 16:9'          # 提示词没写比例
+    assert ratio_choice_reply(RATIO_Q, '先 16:9 再 9:16', '9:16') == 'A. 9:16'   # 写了两个，用参数
+    assert ratio_choice_reply(RATIO_Q, '海边日落', None) is None                  # 无从判断：不乱答
+    assert ratio_choice_reply(RATIO_Q, '1:1 方图', '1:1') is None                 # 选项里没有：不答
+    assert ratio_choice_reply('動画が生成されました。', PROMPT_916, '16:9') is None
+    assert prompt_ratio('竖屏人像') == '9:16' and prompt_ratio('竖屏 16:9') is None
+    assert prompt_ratio('12:55 开拍的海边') is None
+
+
+def test_browser_poll_answers_the_ratio_question_and_keeps_waiting():
+    typed = []
+
+    class Keyboard:
+        async def type(self, text, delay=0): typed.append(text)
+        async def press(self, key): typed.append(key)
+
+    class Box:
+        async def click(self): pass
+
+    class Context:
+        async def cookies(self, *a): return []
+
+    question = _poll(RATIO_Q, clarifying=True, index='4')
+    accepted = _poll('動画は5分以内に生成されます。', video_gen=True, index='6')
+
+    class Page:
+        keyboard = Keyboard()
+        calls = 0
+        async def evaluate(self, *a):
+            self.calls += 1
+            if self.calls > 4:
+                raise ConnectionError('end')
+            return question if self.calls == 1 else accepted
+        async def query_selector(self, *a): return Box()
+        async def wait_for_timeout(self, *a): pass
+
+    async def no_wait(*a): pass
+    fn = load_worker_function(
+        'poll_conversation', cookie_value=lambda *a: '',
+        asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for),
+        POLL_JS='', emit_feedback=lambda cb, **kw: None,
+        DAILY_LIMIT_PATTERN=re.compile('x^'), FREE_LIMIT_REPLY=re.compile('x^'),
+        _parse_balance_texts=lambda x: (None, None, ''))
+    with pytest.raises(UpstreamReplyError, match='网络失败'):       # 答完后正常等出片，直到脚本结束
+        _run(fn('acc13', Page(), Context(), 'c1', 1800, duration=10, ratio='16:9', prompt=PROMPT_916,
+                on_poll=lambda *a, **k: None))
+    assert typed == ['A. 9:16', 'Enter']

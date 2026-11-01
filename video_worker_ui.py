@@ -725,7 +725,7 @@ async def _preflight_balance(page, ms_token: str, fp: str, required: int) -> dic
 async def poll_conversation(account: str, page, context, conversation_id: str,
                             timeout: int, on_poll=None, on_balance=None,
                             duration: int | None = None,
-                            ratio: str | None = None) -> dict:
+                            ratio: str | None = None, prompt: str | None = None) -> dict:
     """轮询已受理会话直到出片（不限时）；可被初次提交和服务重启恢复流程共同调用。"""
     emit_feedback(on_poll, progress="已取得上游会话，正在查询视频结果")
     cookies = await context.cookies("https://www.dola.com")
@@ -829,6 +829,14 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 if await _answer(reuse):
                     emit_feedback(on_poll, progress=f"dola 问是否使用刚上传的 {poll.get('userAttachments')} 张参考图，"
                                                     "已回复「A」（使用），等待出片")
+                    continue
+            # 提示词和比例参数不一致时 dola 会问「用哪个比例（A/B/C）」：按提示词写明的比例答，没写才用参数
+            from upstream_reply import ratio_choice_reply
+            pick = ratio_choice_reply("\n".join(texts), prompt, ratio)
+            if pick:
+                answered.add(latest.get("index"))
+                if await _answer(pick):
+                    emit_feedback(on_poll, progress=f"dola 问用哪个画面比例，已回复「{pick}」，等待出片")
                     continue
         joined = "\n".join(texts)
         if not videos and (joined or latest):
@@ -1186,7 +1194,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 on_conversation_id(account, conv_id, deadline)
             return await poll_conversation(
                 account, page, context, conv_id, timeout, on_poll, on_balance,
-                duration, ratio)
+                duration, ratio, prompt=prompt)
         finally:
             try:
                 if replies is not None:
