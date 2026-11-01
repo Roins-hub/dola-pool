@@ -1,216 +1,95 @@
-<p align="center"><img src="web/logo.svg" width="112" height="112" alt="dola-pool logo"></p>
+<p align="center"><img src="web/logo.svg" width="96" height="96" alt="dola-pool logo"></p>
 <h1 align="center">dola-pool</h1>
-<p align="center">🌐 <b>中文</b> | <a href="README.vi.md">Tiếng Việt</a></p>
+<p align="center">把一组 dola.com / 豆包账号组成号池，对外提供 OpenAI 兼容的视频生成与生图 API</p>
+<p align="center">
+  🌐 <b>中文</b> | <a href="README.vi.md">Tiếng Việt</a>
+  &nbsp;·&nbsp; <a href="https://github.com/Roins-hub/dola-pool/releases/latest">下载最新版</a>
+  &nbsp;·&nbsp; <a href="USAGE.md">使用手册</a>
+  &nbsp;·&nbsp; <a href="API.md">接口文档</a>
+  &nbsp;·&nbsp; <a href="CHANGELOG.md">更新日志</a>
+</p>
 
-有兴趣的可以加群交流
-<img width="1305" height="2321" alt="301130c1842c3b30432394fc276a7a58" src="https://github.com/user-attachments/assets/39207d3c-955f-49ec-adbc-8db471f23b79" />
+<img align="right" width="190" alt="交流群二维码" src="https://github.com/user-attachments/assets/39207d3c-955f-49ec-adbc-8db471f23b79" />
 
-**当前版本：v2.6.14** — 参考图上传改为服务器直连（经代理时约一半失败）；dola 追问认不出时自动回复（通用回复 + 可选 AI 代答），「已经生成过了」直接要一条新视频；加号失败的记录可重试 / 删除，新号自动命名接着最大的 accN。完整改动见 [更新日志](CHANGELOG.md)。
+[dola.com](https://www.dola.com) 是字节 Seedance 视频模型的国际版，[豆包](https://www.doubao.com) 是国内版。dola-pool 把这两个站点的账号放进同一个号池，对外提供 **OpenAI 风格接口**，也兼容火山方舟（Ark）任务协议，可以直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
 
-把一组 [dola.com](https://www.dola.com)（字节 Seedance 视频模型国际版）和 [豆包 doubao.com](https://www.doubao.com)（国内版）账号组成号池，对外提供 **OpenAI 兼容的视频生成 / 生图 API**，并兼容火山方舟（Ark）任务式协议，可直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
+- **号池调度**：自动选号、额度记账、风控冷却、失败换号、每日额度重置
+- **两个站点混用**：dola 号接 `seedance-2.0-fast` / `seedance-2.5`；豆包号接 `doubao-seedance-*` 视频和 `doubao-seedream-*` 生图。按模型名分派，互不串号
+- **两种出片路径**：纯 HTTP 协议（默认），浏览器自动化兜底（仅 dola）
+- **对外接口**：`/v1/videos`、`/v1/images/generations`、`/v1/images/edits`，以及 Ark 风格 `/api/v3/contents/generations/tasks`
+- **管理面板**：账号、代理、API Key、任务、视频、压力测试，可一键更新；支持中文 / 越南语
+- **自动处理 dola 追问**：比例、时长、「已经生成过了」等追问自动回复，可选接入 AI 代答
+- **按请求分辨率自动超分**：1080p / 2K / 4K
 
-- 多账号号池：自动选号、额度记账、风控冷却、失败换号、每日额度重置
-- **两个站点的号混用**：dola 号接 `seedance-2.0-fast` / `seedance-2.5`，豆包号接 `doubao-seedance-*` 视频和 `doubao-seedream-*` 生图，按模型名自动分派、互不串号
-- 两种出片路径：纯 HTTP 协议（默认）与 Chromium 浏览器自动化（兜底，仅 dola）
-- 可选严格 Cookie 隔离：Dola Cookie 账号按账号绑定 CloakBrowser 持久 profile、固定 fingerprint seed 和独立出口
-- 对外接口：OpenAI 风格 `/v1/videos`、`/v1/images/generations`、`/v1/images/edits`，Ark 风格 `/api/v3/contents/generations/tasks`
-- 自带管理面板：账号、代理、客户 API Key、任务、视频、压力测试；界面支持中文 / 越南语 / 中越双语（见 [`I18N.md`](I18N.md)）
-- 账号 Cookie 单个 JSON / 批量 ZIP 导出；添加账号时可绑定代理，批量添加支持多选代理轮流分配（登录/验证前生效）
-- 参考图生视频 / 图生图、本地转存与静态分发（水印情况见「注意事项」）
+**交流群**：扫右侧二维码加群。
 
-> 📖 **第一次使用？先看 [`USAGE.md`](USAGE.md) 使用手册**：核心概念、管理面板每个按钮的作用、从零出第一条视频、日常运营与常见问题。
-> 🍪 **加号前先看 [`COOKIE.md`](COOKIE.md)**：怎么从浏览器导出 dola / 豆包账号的 Cookie（Cookie-Editor 插件 / 开发者工具）。
->
-> 完整的下游对接文档（鉴权、字段、错误码、管理接口）见 [`API.md`](API.md)。
+**第一次用？** 先看 [`USAGE.md`](USAGE.md)：从零到出第一条视频，以及管理面板每个按钮的作用。加号前看 [`COOKIE.md`](COOKIE.md)，里面讲怎么导出账号 Cookie。
 
-## 支持的模型
+<br clear="right">
 
-| 模型 | 分辨率 | 时长 | 参考素材 | 每次扣点（账号每日默认 4 点） |
-|---|---|---|---|---|
-| `seedance-2.5` | 720p | 5 / 10 / 30 秒（15 秒出不了，30 秒需开 `pair`，见下） | 图片最多 10 张；不支持参考音频、视频 | 5 秒 = 2、10 秒 = 4、15 秒 = 12（超过每日额度）、**30 秒 = 2**（只出半截、补后半段时共 4） |
-| `seedance-2.0-fast` | 720p | 5 / 10 秒（15 秒已下线） | 图片最多 10 张；不支持参考音频、视频 | 5 秒 = 2、10 秒 = 4 |
+## 快速开始
 
-- 扣点按 dola 回执里的**报价**，随「模型 + 时长」变化（2026-10-14 实测，见 `config.DURATION_COSTS`，可用 `DOLA_DURATION_COSTS` 覆盖）。
-  报价超过一个号一天的额度（默认 4 点）的组合受理时直接 422：**seedance-2.5 的 15 秒要 12 点，免费号出不了**，请用 10 秒、30 秒或 seedance-2.0-fast。
-- 一个号一天（4 点）能出：2.5 —— 5 秒 2 条 / 10 秒 1 条 / 30 秒 2 条；2.0 —— 5 秒 2 条，或 5 秒 + 10 秒各 1 条（dola 只看还有没有额度），或 10 秒 1 条。
+### 一键部署（Linux，推荐）
 
-- **30 秒**：dola 自 2026-10-12 起对 30 秒请求回「只支持 4～15 秒，按 15 秒生成」，但**实际仍按 30 秒出片**（[issue #4](https://github.com/Roins-hub/dola-pool/issues/4)）。由 `DOLA_30S_MODE` 决定：
-  `reject`（默认，受理时直接 422 说明原因）/ `pair`（**推荐**）：**先原样请求一次 30 秒**——dola 嘴上回「按最接近的支持时长 15 秒生成，将消耗 2 个」，**实际多数出满 30 秒**（2026-10-14 实测 4 单都是 30.08 秒），只扣 **2 点**；只出了半截（～15 秒）才补一次「后半段」并本地拼接（再扣 2 点）。回执里的秒数不作数，只认落地时长；dola 反问「是否按 15 秒生成」时自动回「确认生成」；只能派给 Cookie 导入的号；补了后半段时两段之间画面可能不完全连贯 / `native`（按 30 秒原样提交的旧逻辑，dola 说「只支持 4～15 秒」后最多再等 10 分钟，不推荐）。
-- 其它时长直接拒绝；显式写了 2.0 / 2.5 的请求只按该版本校验，不会悄悄换型号。
-- 成片为 1280×720、24fps、H.265，码率约 1.5～4 Mbps（由上游决定，画面越简单文件越小）。
-- `seedance-2.0-fast` 就是 dola 网页上的「Seedance 2.0 Fast」（dola 没有标准版 Seedance 2.0）。旧名 `seedance-2.0` 仍然可以用，自动按 2.0 Fast 处理，但不再出现在 `/v1/models` 里。
-
-### 豆包（doubao.com）号的模型（2.3.0 起）
-
-号池可以同时放 dola 号和豆包号：**豆包号只接下面这 4 个模型，dola 号只接 `seedance-2.0-fast` / `seedance-2.5`**，互不串。
-
-| 模型 | 豆包里的名字 | 时长 | 谁能用 | 豆包页面的消耗标注 | 实测（2026-10-18） |
-|---|---|---|---|---|---|
-| `doubao-seedance-2.0-mini` | Seedance 2.0 Mini | 4～15 秒任意整数 | 免费号、会员 | 「日常生成使用」，不标倍数（按 1 倍算） | 免费号 5 秒连出 3 条都还在免费额度内；每条约 2 分钟出片 |
-| `doubao-seedance-2.0-fast` | Seedance 2.0 Fast | 4～15 秒任意整数 | 免费号、会员 | 「快速出片选择」，不标倍数 | 未测 |
-| `doubao-seedance-2.0` | Seedance 2.0 | 4～15 秒任意整数 | **只有会员** | 「进阶画面表现 · **2 倍消耗**」 | 未测；免费号请求会被豆包拒绝（号池自动换会员号） |
-| `doubao-seedance-2.5` | Seedance 2.5 | 4～**30** 秒任意整数（原生，不拼接） | **只有会员** | 「旗舰视频标杆 · **5 倍消耗**」 | 体验套餐号出了 1 条 5 秒后，当天免费额度就用完了，再出 Mini 也提示要走付费额度 |
-
-> 豆包**不公开每日免费额度是多少**，回复里也不报剩余，只会说「本次生成将消耗每日免费额度」；用完后改问
-> 「本次将消耗付费额度，是否继续？」（号池按 `DOUBAO_ALLOW_PAID` 处理）。所以上表的「倍数」是豆包页面的原话，
-> 能出几条以实际为准；额度规则豆包随时在调，2.5 的免费体验据报道 11 月后可能取消。
-
-- 比例支持 `16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9`，不传则由豆包自动定。成片 720p。
-- **水印**：豆包的「AI 生成」明水印是**按号**的设置（豆包设置 → AI 生成水印管理 → 生成的图片、视频）。
-  `DOUBAO_AUTO_NO_WATERMARK=1`（默认）时号池在探测 / 出片前读这项设置，没关就用豆包官方设置接口替号关掉，
-  之后走官方下载接口拿的就是干净成片（免费号、会员号都实测过）；面板「来源」列显示「无水印 ✓ / ⚠ 未关水印」。
-  关掉明水印后，视频公开发布时要由发布方自行标注「AI 生成」（豆包设置页里的法规说明）。
-- 豆包会先回「请先确认参数」，号池核对时长、模型都对才自动回「确认生成」；对不上就不确认（不扣额度）、直接报错。
-- 免费额度用完时豆包问「本次将消耗付费额度，是否继续？」：`DOUBAO_ALLOW_PAID=1`（默认）自动确认走付费；
-  设成 `0` 则判这个号今天额度用完、换号。号没有付费额度时同样换号。
-- 免费号请求 2.0 / 2.5 时豆包回「当前无法使用 Seedance 2.5，是否改用 Mini」：号池**绝不确认**（会悄悄降级），
-  把这个号记为「免费号」、换会员号重派；会员模型出片成功的号记为「会员」，面板「来源」列能看到。
-- 豆包不报剩余条数，面板显示「今日已出 N 条」；`DOUBAO_DAILY_LIMIT`（默认 999）只是兜底上限。
-- 境外服务器能直接用（2026-10-18 从日本出口实测通过），不需要日本 / 韩国代理。
-- 只支持 Cookie 导入（见 [COOKIE.md](COOKIE.md) 的「豆包号」一节）。new-api Doubao 插件的官方名
-  `doubao-seedance-2-0-260128` 等**不是**豆包号模型，照旧走 dola。
-
-### 生图（Seedream，2.4.0 起，只接豆包号）
-
-OpenAI 兼容、**同步返回**：`POST /v1/images/generations`（文生图）、`POST /v1/images/edits`（图生图 / 改图），只派给豆包号：
-
-| 模型 | 豆包网页里的名字 | 比例 | 一次出几张 |
-|---|---|---|---|
-| `doubao-seedream-5.0-flash` | Seedream 5.0 Flash（专业快速） | 自动 / 9:16 / 2:3 / 3:4 / 1:1 / 4:3 / 3:2 / 16:9 | 1 |
-| `doubao-seedream-5.0-pro` | Seedream 5.0 Pro（专业出图 · 4 倍消耗） | 同上 | 1 |
-| `doubao-seedream-4.5` | Seedream 4.5（日常生成） | 同上 | 1 |
-| `doubao-seedream-4.0` | Seedream 4.0（基础生图） | 同上 | 1 |
-
-- 请求体：`{"model", "prompt", "size"（如 1536x1024，自动换算成最接近的比例）或 "ratio"（如 16:9）,
-  "response_format": "url" | "b64_json", "reference_images": [图片 URL / data URL]}`；edits 也收 multipart 的 `image` / `image[]` 文件。
-- 返回：`{"created", "data": [{"url"} 或 {"b64_json"}], "model", "account", "unwatermarked"}`。分辨率 2K 档（16:9 实测 2720×1520），约 20 秒出图。
-- **水印**：走豆包官方无水印下载接口；号在豆包设置里关了「AI 生成水印」就是干净图，号池会自动替号关（同视频，`DOUBAO_AUTO_NO_WATERMARK`）。
-- 豆包从**文字**里读比例：号池按「生成图片：<提示词>，16:9」的格式发，否则豆包按 1:1 出。
-- 整个请求最多等 `DOLA_IMAGE_TIMEOUT`（默认 240 秒），期间失败自动换号；上游拒绝出图（审核）不换号、直接返回原因。
-- 生图不记视频额度、不按额度挑号（只跳过风控 / 待激活 / 异常 / 出口限流中 / 正在出片的号）。
-
-## 调度与超时
-
-每个任务在 **总时限**内持续换号出片，超时即判定失败，不会无限等待：
-
-1. 按权重/优先级挑一个可调度且空闲的账号生成；
-2. 失败（额度不足、每日上限、风控、`generation_voided` 等）自动换下一个号；
-3. 一轮账号都试过仍未成功，等失败冷却结束后从头再来一轮；
-4. 超过 `DOLA_TASK_DEADLINE`（默认 **600 秒**）仍未成功，任务失败并返回
-   `超过 600 秒仍未生成成功，任务失败（已尝试账号: …）`；
-5. 全池都已达每日上限或积分不足时立即返回 429，不空等；
-6. 已拿到会话、只是轮询超时的任务**不换号重提**，避免 Dola 端重复出片、重复扣额度。
-
-## 一键部署（推荐）
-
-**Linux 服务器**（Ubuntu 20.04+ / Debian 11+），一条命令装好并注册为系统服务：
+Ubuntu 20.04+ / Debian 11+，一条命令装好并注册为系统服务：
 
 ```bash
-# 直接用 IP:8002 访问
+# 用 IP:8002 访问
 curl -fsSL https://github.com/Roins-hub/dola-pool/releases/latest/download/install.sh | sudo bash
 
-# 带域名 + 自动 HTTPS（先把域名 A 记录解析到这台服务器）
+# 带域名 + 自动 HTTPS（先把域名解析到这台服务器）
 curl -fsSL https://github.com/Roins-hub/dola-pool/releases/latest/download/install.sh | sudo DOLA_DOMAIN=video.example.com bash
 ```
 
-装完会打印面板地址、默认账号（`admin` / `admin123`，请立即修改）和随机生成的 API Key。
-再次执行同一条命令即升级，配置与数据都会保留。可选参数（安装目录、端口、服务名等）见 [`deploy/install.sh`](deploy/install.sh) 开头的注释。
+装完会打印面板地址、默认账号 `admin` / `admin123`（请立即修改）和随机生成的 API Key。之后在面板「版本」里一键更新即可。可选参数见 [`deploy/install.sh`](deploy/install.sh) 开头的注释。
 
-**本地电脑**：下载 [Release](https://github.com/Roins-hub/dola-pool/releases/latest) 的源码包并解压，然后
-
-- Windows：双击 `start-local.bat`
-- macOS / Linux：`bash start-local.sh`
-
-首次运行会自动建虚拟环境、装依赖、下载 Chromium，然后打开 `http://127.0.0.1:8002/`。
-需要提前装好 Python 3.10+ 和 Node.js 18+。本机不在日本 / 韩国时需要配代理（见 [`USAGE.md`](USAGE.md)）。
-
-### Docker 部署
-
-镜像发布在 `ghcr.io/roins-hub/dola-pool`（每个版本标签自动构建，`latest` 是最新版）。需要 Docker 20+ 和 Docker Compose：
+### Docker
 
 ```bash
 mkdir dola-pool && cd dola-pool
 curl -fsSLO https://raw.githubusercontent.com/Roins-hub/dola-pool/main/docker-compose.yml
 curl -fsSL https://raw.githubusercontent.com/Roins-hub/dola-pool/main/deploy/dola.env.example -o dola.env
-# 编辑 dola.env：至少改 DOLA_ADMIN_KEY、DOLA_PUBLIC_BASE（对外访问地址，如 http://你的IP:8000）
+# 编辑 dola.env：至少改 DOLA_ADMIN_KEY、DOLA_PUBLIC_BASE（对外地址，如 http://你的IP:8000）
 docker compose up -d
 ```
 
-- 面板：`http://服务器IP:8000/`；健康检查 `http://服务器IP:8000/health`。端口在 `docker-compose.yml` 的 `ports` 里改。
-- **数据都在 `./data`**（账号、数据库、成片、参考图），升级镜像不丢：`docker compose pull && docker compose up -d`。
-- 想用本地代码构建：把 `docker-compose.yml` 里的 `image:` 换成 `build: .`，再 `docker compose up -d --build`。
-- 镜像只跑**纯 API**（Cookie 导入的 dola / 豆包号），不带浏览器，Google 账号登录的号在 Docker 里用不了。
-- 镜像约 1.6 GB（Python 3.12 + Node + ffmpeg + opencv）。
+- 面板在 `http://服务器IP:8000/`，数据都在 `./data`，升级不会丢。
+- 镜像 `ghcr.io/roins-hub/dola-pool` 只跑**纯 API**，只支持 Cookie 导入的号，不带浏览器。
 
-### 严格 Cookie 浏览器隔离（2.5.0）
+### 本地电脑
 
-默认 Cookie 账号仍走纯 HTTP。需要让 Dola Cookie 账号固定在独立浏览器环境时，使用 Linux
-Xvfb/systemd 部署并安装可选的 `deploy-cloak-requirements.txt`：
+下载 [Release](https://github.com/Roins-hub/dola-pool/releases/latest) 源码包解压，然后：
+- Windows 双击 `start-local.bat`；
+- macOS / Linux 运行 `bash start-local.sh`。
 
-```env
-DOLA_COOKIE_RUNTIME=cloak
-DOLA_CLOAK_HEADLESS=0
-CLOAKBROWSER_CACHE_DIR=/opt/dola-pool/.cloakbrowser
-DOLA_ISOLATE_SHARED_EGRESS=1
-DOLA_EGRESS_THROTTLE_ROTATE=0
-DOLA_EGRESS_THROTTLE_MIN_ACCOUNTS=1
-DOLA_MIN_SUBMIT_INTERVAL_SECONDS=15
-```
+需要 Python 3.10+ 和 Node.js 18+。本机不在日本 / 韩国时要配代理，见 [`USAGE.md`](USAGE.md)。
 
-严格模式下，每个 Dola Cookie 账号使用 `accounts/<账号>/cloak-profile/`，并绑定自己的固定代理或
-sticky session；验证、提交和轮询都走该 profile。命中 `710022002` 时按出口和账号退避，默认不
-自动换 IP。批量导入时先勾选“跳过在线验证”，导入后绑定账号专属代理，再逐个点击“验证”。
+<details>
+<summary><b>手动部署（源码 + systemd）</b></summary>
 
-该模式不适用于当前纯 API Docker 镜像；完整部署和迁移步骤见 [`USAGE.md`](USAGE.md)。
-
-主分支已修复 v2.5.0 的会话 Cookie 在第二次启动时丢失问题：关闭时保存账号独立的会话快照，
-下次只恢复缺失的会话 Cookie；退出登录后不重放原始导入。此修复不在原 v2.5.0 发布包内。
-
-这是浏览器资料隔离，不是每账号独立虚拟机。账号仍共享服务器、应用进程和调度数据库；视频下载
-仍使用独立 HTTP 客户端。不同代理记录或 sticky session 不保证不同公网 IP，应通过实际出口探测确认。
-`710022002` 表示上游拒绝/限流，不能单凭错误码认定是指纹或 IP 原因，也不能保证换浏览器后消失。
-30 秒 `pair` 和纯 API 超时后台取回仍只适用于纯 API 账号。CloakBrowser 内核另有许可证与版本/并发限制。
-
-## 手动部署
-
-需要 Python 3.10+。dola.com 要求日本/韩国出口，服务器在大陆时必须配置代理。
+dola.com 要求日本 / 韩国出口，服务器在大陆时必须配代理。
 
 ```bash
-git clone https://github.com/Roins-hub/dola-pool.git
-cd dola-pool
-python -m venv .venv
-source .venv/bin/activate            # Windows: .venv\Scripts\activate
+git clone https://github.com/Roins-hub/dola-pool.git && cd dola-pool
+python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-patchright install chromium          # 浏览器兜底路径需要
+patchright install chromium                           # 浏览器兜底路径需要
 
-cp cookies.txt.example cookies.txt   # 填入账号 cookie，一行一个（或启动后在面板里导入）
-
-export DOLA_API_KEYS=sk-your-key     # 对外 API Key，逗号分隔
-export DOLA_ADMIN_KEY=change-me      # 管理面板密钥
+export DOLA_API_KEYS=sk-your-key                      # 对外 API Key，逗号分隔
+export DOLA_ADMIN_KEY=change-me                       # 管理面板密钥
 export DOLA_PROXY=http://user:pass@jp-proxy:port
-export DOLA_PUBLIC_BASE=https://your-domain   # 生成 video_url 用的对外地址
-
-# 4. 配置服务
-export DOLA_API_KEYS=sk-xxx        # 对外 API key，逗号分隔多个
-export DOLA_MAX_CONCURRENCY=0      # 全局出片并发，0 = 不限（默认）
-export DOLA_VIDEO_TIMEOUT=300      # 出片超时（秒）
-
-# 5. 启动
-uvicorn server:app --host 127.0.0.1 --port 8002   # 只监听本机，由 nginx 对外
+export DOLA_PUBLIC_BASE=https://your-domain           # 生成 video_url 用的对外地址
+uvicorn server:app --host 127.0.0.1 --port 8002       # 只监听本机，由 nginx 对外
 ```
 
-打开 `http://127.0.0.1:8002/` 进入管理面板，`/docs` 是 Swagger 接口文档。
-
-### 用 systemd 部署
+用 systemd 常驻：把环境变量写进 `/opt/dola-pool/dola.env`，再建 `/etc/systemd/system/dola-pool.service`：
 
 ```ini
-# /etc/systemd/system/dola-pool.service
 [Unit]
 Description=dola-pool OpenAI compatible video API
 After=network.target
 
 [Service]
-Type=simple
 User=ubuntu
 WorkingDirectory=/opt/dola-pool
 EnvironmentFile=/opt/dola-pool/dola.env
@@ -222,252 +101,198 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-把环境变量写进 `dola.env`（已在 `.gitignore` 中），然后 `sudo systemctl enable --now dola-pool`，再用 nginx 反代到 8002 并配置 HTTPS。
+`sudo systemctl enable --now dola-pool`，再用 nginx 反代到 8002 并配 HTTPS。手动部署要用面板一键更新，还需执行 `sudo bash deploy/install-updater.sh`。
+
+</details>
 
 ## 调用示例
 
 ```bash
 # 创建任务
 curl -X POST https://your-domain/v1/videos \
-  -H "Authorization: Bearer sk-your-key" \
-  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-your-key" -H "Content-Type: application/json" \
   -d '{"model":"seedance-2.5","prompt":"一只橘色小猫在草地上追逐蝴蝶","duration":10,"ratio":"16:9"}'
 # -> {"id":"video_xxx","status":"queued",...}
 
-# 查询任务：queued -> processing -> completed / failed
+# 查询：queued -> processing -> completed / failed
 curl https://your-domain/v1/videos/video_xxx -H "Authorization: Bearer sk-your-key"
 
 # 下载成片
 curl -o out.mp4 https://your-domain/v1/videos/video_xxx/content -H "Authorization: Bearer sk-your-key"
 ```
 
-参考图可用 `reference_images`、`image_url`、`image`、`input_image(s)` 任一字段传公网 URL；时长字段兼容 `duration` / `seconds` / `duration_seconds`。
+- **参考图**：用 `reference_images`、`image_url`、`image`、`input_image(s)` 任一字段传公网 URL 或 Base64，单张最大 20 MiB。
+- **时长**：认 `duration`、`seconds`、`duration_seconds`。
+- **比例**：以请求参数为准。提示词里写了别的比例时，会注明以参数为准。
+- **分辨率**：可带 `resolution`（`720p` / `1080p` / `2k` / `4k`）。后台开启自动超分时，出片后超分到该档位，见 [UPSCALE.md](UPSCALE.md)。
+- **参考图来源说明**：带参考图的任务，默认附加一句「参考图为 AI 生成素材」（`DOLA_DEFAULT_REFERENCE_SOURCE=ai_generated`）。不需要时传 `"reference_source": "unspecified"`。这只是如实说明素材来源，不保证通过上游审核。
 
-### 纯 AI 参考图来源说明（带参考图默认附加）
-
-自 2026-10-29 起，**带参考图的任务默认附加来源说明**（`DOLA_DEFAULT_REFERENCE_SOURCE=ai_generated`），
-纯文字生成视频不附加；某个任务不需要时显式传 `"reference_source": "unspecified"`。
-也可以显式传 `"reference_source": "ai_generated"`。服务在提交视频生成时附加来源说明，
-任务列表、提示词弹窗、复制和 API 返回的 `prompt` 仍保留用户原文。
-来源标记和附加说明分别保存在任务的 `reference_source`、`prompt_supplement` 字段，
-后台参考图旁显示“AI 素材”，重启恢复时沿用这条任务的说明。
-
-```json
-{
-  "model": "seedance-2.0-fast",
-  "prompt": "人物缓缓抬眸，花瓣飘落，镜头缓慢推进",
-  "duration": 10,
-  "ratio": "16:9",
-  "reference_images": ["https://your-domain/fictional-character.png"],
-  "reference_source": "ai_generated"
-}
-```
-
-省略或传 null 时：有参考图按 `DOLA_DEFAULT_REFERENCE_SOURCE` 处理（默认附加），无参考图不附加；
-服务不会根据图片外观或提示词判断素材来源。设 `DOLA_DEFAULT_REFERENCE_SOURCE=unspecified` 可恢复为只对显式标记的任务附加。
-无参考图却选择 `ai_generated`、或传入其他来源值会返回 422。
-OpenAI JSON、multipart（`-F reference_source=ai_generated`）和 Ark 任务接口均支持该字段；
-经 new-api 转发时，显式的 `unspecified` 需要中间渠道保留这个顶层字段才能生效。
-这只是如实说明素材来源，不是解除肖像保护的开关，不保证通过上游审核；内容拒绝仍正常结束任务。
-
-豆包号的视频把模型换成 `doubao-seedance-*` 即可（时长 4～15 秒任意整数，2.5 到 30 秒）：
-
-```bash
-curl -X POST https://your-domain/v1/videos \
-  -H "Authorization: Bearer sk-your-key" -H "Content-Type: application/json" \
-  -d '{"model":"doubao-seedance-2.0-mini","prompt":"一只橘色小猫在草地上追逐蝴蝶","duration":7,"ratio":"9:16"}'
-```
-
-生图（只接豆包号，同步返回）：
+豆包号的视频把模型换成 `doubao-seedance-*` 即可。生图只接豆包号，同步返回：
 
 ```bash
 curl -X POST https://your-domain/v1/images/generations \
   -H "Authorization: Bearer sk-your-key" -H "Content-Type: application/json" \
   -d '{"model":"doubao-seedream-5.0-flash","prompt":"雪地里的红色狐狸","size":"1536x1024"}'
-# -> {"created":1792373000,"data":[{"url":"https://your-domain/videos/img_xxx.png"}],...}
 
-# 图生图 / 改图：multipart 上传图片（也可以 JSON 里用 reference_images 传 URL）
+# 图生图 / 改图：multipart 上传，也可以在 JSON 里用 reference_images 传 URL
 curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-your-key" \
   -F model=doubao-seedream-5.0-flash -F prompt="把猫的胡子去掉" -F image=@cat.jpg
 ```
 
-### 接入 new-api
+字段、错误码和管理接口见 [`API.md`](API.md)。
+
+## 支持的模型
+
+### dola 号
+
+| 模型 | 时长 | 每次扣点（每号每天默认 4 点） |
+|---|---|---|
+| `seedance-2.5` | 5 / 10 / 30 秒 | 5 秒 = 2、10 秒 = 4、30 秒 = 2（只出半截时补后半段，共 4） |
+| `seedance-2.0-fast` | 5 / 10 秒 | 5 秒 = 2、10 秒 = 4 |
+
+- **输出与参考图**：成片 1280×720、24fps、H.265。参考图最多 10 张，不支持参考音频和视频。
+- **15 秒**：seedance-2.5 的 15 秒要 12 点，超过免费号每天的额度，会直接拒绝（422）；seedance-2.0-fast 的 15 秒已被 dola 下线。
+- **30 秒**：由 `DOLA_30S_MODE` 决定。默认 `reject` 直接拒绝。推荐设 `pair`：先原样请求 30 秒，dola 多数会出满，只扣 2 点；只出了半截时，再补一次后半段并本地拼接。只能派给 Cookie 导入的号。详见 [issue #4](https://github.com/Roins-hub/dola-pool/issues/4)。
+- **2.0 的名字**：`seedance-2.0-fast` 就是网页上的「Seedance 2.0 Fast」，旧名 `seedance-2.0` 仍可用。
+
+### 豆包号
+
+| 模型 | 时长 | 谁能用 | 豆包标注的消耗 |
+|---|---|---|---|
+| `doubao-seedance-2.0-mini` | 4～15 秒任意整数 | 免费号、会员 | 日常生成 |
+| `doubao-seedance-2.0-fast` | 4～15 秒 | 免费号、会员 | 快速出片 |
+| `doubao-seedance-2.0` | 4～15 秒 | 只有会员 | 2 倍 |
+| `doubao-seedance-2.5` | 4～30 秒（原生，不拼接） | 只有会员 | 5 倍 |
+
+生图（Seedream）：
+
+| 模型 | 豆包里的名字 |
+|---|---|
+| `doubao-seedream-5.0-flash` | Seedream 5.0 Flash（专业快速） |
+| `doubao-seedream-5.0-pro` | Seedream 5.0 Pro（4 倍消耗） |
+| `doubao-seedream-4.5` | Seedream 4.5 |
+| `doubao-seedream-4.0` | Seedream 4.0 |
+
+生图约 20 秒出图，2K 档。
+
+<details>
+<summary><b>豆包号的细节</b>（额度、水印、付费确认、会员识别）</summary>
+
+- **额度**：豆包不公开每日免费额度，回复里也不报剩余，上表的「倍数」是豆包页面的原话。面板显示「今日已出 N 条」，`DOUBAO_DAILY_LIMIT` 只是兜底上限。
+- **付费确认**：免费额度用完时，豆包会问「本次将消耗付费额度，是否继续？」。`DOUBAO_ALLOW_PAID=1`（默认）时自动确认，设 `0` 则换号。
+- **会员识别**：免费号请求 2.0 / 2.5 时，豆包会提议改用 Mini。号池**绝不确认**，会把这个号记为「免费号」，换会员号重派。
+- **参数确认**：豆包先回「请先确认参数」，号池核对时长、模型都对才确认，对不上不确认、直接报错。
+- **水印**：「AI 生成」明水印是按号的设置。`DOUBAO_AUTO_NO_WATERMARK=1`（默认）时，号池用官方设置接口替号关掉，再走官方无水印下载。内容公开发布时，需由发布方自行标注「AI 生成」。
+- **比例**：视频比例支持 `16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9`。生图比例从提示词文字里读，号池会按格式自动写进去。
+- **出口与导入方式**：境外服务器可直接用，不需要日韩代理。只支持 Cookie 导入，见 [COOKIE.md](COOKIE.md)。
+- **插件官方名**：new-api Doubao 插件的官方名（如 `doubao-seedance-2-0-260128`）不是豆包号模型，照旧走 dola。
+
+</details>
+
+## 接入 new-api
 
 用 new-api 内置的 **Doubao 任务插件**（渠道类型「任务插件」，插件选 Doubao）：
 
-1. API 地址填本服务地址（例如 `https://your-domain`），密钥填 `DOLA_API_KEYS` 中的一个；
-2. 渠道模型填插件认识的官方名 `doubao-seedance-2-0-260128`、`doubao-seedance-2-5-260628`；
-3. 模型重定向：
+1. API 地址填本服务地址，密钥填 `DOLA_API_KEYS` 中的一个；
+2. 渠道模型填插件认识的官方名 `doubao-seedance-2-0-260128`、`doubao-seedance-2-5-260628`，再做模型重定向：
    ```json
    {"doubao-seedance-2-0-260128": "seedance-2.0-fast", "doubao-seedance-2-5-260628": "seedance-2.5"}
    ```
-4. 在 new-api 中为这两个模型配置价格（按次或按量均可）。
-5. 豆包号的视频模型同理：渠道里加 `doubao-seedance-2.0-mini` 等名字（或对外起别名再用模型重定向映射过来）；
-   new-api 插件的官方名（`doubao-seedance-2-0-260128` 等）**不会**派给豆包号，仍按 dola 处理。
-6. 生图走 OpenAI 图片接口（`/v1/images/generations`），在 new-api 里按 OpenAI 渠道接 `doubao-seedream-*` 模型即可。
+3. 豆包号的视频模型直接加 `doubao-seedance-2.0-mini` 等名字；生图按 OpenAI 渠道接 `doubao-seedream-*`。
 
-插件会以 Ark 协议调用本服务的 `/api/v3/contents/generations/tasks`。new-api 渠道页的「测试」按钮不支持任务插件渠道，显示 `Task Plugin channel test is not supported` 属于正常现象，请用真实请求验证。
+渠道页的「测试」按钮不支持任务插件，显示 `Task Plugin channel test is not supported` 是正常的，请用真实请求验证。
 
-## 主要配置
+## 调度与出片
 
-### 查看代理密码与批量探测出口
+- **选号与换号**：按权重 / 优先级挑空闲的号。额度不足、风控、上游确认失败时自动换号；全池额度用完立即返回 429，不空等。
+- **任务时限**：取得账号后有 `DOLA_TASK_DEADLINE`（默认 600 秒）的尝试时间，排队时间不算在内。超时就判失败，并列出试过哪些号。
+- **不会重复出片**：已经拿到上游会话、只是等结果超时的任务，**不换号重提**，避免重复出片、重复扣额度。
+- **dola 追问**：dola 不直接生成而是反问时（用哪个比例、要不要开始、已经生成过了……），程序先按任务参数自动回复两次。仍在问时，交给可选的 AI 代答（面板「设置 → AI 代答」）。都不行才结束任务，这时尚未生成，不扣点。
+- **参考图上传**：浏览器路径上传参考图时，字节图片服务器直连，其余流量走账号自己的代理。
+- **全局并发**：面板「设置 → 全局并发」，`0` 为不限。每个号同时只处理一个任务。
 
-编辑代理时，密码框旁的“显示 / 隐藏”可查看已保存密码；只有点击显示时才从已登录管理接口读取，
-代理列表不返回密码，关闭弹窗清空显示值。仅查看后保存不会覆盖原密码，仍支持留空保持不变。
+## 常用配置
 
-账号管理、代理管理均提供“一键探测出口 IP”：优先探测勾选项，未勾选时探测当前筛选结果（包含分页外结果），
-最多同时探测 3 项，逐项显示 IP、归属地或失败原因；可停止尚未开始的探测。
-账号正在生成、验证或加号时跳过。查询不提交视频、不改变额度；静态账号出口结果也会保存。
-动态代理记录的探测使用临时会话，账号探测使用该账号的代理；未分配或过期会话按现有规则分配，
-不会主动调用“换 IP”。能查到出口不代表该线路一定能登录 Dola、上传参考图或生成视频。
-
-### 任务状态、失败诊断与隔离
-
-- 账号的“验证中 / 探测中”与“准备生成 / 等待上游结果 / 下载处理中”分别显示。
-  验证只检查登录与配置允许的探活，不提交视频；验证成功不保证能出片。
-- 验证按钮点击后立即显示状态与等待秒数，列表刷新不会重置按钮或允许重复提交。
-  同一账号浏览器收到第一方用户接口的明确登录标记，且 Cookie、输入框检查通过后可提前结束；
-  没有可靠标记时保留原 24～34 秒稳定检查。显示启动、加载、稳定检查、关闭等实际阶段，
-  页面未就绪或网络超时报告“未确认”，不把网络慢直接当作登录失效。单次常规验证上限 90 秒；
-  失效后的自动重登另行执行，仍可能较久。提速不改变账号代理或使用缓存冒充当次验证。
-- 浏览器只使用当前会话中有明确顺序、且晚于最近用户消息的最新助手回复做判断。
-  明确内容拒绝、缺少信息或生成失败会保留原话并结束，不再用历史受理话术覆盖失败。
-  “无法生成 / 本次未扣额度”不等于“额度不足”；只有明确的额度不足文案才走额度处理。
-- 仅在最新助手消息明确询问时长时自动确认一次。普通“请选择方向 / 请上传图片”不会触发回复。
-- 排队等待、取得可用账号后的尝试预算、浏览器提交准备和已受理生成等待分别计时。
-  提交准备超时但结果不确定时不会自动换号重提；已生成视频的下载失败同样不会重提。
-- 浏览器参考图上传遇到连接错误后，按共享出口暂停该线路的后续图生任务。对已知 ImageX
-  域名做一次不含账号 Cookie 的连通性诊断：连接失败暂停 300 秒，可连通或未知暂停 30 秒。
-  不换代理、不清账号状态、不把网络失败记成额度不足；HTTP 响应只证明连通，不证明能上传。
-- 新任务提供“尝试记录”，记录账号、阶段、耗时和失败原因，保留最近 100 次且总计不超过
-  64 KiB；历史任务不会凭空补出之前未保存的记录。
-- 高码率地址查询与视频下载固定使用账号代理，SOCKS 代理经本地 HTTP 中转；失败不直连。
-  严格隔离模式缺少有效绑定代理时明确报错，日志不再输出视频签名模型。
-  这修复了下载路径的回退缺口，不代表所有请求都改为浏览器传输或能保证不触发上游风控。
-
-参考图片单文件默认上限为 **20 MiB（20,971,520 字节）**，对齐 2026-10-28
-[Dola 官网聊天页脚本](https://sf-flow-web-cdn.ciciai.com/obj/ocean-flow-web-sg/dola_web/static/js/chat.d5d9e59a68.js)
-中的 `uploadMultiEntityConf.maxImageSize = 0x1400000`。这是原图接收配置，
-不是所有模型的永久上限；Dola 网页后续仍可能压缩图片或执行模型专属校验。
-
-### 面板一键更新
-
-管理后台左侧的 **版本** 按钮显示当前版本；GitHub 有新的正式版时变成「有新版本 vX.Y.Z」，点开可看更新说明，owner 账号点 **更新到 vX.Y.Z**：
-
-1. 暂停派新单（新提交的任务照常受理、排队等待），等正在生成的任务和后台作业完成；
-2. 外部更新程序备份代码和数据库，换到新版本，重启服务；
-3. 等 `/health` 报出新版本号才算成功，页面自动刷新；任何一步失败都自动回滚到原版本。
-
-| 部署方式 | 更新程序 | 安装 |
-|---|---|---|
-| 源码（systemd） | `deploy/updater.sh`，由 `<服务名>-updater.path` 监听触发，root 运行；git 仓库用 fetch + fast-forward，否则下载源码包覆盖（不动账号、数据库、视频、dola.env） | `install.sh` 自动安装；已部署的服务器执行 `sudo bash deploy/install-updater.sh` |
-| Docker | `docker-compose.yml` 里的 `updater` 服务（`docker:27-cli`，挂 docker.sock）：改写同目录 `.env` 的 `DOLA_IMAGE_TAG`，`docker compose pull` + `up -d` | 用新版 compose 文件，在其所在目录执行 `docker compose up -d` |
-
-注意：
-
-- 只能更新到 GitHub 上的最新正式版；源码部署的代码目录有未提交改动或本地提交时会拒绝更新（不改动任何文件）。
-- 等任务清空最长 `DOLA_UPDATE_IDLE_TIMEOUT`（默认 1800 秒），超时放弃本次更新；放行后更新程序 `DOLA_UPDATE_AGENT_TIMEOUT`（默认 600 秒）内没开始也会放弃并恢复派单。
-- Docker 的 updater 挂 docker.sock，等同于宿主机 root 权限；不需要一键更新可以删掉 compose 里的 `updater` 服务，改用手动 `docker compose pull && docker compose up -d`。
-- 备份位置：源码部署 `/opt/dola-pool-backups/update-<旧>-to-<新>-<时间>/`（代码 + 数据库）；Docker `data/backups/update-<时间>/`（数据库）。
-
-### 视频超分（1080p）
-
-管理后台左侧点击 **视频超分**，选择 fal（字节官方超分，1080p 每秒 $0.0072）或自建开源模型服务，填好密钥 / 地址后，
-在任务列表或视频管理里对已完成的视频点 **超分**，完成后多一个 `/v/<任务>-1080p.mp4` 高清地址（客户 API 的 `video_url_hd`）。
-自建模型的接口约定与 Modal + Real-ESRGAN 部署示例见 [UPSCALE.md](UPSCALE.md)。
-
-### 后台调整全局并发
-
-在管理后台左侧点击 **全局并发**，输入同时处理的任务数并点击 **保存并生效**。
-`1` 为串行，`2` 允许两条任务同时处理，`0` 为不限；浏览器模式可先从 `2` 开始观察资源占用。
-提高上限会立即放行等待全局名额的任务；降低上限不取消正在运行的任务，而是等待名额释放。
-同账号互斥、API Key 自身并发限制、账号可用性和出口隔离仍然有效，因此设置上限不代表一定能跑满。
-开启同出口隔离后，共用一个出口的账号仍按顺序处理；同时提交三条任务会让其余任务等待出口释放。
-共享出口占用、上传线路暂停、账号短时失败冷却都会有界等待并显示排队原因；未派号即超时会明确标记
-“尚未提交生成”，不会把另一条任务的上传错误记为本任务的生成失败。不同可用出口仍可同时处理任务。
-设置保存在任务数据库 `app_settings` 中，重启后保留，优先于环境变量 `DOLA_MAX_CONCURRENCY`；
-从未保存时才使用环境变量初始值。此功能适用于当前单进程服务，不支持多进程间共享并发计数。
+写在 `dola.env`（一键部署）或 `.env` / 环境变量里。完整列表见 [`config.py`](config.py)。
 
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
-| `DOLA_API_KEYS` | 空 | 对外 API Key（逗号分隔）；也可在面板中创建带额度的 Key |
-| `DOLA_ADMIN_KEY` | 空 | 管理接口 / 面板密钥 |
-| `DOLA_PROXY` | `http://127.0.0.1:7890` | 访问 dola.com 的出口代理；`dola.env` 里写 `DOLA_PROXY=`（留空）= 不走代理直连 |
-| `DOLA_PUBLIC_BASE` | `http://127.0.0.1:8000` | 生成 `video_url` 的对外地址 |
-| `DOLA_TASK_DEADLINE` | `600` | 首次取得可用账号后的尝试预算（秒）；排队不占用，已受理任务可继续等结果 |
-| `DOLA_MAX_QUEUE_WAIT_SECONDS` | `1800` | 排队等待名额/账号的上限（秒），不包含生成等待 |
-| `DOLA_PREPARE_TIMEOUT` | `180` | 浏览器单次提交准备上限（秒）；拿到上游会话后交给生成轮询计时 |
-| `DOLA_VIDEO_MAX_ATTEMPTS` | `0` | 单任务最多尝试次数，`0` 表示不限、只受总时限约束 |
-| `DOLA_GENERATION_FAILURE_RETRIES` | `2` | 已提交后，上游会话最终卡片确认失败（任务状态 5、无视频）时最多换号重提几次；只看结构化状态，不看文字；内容拒绝不重提；`0` 关闭 |
-| `DOLA_HIGH_BITRATE_ATTEMPTS` | `3` | 出片后取 H.264 高码率原片的尝试次数（经账号自己的代理）；全失败才退回 Dola 默认低码率源 |
-| `DOLA_STALL_REPLY_SECONDS` | `180` | dola 回复完、整个会话没有生成卡片、也没报预计时间，并且这样持续 N 秒不变，就判定它在等答话（认不出的追问），结束任务并附上 dola 原话；没有卡片说明没开始生成，不扣点。`0` = 关闭 |
-| `DOLA_UPSCALE_PROVIDER` / `DOLA_FAL_KEY` / `DOLA_UPSCALE_OPEN_URL` | `fal` / 空 / 空 | 视频超分的默认服务与密钥（面板「视频超分」里保存的设置优先），见 [UPSCALE.md](UPSCALE.md) |
-| `DOLA_VIDEO_DELIVERY` | `download` | 出片交付方式：`download` 下载到服务器由 `/videos/` 提供；`link` 下发 `/v/<任务>.mp4` 短链，访问时 302 到上游 H.264 原片（视频流量不经过服务器，签名约 6 小时有效、到期前自动续签；拿不到直链时自动退回下载） |
-| `DOLA_EGRESS_PRECHECK` | `1` | 派单前经账号自己的代理连一下 Dola；连不通的动态/提取型出口自动换 IP 再测，仍不通本轮跳过该号（不记风控、未提交生成）。只检测绑定了代理的账号 |
-| `DOLA_EGRESS_AUTO_ROTATE_GAP` | `120` | 同一账号两次自动换 IP 的最短间隔（秒） |
-| `DOLA_V20_DURATIONS` | `5,10` | seedance-2.0-fast 可用时长 |
-| `DOLA_UPLOAD_RETRIES` | `3` | 参考图上传失败（尚未提交）时同一账号刷新页面重传的次数，用尽才换号 |
-| `DOLA_MAX_CONCURRENCY` | `0` | 全局并发初始值，0 = 不限；后台保存的值优先 |
+| `DOLA_API_KEYS` | 空 | 对外 API Key，逗号分隔；也可以在面板里创建带额度的 Key |
+| `DOLA_ADMIN_KEY` | 空 | 管理接口密钥 |
+| `DOLA_PROXY` | `http://127.0.0.1:7890` | 访问 dola.com 的默认出口代理；留空 = 直连。账号可以单独绑定代理 |
+| `DOLA_PUBLIC_BASE` | `http://127.0.0.1:8000` | 生成 `video_url` 用的对外地址 |
+| `DOLA_DAILY_LIMIT` | `4` | 每个 dola 号每天的额度点数 |
+| `DOLA_LIMIT_RESET_TZ` / `_HOUR` | `UTC` / `0` | 每日额度重置时刻（UTC 0 点 = 北京 8 点） |
+| `DOLA_TASK_DEADLINE` | `600` | 取得账号后的尝试时间（秒） |
+| `DOLA_MAX_QUEUE_WAIT_SECONDS` | `1800` | 排队等名额 / 账号的上限（秒） |
+| `DOLA_MAX_CONCURRENCY` | `0` | 全局并发初始值，`0` = 不限；面板里保存的值优先 |
 | `DOLA_MAX_PENDING_TASKS` | `100` | 待处理任务上限，超过返回 429 |
-| `DOLA_REFERENCE_IMAGE_MAX_BYTES` | `20971520` | 每张原始参考图最多 20 MiB；URL 下载和 Base64 输入使用同一限制 |
-| `DOLA_REFERENCE_TOTAL_MAX_BYTES` | `62914560` | Base64 参考图落盘时的单次累计限制，60 MiB |
-| `DOLA_DAILY_LIMIT` | `4` | 每账号每日额度点数 |
-| `DOLA_LIMIT_RESET_TZ` / `DOLA_LIMIT_RESET_HOUR` | `UTC` / `0` | 每日额度重置时区与时刻（UTC 0 点 = 北京 8 点） |
-| `DOUBAO_ALLOW_PAID` | `1` | 豆包号免费额度用完后是否自动确认走付费额度；`0` = 换号 |
-| `DOUBAO_DAILY_LIMIT` | `999` | 豆包号每天最多派几条（兜底；真实额度看豆包回复） |
-| `DOUBAO_POLL_INTERVAL` | `10` | 豆包出片轮询间隔（秒） |
-| `DOLA_IMAGE_TIMEOUT` | `240` | 生图接口一次请求最多等多久（秒），期间失败换号 |
-| `DOUBAO_AUTO_NO_WATERMARK` | `1` | 豆包号没关「AI 生成」明水印时自动替它关；`0` = 只在面板提示 |
-| `DOLA_PURE_API` | `1` | 优先使用纯 HTTP 出片路径 |
-| `DOLA_PURE_FALLBACK_BROWSER` | `1` | 纯 HTTP 失败时回退浏览器路径 |
-| `DOLA_COOKIE_RUNTIME` | `pure` | Cookie 账号运行时：`pure`=纯 HTTP；`cloak`=Dola Cookie 账号固定使用 CloakBrowser 独立持久 profile |
-| `DOLA_COOKIE_PROFILE_SUBDIR` | `cloak-profile` | 严格 Cookie 模式下每个账号的独立浏览器 profile 子目录 |
-| `DOLA_CLOAK_HEADLESS` | `0` | CloakBrowser 是否无头；生产建议配 Xvfb 使用有头模式 |
-| `DOLA_CLOAK_GEOIP` | `0` | 是否按代理出口自动解析时区/语言；固定代理时建议手动固定配置 |
-| `DOLA_ISOLATE_SHARED_EGRESS` | `0` | 同一出口是否禁止多个账号并发；严格 Cookie 模式默认自动为 `1` |
-| `DOLA_MIN_SUBMIT_INTERVAL_SECONDS` | `0` | 同一账号两次提交的最小间隔；严格 Cookie 模式默认自动为 `15` |
-| `DOLA_PURE_TIMEOUT` | `900` | 纯 HTTP 路径单次出片轮询超时（秒） |
-| `DOLA_EXTENSION_ENABLED` | `1` | 加载 `extensions/dola30`（30 秒时长与无水印解析依赖） |
+| `DOLA_30S_MODE` | `reject` | 30 秒请求：`reject` 拒绝 / `pair` 先请求 30 秒，半截时补后半段 |
+| `DOLA_VIDEO_DELIVERY` | `download` | `download` 下载到服务器；`link` 下发短链，302 到上游原片，视频流量不经过服务器 |
+| `DOLA_DEFAULT_REFERENCE_SOURCE` | `ai_generated` | 带参考图时默认附加来源说明；`unspecified` = 只对显式标记的任务附加 |
+| `DOLA_UPLOAD_PROXY_BYPASS` | `*.bytevcloudapi.com,*.vodupload.com` | 浏览器上传参考图时直连的域名；留空 = 全部走代理 |
+| `DOLA_STALL_REPLY_SECONDS` | `180` | dola 说完话不开工超过这么久就结束任务（未扣点）；`0` = 关闭 |
+| `DOLA_GENERATION_FAILURE_RETRIES` | `2` | 上游确认生成失败后最多换号重提几次 |
+| `DOLA_PURE_API` / `DOLA_PURE_FALLBACK_BROWSER` | `1` / `1` | 优先纯 HTTP 出片；失败时回退浏览器 |
+| `DOLA_COOKIE_RUNTIME` | `pure` | `cloak` = Dola Cookie 号使用 CloakBrowser 独立浏览器环境（见下） |
+| `DOUBAO_ALLOW_PAID` | `1` | 豆包免费额度用完后自动走付费额度；`0` = 换号 |
+| `DOUBAO_AUTO_NO_WATERMARK` | `1` | 自动替豆包号关「AI 生成」明水印 |
+| `DOLA_IMAGE_TIMEOUT` | `240` | 生图一次请求最多等多久（秒） |
 
-完整列表见 [`config.py`](config.py)。
+<details>
+<summary><b>严格 Cookie 浏览器隔离（可选）</b></summary>
 
-## 目录结构
+默认 Cookie 号走纯 HTTP。要让每个 Dola Cookie 号固定在独立浏览器环境里，可以这样做：
+- 在 Linux 上用 Xvfb + systemd 部署；
+- 安装 `deploy-cloak-requirements.txt`；
+- 在配置里加上：
+
+```env
+DOLA_COOKIE_RUNTIME=cloak
+DOLA_CLOAK_HEADLESS=0
+CLOAKBROWSER_CACHE_DIR=/opt/dola-pool/.cloakbrowser
+DOLA_ISOLATE_SHARED_EGRESS=1
+DOLA_MIN_SUBMIT_INTERVAL_SECONDS=15
+```
+
+- **工作方式**：每个号使用 `accounts/<账号>/cloak-profile/`，并绑定自己的固定代理。验证、提交、轮询都走这个 profile。
+- **导入顺序**：批量导入时先勾选「跳过在线验证」，绑好专属代理后再逐个验证。
+- **隔离范围**：这是浏览器资料隔离，不是每号一台虚拟机；不同代理记录也不保证不同公网 IP。
+- **不支持的场景**：不适用于纯 API 的 Docker 镜像，30 秒 `pair` 也只适用于纯 API 号。CloakBrowser 内核另有许可证和并发限制。
+
+完整步骤见 [`USAGE.md`](USAGE.md)。
+
+</details>
+
+<details>
+<summary><b>目录结构</b></summary>
 
 | 路径 | 作用 |
 |---|---|
 | `server.py` | FastAPI 服务：客户接口、Ark 兼容接口、管理接口、任务执行 |
-| `browser_pool.py` | 号池调度：选号、换号重试、总时限、额度与冷却 |
+| `browser_pool.py` | 号池调度：选号、换号重试、时限、额度与冷却 |
 | `pool.py` / `store.py` / `user_store.py` | 账号池、任务存储（SQLite）、管理员 |
 | `proxy_store.py` | 静态 / 动态代理管理与轮换 |
-| `pure_api_gen.py` / `protocol/` | 纯 HTTP 出片协议实现（dola） |
-| `protocol/doubao_site.py` / `sites.py` | 豆包站点配置（复用同一份协议代码）、账号站点与模型识别 |
-| `doubao_gen.py` | 豆包号出视频：确认 / 付费 / 会员模型话术处理、自动关 AI 水印、无水印下载 |
-| `image_gen.py` | 豆包号生图（Seedream） |
+| `pure_api_gen.py` / `protocol/` | 纯 HTTP 出片协议（dola；豆包站点配置在 `protocol/doubao_site.py`） |
+| `doubao_gen.py` / `image_gen.py` | 豆包号出视频、生图 |
 | `browser.py` / `video_worker_ui.py` | 浏览器自动化出片路径 |
-| `media.py` | 参考图下载、成片元数据 |
-| `web/` | 管理面板前端 |
-| `web/i18n/` / `i18n_tool.py` | 管理面板多语言（中文 / Tiếng Việt / 双语），见 [`I18N.md`](I18N.md) |
-| `extensions/dola30/` | 第三方 Chromium 扩展（30 秒时长、无水印解析） |
-| `deploy-cloak-requirements.txt` | 严格 Cookie 模式的可选 CloakBrowser wrapper 依赖 |
-| `Dockerfile` / `docker-compose.yml` / `docker/` | Docker 镜像与编排（纯 API，数据在 `/data`） |
-| `.github/workflows/` | 推送时自动跑测试（`tests.yml`）；打版本标签时构建并发布镜像（`docker.yml`） |
-| `tests/` | pytest 测试 |
+| `upstream_reply.py` / `dola_responder.py` | dola 追问的自动回复与 AI 代答 |
+| `upscale.py` | 视频超分 |
+| `web/` | 管理面板前端；`web/i18n/` 为多语言，见 [`I18N.md`](I18N.md) |
+| `deploy/` | 一键安装、一键更新脚本 |
+| `Dockerfile` / `docker-compose.yml` / `docker/` | Docker 镜像与编排 |
+| `tests/` | pytest 测试：`pip install pytest && pytest -q tests` |
 
-运行测试：
-
-```bash
-pip install pytest
-pytest -q tests
-```
+</details>
 
 ## 注意事项
 
-- 账号 cookie 约 60 天过期；登录态失效的账号会被自动标记，需重新导入。导入号池的号**不要在浏览器里点退出登录**（豆包实测退出后 Cookie 立刻失效）。
-- **水印**：
-  - **dola 视频**：dola 网页默认给的下载地址带水印（`lr=cici_ai`），号池下载的是 dola 返回数据里同一条视频的另一个版本（`lr=unwatermarked`），不对画面做处理。第三方解析接口（`protocol/dola_pure_api.py` 中的 `NOWATERMARK_API_ENDPOINT`）**默认关闭**（`DOLA_PURE_REMOVE_WATERMARK=0`）；设为 `1` 才会启用，届时视频播放信息会经 HTTP 发给第三方。原理与风险详见 [`USAGE.md` 的「去水印说明」](USAGE.md#7-去水印说明)。
-  - **豆包视频 / 生图**：「AI 生成」明水印是豆包官方的按号设置（豆包设置 → AI 生成水印管理）。`DOUBAO_AUTO_NO_WATERMARK=1`（默认）时号池用官方设置接口替号关掉，再走官方无水印下载接口；关掉明水印后，内容公开发布时需由发布方自行标注「AI 生成」。
-- `accounts/`、`*.db`、`dola.env`、`cookies.txt`、`downloads/` 均已忽略，切勿提交真实凭据。
+- **Cookie 有效期**：账号 Cookie 约 60 天过期，失效的号会被自动标记，需重新导入。导入号池的号**不要在浏览器里点退出登录**，退出后 Cookie 会立刻失效。
+- **dola 水印**：号池下载的是 dola 返回数据里同一条视频的无水印版本（`lr=unwatermarked`），不对画面做处理。第三方解析接口默认关闭（`DOLA_PURE_REMOVE_WATERMARK=0`），原理与风险见 [`USAGE.md`](USAGE.md#7-去水印说明)。
+- **凭据安全**：`accounts/`、`*.db`、`dola.env`、`cookies.txt`、`downloads/` 都已加入忽略列表，切勿提交真实凭据。
 
 ## 免责声明
 
-本仓库是个人学习与互操作性研究记录，包含对上游网页接口的逆向实现；代码不含任何账号、cookie、密钥或可用凭据。`extensions/dola30/` 为第三方扩展，其授权与使用权归原作者。使用者须自行遵守 dola.com、doubao.com 服务条款及所在地法律法规（包括人工智能生成内容的标识要求），自行评估账号与合规风险。
+本仓库是个人学习与互操作性研究记录，包含对上游网页接口的逆向实现。代码不含任何账号、Cookie、密钥或可用凭据。`extensions/dola30/` 为第三方扩展，授权与使用权归原作者。
+
+使用者须自行遵守 dola.com、doubao.com 的服务条款及所在地法律法规，包括人工智能生成内容的标识要求，并自行评估账号与合规风险。
