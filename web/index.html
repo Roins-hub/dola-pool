@@ -1502,10 +1502,14 @@ async function saveResponderSettings(){
 }
 async function testResponder(){
   const fb=q('#rpFeedback'),btn=q('#rpTest');if(!btn||btn.disabled)return;
-  btn.disabled=true;fb.textContent='正在测试（先保存再测试）…';
+  // 用框里当前填的内容测试，不需要先保存；Key 留空则沿用已保存的
+  const body={enabled:q('#rpEnabled').checked,base_url:q('#rpBase').value.trim(),model:q('#rpModel').value.trim()};
+  const key=q('#rpKey').value.trim();if(key)body.api_key=key;
+  btn.disabled=true;fb.textContent='正在测试（用当前填写的内容，最多约 25 秒）…';
   try{
-    const r=await api('/api/admin/settings/responder/test',{method:'POST'});
-    fb.innerHTML='示例追问：<span translate="no">'+esc(r.sample)+'</span><br>模型回复：<strong translate="no">'+esc(r.reply)+'</strong>';
+    const r=await api('/api/admin/settings/responder/test',{method:'POST',body});
+    fb.innerHTML='示例追问：<span translate="no">'+esc(r.sample)+'</span><br>模型回复：<strong translate="no">'+esc(r.reply)+'</strong>'
+      +(r.saved?'':'<br>测试通过，点「保存」后生效。');
   }catch(e){if(e.message!=='unauthorized')fb.textContent='测试失败：'+e.message;}
   finally{btn.disabled=false;}
 }

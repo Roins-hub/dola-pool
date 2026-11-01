@@ -1992,16 +1992,23 @@ async def admin_responder_settings_save(body: ResponderPatch, x_admin_key: str |
 
 
 @app.post("/api/admin/settings/responder/test")
-async def admin_responder_test(x_admin_key: str | None = Header(default=None)):
-    """用一句示例追问试一下 AI 代答，返回它会回的话（不发给 dola）。"""
+async def admin_responder_test(body: ResponderPatch | None = None, x_admin_key: str | None = Header(default=None)):
+    """用一句示例追问试一下 AI 代答，返回它会回的话（不发给 dola）。
+
+    用面板里当前填的内容测试（没填的项沿用已保存的值），不保存；不要求已开启。"""
     _admin_auth(x_admin_key)
-    if not dola_responder.enabled():
-        raise HTTPException(422, "AI 代答未开启或配置不全")
+    current = dict(dola_responder.SETTINGS)
+    for key, value in (body.model_dump(exclude_unset=True) if body else {}).items():
+        if value is not None and (key != "api_key" or value):
+            current[key] = value
+    settings = dola_responder.normalize(current)
+    if settings["base_url"] and not re.match(r"^https?://", settings["base_url"]):
+        raise HTTPException(422, "接口地址需以 http:// 或 https:// 开头")
     sample = "この動画はすでに生成されています。追加の生成や調整が必要な場合はお知らせください。"
-    reply = await dola_responder.ai_reply(sample, "16:9", 10, 1)
+    reply, why = await dola_responder.ai_reply_detail(sample, "16:9", 10, 1, settings=settings)
     if not reply:
-        raise HTTPException(502, "模型没有给出可用的回复（接口出错，或回复不符合安全规则），请检查地址、Key 和模型名")
-    return {"sample": sample, "reply": reply}
+        raise HTTPException(422 if not dola_responder.configured(settings) else 502, why)
+    return {"sample": sample, "reply": reply, "saved": settings == dola_responder.SETTINGS}
 
 
 @app.post("/api/admin/tasks/{task_id}/upscale")

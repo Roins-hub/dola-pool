@@ -67,9 +67,13 @@ def generic_reply(ratio=None, duration=None, attachments=0, round_no=0, dola_tex
     return f"{text}，{spec}。" if spec else f"{text}。"
 
 
+def configured(s: dict | None = None) -> bool:
+    s = SETTINGS if s is None else s
+    return bool(s.get("base_url") and s.get("api_key") and s.get("model"))
+
+
 def enabled() -> bool:
-    s = SETTINGS
-    return bool(s.get("enabled") and s.get("base_url") and s.get("api_key") and s.get("model"))
+    return bool(SETTINGS.get("enabled")) and configured()
 
 
 def public_settings() -> dict:
@@ -81,16 +85,21 @@ def public_settings() -> dict:
     return s
 
 
-def apply_settings(saved: dict | None) -> dict:
-    SETTINGS.clear()
-    SETTINGS.update(DEFAULTS)
+def normalize(saved: dict | None) -> dict:
+    s = dict(DEFAULTS)
     for k in DEFAULTS:
         if saved and k in saved and saved[k] is not None:
-            SETTINGS[k] = saved[k]
-    SETTINGS["enabled"] = bool(SETTINGS.get("enabled"))
+            s[k] = saved[k]
+    s["enabled"] = bool(s.get("enabled"))
     for k in ("base_url", "api_key", "model"):
-        SETTINGS[k] = str(SETTINGS.get(k) or "").strip()
-    SETTINGS["base_url"] = SETTINGS["base_url"].rstrip("/")
+        s[k] = str(s.get(k) or "").strip()
+    s["base_url"] = s["base_url"].rstrip("/")
+    return s
+
+
+def apply_settings(saved: dict | None) -> dict:
+    SETTINGS.clear()
+    SETTINGS.update(normalize(saved))
     return SETTINGS
 
 
@@ -127,30 +136,58 @@ def check_reply(reply: str, ratio=None, duration=None) -> str | None:
     return text
 
 
+_THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+
 async def ai_reply(dola_text, ratio=None, duration=None, attachments=0, *, session=None) -> str | None:
-    """调用兼容 OpenAI 的 /v1/chat/completions 写一句回复；未配置、出错或不安全时返回 None。"""
+    """调用兼容 OpenAI 的 /v1/chat/completions 写一句回复；未开启、出错或不安全时返回 None。"""
     if not enabled():
         return None
+    reply, _why = await ai_reply_detail(dola_text, ratio, duration, attachments, session=session)
+    return reply
+
+
+async def ai_reply_detail(dola_text, ratio=None, duration=None, attachments=0, *,
+                          session=None, settings: dict | None = None) -> tuple[str | None, str]:
+    """同 ai_reply，另外返回失败原因（给面板「测试」显示）。settings 不传用已保存的设置。"""
+    s = SETTINGS if settings is None else settings
+    if not configured(s):
+        return None, "接口地址、API Key、模型没填全"
     import aiohttp
-    base = SETTINGS["base_url"]
+    base = s["base_url"]
     url = base + ("/chat/completions" if base.endswith("/v1") else "/v1/chat/completions")
-    body = {"model": SETTINGS["model"], "temperature": 0.2, "max_tokens": 200,
+    # 推理模型会先花 token 思考，给够余量；最终回复仍按 MAX_REPLY_CHARS 检查
+    body = {"model": s["model"], "temperature": 0.2, "max_tokens": 800,
             "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                          {"role": "user", "content": _user_message(dola_text, ratio, duration, attachments)}]}
-    headers = {"Authorization": f"Bearer {SETTINGS['api_key']}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {s['api_key']}", "Content-Type": "application/json"}
     own = session is None
     sess = session or aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=AI_TIMEOUT))
     try:
         async with sess.post(url, data=json.dumps(body), headers=headers) as resp:
             if resp.status != 200:
-                print(f"[responder] AI 代答接口 HTTP {resp.status}", flush=True)
-                return None
+                try:
+                    detail = (await resp.text())[:200]
+                except Exception:  # noqa: BLE001
+                    detail = ""
+                why = f"接口返回 HTTP {resp.status}（{url}）" + (f"：{detail}" if detail else "")
+                print(f"[responder] AI 代答{why[:200]}", flush=True)
+                return None, why
             data = await resp.json(content_type=None)
+        if not isinstance(data, dict):
+            return None, "接口返回的不是 JSON 对象，请确认地址是兼容 OpenAI 的接口"
         text = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
-        return check_reply(text, ratio, duration)
+        text = _THINK.sub("", str(text)).strip()
+        if not text:
+            return None, "模型返回了空回复（推理模型可能把 token 用完了，可换个非推理模型）"
+        reply = check_reply(text, ratio, duration)
+        if not reply:
+            return None, f"模型的回复不符合规则（放弃 / 太长 / 比例或秒数与参数不一致），原文：{text[:120]}"
+        return reply, ""
     except Exception as exc:  # noqa: BLE001
-        print(f"[responder] AI 代答失败: {type(exc).__name__}: {str(exc)[:120]}", flush=True)
-        return None
+        why = f"请求失败：{type(exc).__name__} {str(exc)[:120]}"
+        print(f"[responder] AI 代答{why}", flush=True)
+        return None, why
     finally:
         if own:
             await sess.close()

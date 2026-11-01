@@ -123,3 +123,38 @@ def test_settings_endpoint_masks_the_key_and_keeps_it(tmp_path, monkeypatch):
     assert server._load_responder()['api_key'] == 'sk-secret-9876'                # 重启后从库里读回
     with pytest.raises(server.HTTPException):
         _run(server.admin_responder_settings_save(server.ResponderPatch(base_url='gw.example'), None))
+
+
+class FakeErrResp(FakeResp):
+    async def text(self): return '{"error":{"message":"invalid api key"}}'
+
+
+def test_ai_reply_detail_explains_failures_and_strips_thinking():
+    s = r.normalize({'base_url': 'https://gw.example', 'api_key': 'sk-abcdef123456', 'model': 'm'})
+    reply, why = _run(r.ai_reply_detail('どちら？', '16:9', 10, 0, settings=s, session=FakeSession(FakeErrResp(401, {}))))
+    assert reply is None and 'HTTP 401' in why and 'invalid api key' in why
+    think = FakeSession(FakeResp(200, {'choices': [{'message': {'content': '<think>想一想 9:16？</think>请按 16:9 直接生成。'}}]}))
+    reply, why = _run(r.ai_reply_detail('どちら？', '16:9', 10, 0, settings=s, session=think))
+    assert reply == '请按 16:9 直接生成。' and not why
+    reply, why = _run(r.ai_reply_detail('どちら？', '16:9', 10, 0, settings=r.normalize({'base_url': 'https://x'})))
+    assert reply is None and '没填全' in why
+
+
+def test_test_endpoint_uses_the_unsaved_form_values(tmp_path, monkeypatch):
+    # 2026-11-01：填完直接点「测试」报「未开启或配置不全」——测试读的是已保存的空设置
+    import server
+    from store import TaskStore
+    monkeypatch.setattr(server, 'store', TaskStore(str(tmp_path / 'tasks.db')))
+    monkeypatch.setattr(server, '_admin_auth', lambda key: None)
+    seen = {}
+    async def fake_detail(text, ratio, duration, attachments, *, settings=None, session=None):
+        seen.update(settings)
+        return '这是一条新的请求，请按 16:9 重新生成。', ''
+    monkeypatch.setattr(server.dola_responder, 'ai_reply_detail', fake_detail)
+    out = _run(server.admin_responder_test(server.ResponderPatch(
+        enabled=False, base_url='https://gw.example/', api_key='sk-typed-1234', model='deepseek'), None))
+    assert seen['base_url'] == 'https://gw.example' and seen['api_key'] == 'sk-typed-1234' and seen['model'] == 'deepseek'
+    assert out['reply'] and out['saved'] is False
+    assert not r.configured()                                   # 测试不保存
+    with pytest.raises(server.HTTPException):
+        _run(server.admin_responder_test(server.ResponderPatch(base_url='gw.example', api_key='k', model='m'), None))
