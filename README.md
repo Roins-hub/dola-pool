@@ -2,11 +2,10 @@
 <h1 align="center">dola-pool</h1>
 <p align="center">把一组 dola.com / 豆包账号组成号池，对外提供 OpenAI 兼容的视频生成与生图 API</p>
 <p align="center">
-  🌐 <b>中文</b> | <a href="README.vi.md">Tiếng Việt</a>
+  🌐 <b>中文</b> | <a href="README.en.md">English</a>
   &nbsp;·&nbsp; <a href="https://github.com/Roins-hub/dola-pool/releases/latest">下载最新版</a>
   &nbsp;·&nbsp; <a href="USAGE.md">使用手册</a>
   &nbsp;·&nbsp; <a href="API.md">接口文档</a>
-  &nbsp;·&nbsp; <a href="CHANGELOG.md">更新日志</a>
 </p>
 
 <img align="right" width="190" alt="交流群二维码" src="https://github.com/user-attachments/assets/39207d3c-955f-49ec-adbc-8db471f23b79" />

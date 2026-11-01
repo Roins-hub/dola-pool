@@ -70,7 +70,7 @@ Mỗi tài khoản cần một **phiên trình duyệt không ảnh hưởng l�
 
 ## Tài khoản Doubao (doubao.com)
 
-Pool tài khoản cũng có thể chứa tài khoản Doubao (phục vụ các model `doubao-seedance-*`, xem mục "Mô hình cho tài khoản Doubao (doubao.com)" trong [README](README.vi.md)). Cách xuất giống như trên, chỉ đổi trang web:
+Pool tài khoản cũng có thể chứa tài khoản Doubao (phục vụ các model `doubao-seedance-*`, xem mục "Mô hình cho tài khoản Doubao (doubao.com)" trong [README](README.en.md)). Cách xuất giống như trên, chỉ đổi trang web:
 
 1. Đăng nhập trên **www.doubao.com** (bằng số điện thoại Trung Quốc), dùng Cách 1 hoặc Cách 2 để xuất Cookie.
 2. Dán vào "Thêm hàng loạt (批量添加) → Cookie header / JSON (Cookie 头 / JSON)":

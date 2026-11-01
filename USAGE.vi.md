@@ -5,7 +5,7 @@
 > Tài liệu này dành cho **người lần đầu làm quen với dola-pool**: nó là gì, từng nút trong bảng quản trị dùng để làm gì, thao tác hằng ngày ra sao, gặp sự cố thì xem ở đâu.
 >
 > - Muốn **gọi API để tạo video** (viết code tích hợp) → xem [`API.md`](API.md)
-> - Muốn **triển khai lên máy chủ / chạy cục bộ** → xem mục «Triển khai một lệnh» trong [`README.vi.md`](README.vi.md) (một lệnh là cài xong)
+> - Muốn **triển khai lên máy chủ / chạy cục bộ** → xem mục «Triển khai một lệnh» trong [`README.en.md`](README.en.md) (một lệnh là cài xong)
 > - Muốn **sửa code** → xem [`DEVELOPMENT.md`](DEVELOPMENT.md)
 
 > Ghi chú: bảng quản trị có thể chuyển sang tiếng Việt. Khi tài liệu nhắc tới một nút / nhãn trên bảng quản trị, lần đầu xuất hiện trong mỗi mục sẽ ghi nhãn tiếng Việt kèm nhãn tiếng Trung gốc trong ngoặc, ví dụ «Kiểm tra tải (压力测试)», để dù dùng giao diện ngôn ngữ nào bạn cũng tìm được.
@@ -411,7 +411,7 @@ Ba lời nhắc dành cho bên gọi:
 2. **Thấy `queued` thì đừng gửi lại**, đó chỉ là đang xếp hàng, gửi lặp sẽ chiếm hạn mức lặp.
 3. Kích thước: `1280x720` ngang, `720x1280` dọc, `1024x1024` vuông; ảnh tham chiếu dùng `reference_images: ["图片URL"]` (`图片URL` = URL ảnh).
 
-Muốn tích hợp với **new-api**, xem phần «Kết nối với new-api» trong [`README.vi.md`](README.vi.md).
+Muốn tích hợp với **new-api**, xem phần «Kết nối với new-api» trong [`README.en.md`](README.en.md).
 
 ---
 
@@ -609,7 +609,7 @@ Nếu đã gán nhiều IP Nhật Bản khác nhau, đợi vài giờ mà mọi 
 |---|---|
 | Dùng bảng quản trị để quản lý pool tài khoản | Tài liệu này |
 | Viết code gọi API | [`API.md`](API.md) |
-| Triển khai / chuyển máy chủ | [`README.vi.md`](README.vi.md), [`deploy/README.md`](deploy/README.md) |
+| Triển khai / chuyển máy chủ | [`README.en.md`](README.en.md), [`deploy/README.md`](deploy/README.md) |
 | Xem mỗi phiên bản đã thay đổi gì | [`CHANGELOG.md`](CHANGELOG.md) |
 | Sửa code | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
 
