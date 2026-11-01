@@ -275,7 +275,7 @@ def test_ratio_question_follows_the_client_parameter():
     assert ratio_choice_reply(RATIO_Q, PROMPT_916, None) == 'A. 9:16'           # 没有参数：用提示词
     assert ratio_choice_reply(RATIO_Q, PROMPT_916, 'default') == 'A. 9:16'
     assert ratio_choice_reply(RATIO_Q, '海边日落', None) is None                  # 无从判断：不乱答
-    assert ratio_choice_reply(RATIO_Q, '1:1 方图', '1:1') is None                 # 选项里没有：不答
+    assert ratio_choice_reply(RATIO_Q, '1:1 方图', '1:1') == 'C. 1:1'             # 选项里没有：走「その他」写明比例
     assert ratio_choice_reply('動画が生成されました。', PROMPT_916, '16:9') is None
     assert prompt_ratio('竖屏人像') == '9:16' and prompt_ratio('竖屏 16:9') is None
     assert prompt_ratio('12:55 开拍的海边') is None
