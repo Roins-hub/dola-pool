@@ -347,6 +347,11 @@ REFERENCE_VIDEO_TIMEOUT = int(os.getenv("DOLA_REFERENCE_VIDEO_TIMEOUT", "900"))
 # 参考图上传要打金山 CDN（imagex-*.bytevcloudapi.com），实测部分代理出口对该域名
 # CONNECT 直接 403。1 = 上传段遇代理拦截时只用直连重传一次（生成仍走账号代理）。
 REFERENCE_UPLOAD_DIRECT_FALLBACK = os.getenv("DOLA_REFERENCE_UPLOAD_DIRECT_FALLBACK", "1") == "1"
+# 浏览器上传参考图时，字节图片上传服务器不走账号代理、由服务器直连（其余流量仍走代理）。
+# 2026-11-01 统计：3 天 77 次上传失败里 74 次是浏览器经代理访问 imagex-ap-southeast-1.bytevcloudapi.com
+# 报 net::ERR_FAILED（无 CORS 原因、中转也没记录上游失败）；同代理 curl 10/10 成功，服务器直连 10/10、0.3 秒。
+# 上传靠签名鉴权、不认 IP。逗号分隔的 Chromium 代理绕过规则；设为空字符串则全部走代理。
+UPLOAD_PROXY_BYPASS = os.getenv("DOLA_UPLOAD_PROXY_BYPASS", "*.bytevcloudapi.com,*.vodupload.com").strip()
 
 # ===== 号池工程化增强（移植自 api-pool，默认关闭/不破坏现有行为）=====
 

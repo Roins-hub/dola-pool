@@ -40,6 +40,10 @@ try:
     from browser import is_cloak_cookie_account
 except ImportError:  # legacy test doubles / embedders that stub the old browser module
     is_cloak_cookie_account = lambda name: False
+try:
+    from browser import upload_host_bypassed
+except ImportError:  # 同上：测试替身里没有这个函数时按「上传走代理」处理
+    upload_host_bypassed = lambda host: False
 
 logger = logging.getLogger("dola-pool.browser_pool")
 
@@ -2335,7 +2339,10 @@ class BrowserPool:
                             # Safe to try another account using its own profile/proxy.
                             # Do not consume quota or mark the account as risk-controlled.
                             last_err = e
-                            if isinstance(e, UploadRouteError):
+                            if isinstance(e, UploadRouteError) and upload_host_bypassed(e.host):
+                                # 上传本来就是服务器直连、不经该号代理：暂停这条代理线路没有意义
+                                print(f"[pool] {account} 参考图直连上传失败（{e.host}）→ 换号重试", flush=True)
+                            elif isinstance(e, UploadRouteError):
                                 route_key = self._safe_egress(account)
                                 # Pause first so concurrent dispatches do not stampede the same route.
                                 record = {"until": time.time() + 300, "reason": redact_error(e)}

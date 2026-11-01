@@ -157,6 +157,31 @@ def _kwargs_from_url(raw: str) -> dict | None:
     return kwargs
 
 
+def upload_host_bypassed(host: str | None) -> bool:
+    """该上传域名是否按 config.UPLOAD_PROXY_BYPASS 由浏览器直连（不经账号代理）。"""
+    host = (host or "").lower().strip(".")
+    for rule in config.UPLOAD_PROXY_BYPASS.split(","):
+        rule = rule.strip().lower()
+        if not rule or not host:
+            continue
+        if rule.startswith("*."):
+            if host.endswith(rule[1:]) or host == rule[2:]:
+                return True
+        elif rule.startswith("."):
+            if host.endswith(rule) or host == rule[1:]:
+                return True
+        elif host == rule:
+            return True
+    return False
+
+
+def _with_upload_bypass(kwargs: dict | None) -> dict | None:
+    """给浏览器代理加上「图片上传服务器直连」（config.UPLOAD_PROXY_BYPASS）。"""
+    if kwargs and config.UPLOAD_PROXY_BYPASS:
+        kwargs = {**kwargs, "bypass": config.UPLOAD_PROXY_BYPASS}
+    return kwargs
+
+
 def proxy_kwargs_for(account: str | None = None,
                      proxy_info: dict | None = None) -> dict | None:
     """解析某个账号（或 override）应使用的 Playwright proxy 参数。
@@ -176,8 +201,8 @@ def proxy_kwargs_for(account: str | None = None,
     if account:
         url = proxy_store.proxy_url_for(account)
         if url:
-            return _kwargs_from_url(url)
-    return _kwargs_from_url(config.PROXY or "")
+            return _with_upload_bypass(_kwargs_from_url(url))
+    return _with_upload_bypass(_kwargs_from_url(config.PROXY or ""))
 
 
 async def launch_account_context(p, account: str, headless: bool = None, use_extension: bool = False):

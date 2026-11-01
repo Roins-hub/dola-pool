@@ -91,6 +91,7 @@ def test_explicit_refusal_does_not_rotate_or_charge(tmp_path, monkeypatch):
 
 def test_upload_network_failure_skips_shared_route(tmp_path, monkeypatch):
     module, bp = _pool(tmp_path, monkeypatch, ('acc1', 'acc2', 'acc3'))
+    monkeypatch.setattr(module, 'upload_host_bypassed', lambda host: False)   # 上传走账号代理
     bp._safe_egress = lambda name: 'shared' if name in ('acc1', 'acc2') else 'other'
     calls, probes = [], []
     def diagnose(account, host):
@@ -108,6 +109,26 @@ def test_upload_network_failure_skips_shared_route(tmp_path, monkeypatch):
     assert calls == ['acc1', 'acc3'] and probes == ['acc1']
     assert result['account'] == 'acc3'
     assert not bp._meta('acc1')['risk_control']
+
+
+def test_direct_upload_failure_does_not_pause_proxy_route(tmp_path, monkeypatch):
+    # 上传直连（不经代理）时失败与该号代理线路无关：不暂停线路、不探测，直接换号
+    module, bp = _pool(tmp_path, monkeypatch, ('acc1', 'acc2', 'acc3'))
+    monkeypatch.setattr(module, 'upload_host_bypassed', lambda host: True)
+    bp._safe_egress = lambda name: 'shared' if name in ('acc1', 'acc2') else 'other'
+    calls, probes = [], []
+    monkeypatch.setattr(module, 'diagnose_upload_route', lambda account, host: probes.append(account))
+    async def generate(account, *a, **kw):
+        calls.append(account)
+        if account == 'acc1':
+            raise UploadRouteError('imagex-ap-southeast-1.bytevcloudapi.com', 'net::ERR_FAILED')
+        return {'account': account, 'local_path': 'fake.mp4'}
+    bp._generate_effective = generate
+    result = _run(bp.generate_video('p', None, 5, 'seedance-2.5',
+                                    reference_image_paths=['fake.png'], deadline=time.time()+30))
+    assert calls == ['acc1', 'acc2'] and probes == []
+    assert result['account'] == 'acc2'
+    assert not bp._upload_routes
 
 
 def test_verification_is_busy_but_not_generation_and_cancellation_cleans_state(tmp_path, monkeypatch):
