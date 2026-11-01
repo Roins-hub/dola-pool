@@ -1982,11 +1982,10 @@ function renderAccounts(){
   updateSelButtons();
 }
 
-/** 还没进池的加号任务：进行中的一直显示，失败的保留 30 分钟（鼠标悬停看原因）。 */
+/** 还没进池的加号任务：进行中的显示进度；失败的一直保留到「重试」或「删除」（删除会清掉残留的 profile / 代理绑定 / 凭据）。 */
 function pendingAddRows(jobs,inPool){
   const now=Date.now()/1000;
-  return Object.entries(jobs).filter(([n,j])=>j.kind==='add'&&!inPool.has(n)&&
-      (j.status==='running'||(j.status==='failed'&&now-(j.finished_at||j.started_at||0)<1800)))
+  return Object.entries(jobs).filter(([n,j])=>j.kind==='add'&&!inPool.has(n)&&(j.status==='running'||j.status==='failed'))
     .sort((a,b)=>(b[1].started_at||0)-(a[1].started_at||0))
     .map(([n,j])=>{
       const secs=Math.max(0,Math.round(now-(j.started_at||now)));
@@ -1995,9 +1994,20 @@ function pendingAddRows(jobs,inPool){
         :`<span class="badge b-red" title="${esc(j.error)}">加号失败</span><div class="tiny">${esc((j.error||'').slice(0,80))}</div>`;
       const src=j.source==='cookie'?'<span class="badge b-orange">Cookie 载入</span>'
         :j.source==='login'?'<span class="badge b-green">账号登录</span>':'<span class="tiny">—</span>';
-      return ['',`<span class="account-id" translate="no">${esc(n)}</span>`,accLabel(j),state,'',src,'','','',fmt(j.started_at),'',
-        '<span class="tiny">完成后自动出现在列表</span>'];
+      const ops=j.status==='running'?'<span class="tiny">完成后自动出现在列表</span>'
+        :'<div class="video-wrap">'+(j.source==='login'?`<button class="btn" onclick="retryAddJob('${esc(n)}')">重试</button>`:'')
+          +`<button class="btn btn-danger" onclick="deleteAddJob('${esc(n)}')">删除</button></div>`;
+      return ['',`<span class="account-id" translate="no">${esc(n)}</span>`,accLabel(j),state,'',src,'','','',fmt(j.started_at),'',ops];
     });
+}
+async function retryAddJob(name){
+  try{await api('/api/admin/jobs/'+encodeURIComponent(name)+'/retry',{method:'POST'});toast(dialogText`已开始重试 ${name}`);refresh();}
+  catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);}
+}
+async function deleteAddJob(name){
+  if(!await confirm(dialogText`删除加号失败的 ${name}？会一起清掉它留下的浏览器资料、代理绑定和保存的密码。`))return;
+  try{await api('/api/admin/jobs/'+encodeURIComponent(name),{method:'DELETE'});toast(dialogText`已删除 ${name}`);refresh();}
+  catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);}
 }
 let addJobPollTimer=null;
 /** 有加号任务在跑时每 2 秒刷一次账号页（平时 10 秒），跑完立刻显示新号。 */

@@ -66,3 +66,10 @@ def rename(old: str, new: str) -> None:
     if old in data:
         data[new] = data.pop(old)
         _save_all(data)
+
+
+def delete(name: str) -> None:
+    """删掉某个账号名的凭据（加号失败后清理用）。"""
+    data = _load_all()
+    if data.pop(name, None) is not None:
+        _save_all(data)

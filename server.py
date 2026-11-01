@@ -3748,6 +3748,45 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
     return {"jobs": JOBS}
 
 
+def _failed_add_job(name: str) -> dict:
+    job = JOBS.get(name) or {}
+    if job.get("kind") != "add" or job.get("status") != "failed":
+        raise HTTPException(409, "只能处理加号失败的记录")
+    if name in pool.accounts:
+        raise HTTPException(409, "这个账号已经在号池里，请在账号列表里操作")
+    return job
+
+
+@app.post("/api/admin/jobs/{name}/retry", status_code=202)
+async def admin_add_job_retry(name: str, x_admin_key: str | None = Header(default=None)):
+    """加号失败后用当初保存的邮箱 / 密码重新登录一次（代理绑定沿用）。Cookie 导入的不保存 Cookie，不能重试。"""
+    _admin_auth(x_admin_key)
+    job = _failed_add_job(name)
+    cred = cred_store.load(name) if job.get("source") == "login" else None
+    if not cred or not cred.get("email"):
+        raise HTTPException(409, "没有保存这个号的登录凭据（Cookie 导入的号请删除后重新导入）")
+    JOBS[name] = {"kind": "add", "status": "running", "email": cred["email"], "source": "login",
+                  "error": "", "started_at": time.time(), "stage": "排队中（重试）"}
+    asyncio.create_task(_run_add_job(name, cred["email"], cred.get("password") or "", cred.get("totp") or ""))
+    return {"ok": True, "job": "running"}
+
+
+@app.delete("/api/admin/jobs/{name}")
+async def admin_add_job_delete(name: str, x_admin_key: str | None = Header(default=None)):
+    """删除加号失败的记录，并清掉它留下的浏览器 profile、代理绑定、额度记录和保存的凭据。"""
+    _admin_auth(x_admin_key)
+    _failed_add_job(name)
+    if not NAME_RE.match(name):
+        raise HTTPException(400, "invalid account name")
+    try:
+        pool.delete_account(name)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    cred_store.delete(name)
+    JOBS.pop(name, None)
+    return {"ok": True}
+
+
 class ConcurrencySettings(BaseModel):
     max_concurrency: int = Field(..., ge=0, le=1000, strict=True)
 
