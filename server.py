@@ -1991,12 +1991,8 @@ async def admin_responder_settings_save(body: ResponderPatch, x_admin_key: str |
     return dola_responder.public_settings()
 
 
-@app.post("/api/admin/settings/responder/test")
-async def admin_responder_test(body: ResponderPatch | None = None, x_admin_key: str | None = Header(default=None)):
-    """用一句示例追问试一下 AI 代答，返回它会回的话（不发给 dola）。
-
-    用面板里当前填的内容测试（没填的项沿用已保存的值），不保存；不要求已开启。"""
-    _admin_auth(x_admin_key)
+def _responder_form_settings(body: ResponderPatch | None) -> dict:
+    """面板里当前填的内容（没填的项沿用已保存的值），不保存。"""
     current = dict(dola_responder.SETTINGS)
     for key, value in (body.model_dump(exclude_unset=True) if body else {}).items():
         if value is not None and (key != "api_key" or value):
@@ -2004,6 +2000,26 @@ async def admin_responder_test(body: ResponderPatch | None = None, x_admin_key: 
     settings = dola_responder.normalize(current)
     if settings["base_url"] and not re.match(r"^https?://", settings["base_url"]):
         raise HTTPException(422, "接口地址需以 http:// 或 https:// 开头")
+    return settings
+
+
+@app.post("/api/admin/settings/responder/models")
+async def admin_responder_models(body: ResponderPatch | None = None, x_admin_key: str | None = Header(default=None)):
+    """用面板里填的地址和 Key 拉取 /v1/models，给「模型」下拉框用（服务器代请求，Key 不进浏览器跨域）。"""
+    _admin_auth(x_admin_key)
+    models, why = await dola_responder.list_models(_responder_form_settings(body))
+    if not models:
+        raise HTTPException(502 if "HTTP" in why or "请求失败" in why else 422, why)
+    return {"models": models}
+
+
+@app.post("/api/admin/settings/responder/test")
+async def admin_responder_test(body: ResponderPatch | None = None, x_admin_key: str | None = Header(default=None)):
+    """用一句示例追问试一下 AI 代答，返回它会回的话（不发给 dola）。
+
+    用面板里当前填的内容测试（没填的项沿用已保存的值），不保存；不要求已开启。"""
+    _admin_auth(x_admin_key)
+    settings = _responder_form_settings(body)
     sample = "この動画はすでに生成されています。追加の生成や調整が必要な場合はお知らせください。"
     reply, why = await dola_responder.ai_reply_detail(sample, "16:9", 10, 1, settings=settings)
     if not reply:

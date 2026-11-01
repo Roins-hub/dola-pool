@@ -158,3 +158,41 @@ def test_test_endpoint_uses_the_unsaved_form_values(tmp_path, monkeypatch):
     assert not r.configured()                                   # 测试不保存
     with pytest.raises(server.HTTPException):
         _run(server.admin_responder_test(server.ResponderPatch(base_url='gw.example', api_key='k', model='m'), None))
+
+
+class FakeGetSession:
+    def __init__(self, resp): self.resp, self.calls = resp, []
+    def get(self, url, headers=None):
+        self.calls.append((url, headers))
+        return self.resp
+
+
+def test_list_models_reads_v1_models_and_explains_failures():
+    s = r.normalize({'base_url': 'https://gw.example', 'api_key': 'sk-abcdef123456'})
+    sess = FakeGetSession(FakeResp(200, {'data': [{'id': 'gpt-4o-mini'}, {'id': 'DeepSeek-V4'}, {'id': 'gpt-4o-mini'}]}))
+    models, why = _run(r.list_models(s, session=sess))
+    assert models == ['DeepSeek-V4', 'gpt-4o-mini'] and not why
+    assert sess.calls[0][0] == 'https://gw.example/v1/models'
+    assert sess.calls[0][1]['Authorization'] == 'Bearer sk-abcdef123456'
+    models, why = _run(r.list_models(s, session=FakeGetSession(FakeErrResp(401, {}))))
+    assert models == [] and 'HTTP 401' in why
+    models, why = _run(r.list_models(r.normalize({'base_url': 'https://gw.example'})))
+    assert models == [] and 'API Key' in why
+
+
+def test_models_endpoint_uses_form_values(tmp_path, monkeypatch):
+    import server
+    monkeypatch.setattr(server, '_admin_auth', lambda key: None)
+    seen = {}
+    async def fake_list(settings, **kw):
+        seen.update(settings)
+        return ['m1', 'm2'], ''
+    monkeypatch.setattr(server.dola_responder, 'list_models', fake_list)
+    out = _run(server.admin_responder_models(server.ResponderPatch(base_url='https://gw.example/v1', api_key='sk-typed'), None))
+    assert out == {'models': ['m1', 'm2']} and seen['api_key'] == 'sk-typed'
+    async def failing(settings, **kw):
+        return [], '接口返回 HTTP 401（https://gw.example/v1/models）'
+    monkeypatch.setattr(server.dola_responder, 'list_models', failing)
+    with pytest.raises(server.HTTPException) as err:
+        _run(server.admin_responder_models(server.ResponderPatch(base_url='https://gw.example', api_key='k'), None))
+    assert err.value.status_code == 502 and 'HTTP 401' in err.value.detail

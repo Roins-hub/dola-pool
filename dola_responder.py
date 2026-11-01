@@ -139,6 +139,42 @@ def check_reply(reply: str, ratio=None, duration=None) -> str | None:
 _THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
 
 
+def _api_url(base: str, path: str) -> str:
+    return base + (path if base.endswith("/v1") else "/v1" + path)
+
+
+async def list_models(settings: dict, *, session=None) -> tuple[list[str], str]:
+    """GET {base}/v1/models → (模型 id 列表, 失败原因)。只需要地址和 Key，不要求已选模型。"""
+    s = settings
+    if not (s.get("base_url") and s.get("api_key")):
+        return [], "先填接口地址和 API Key"
+    import aiohttp
+    url = _api_url(s["base_url"], "/models")
+    headers = {"Authorization": f"Bearer {s['api_key']}"}
+    own = session is None
+    sess = session or aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20))
+    try:
+        async with sess.get(url, headers=headers) as resp:
+            if resp.status != 200:
+                try:
+                    detail = (await resp.text())[:200]
+                except Exception:  # noqa: BLE001
+                    detail = ""
+                return [], f"接口返回 HTTP {resp.status}（{url}）" + (f"：{detail}" if detail else "")
+            data = await resp.json(content_type=None)
+        rows = data.get("data") if isinstance(data, dict) else data
+        ids = sorted({str(m.get("id") if isinstance(m, dict) else m).strip()
+                      for m in (rows or []) if (m.get("id") if isinstance(m, dict) else m)}, key=str.lower)
+        if not ids:
+            return [], "接口没有返回模型（/v1/models 为空）"
+        return ids, ""
+    except Exception as exc:  # noqa: BLE001
+        return [], f"请求失败：{type(exc).__name__} {str(exc)[:120]}"
+    finally:
+        if own:
+            await sess.close()
+
+
 async def ai_reply(dola_text, ratio=None, duration=None, attachments=0, *, session=None) -> str | None:
     """调用兼容 OpenAI 的 /v1/chat/completions 写一句回复；未开启、出错或不安全时返回 None。"""
     if not enabled():
@@ -155,7 +191,7 @@ async def ai_reply_detail(dola_text, ratio=None, duration=None, attachments=0, *
         return None, "接口地址、API Key、模型没填全"
     import aiohttp
     base = s["base_url"]
-    url = base + ("/chat/completions" if base.endswith("/v1") else "/v1/chat/completions")
+    url = _api_url(base, "/chat/completions")
     # 推理模型会先花 token 思考，给够余量；最终回复仍按 MAX_REPLY_CHARS 检查
     body = {"model": s["model"], "temperature": 0.2, "max_tokens": 800,
             "messages": [{"role": "system", "content": SYSTEM_PROMPT},
