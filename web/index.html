@@ -404,6 +404,116 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--border);ma
   .mask.login.is-leaving{opacity:0;transition:opacity 320ms ease}
 }
 @media (prefers-reduced-motion:reduce){.mask.login.is-leaving{opacity:0;transition:opacity 200ms ease}}
+/* ---- 面板动效：反馈（按 / 悬停 / 聚焦）+ 切页时内容依次到位；自动刷新不重播 ---- */
+.btn{transition:border-color var(--t-hover) ease,background-color var(--t-hover) ease,color var(--t-hover) ease,transform var(--t-press) var(--ease-out)}
+.nav-item{transition:background-color var(--t-hover) ease,color var(--t-hover) ease,transform var(--t-press) var(--ease-out)}
+.nav-item svg{transition:stroke var(--t-hover) ease,transform var(--t-ui) var(--ease-out)}
+.nav-item:active{transform:scale(.98)}
+.sw i,.sw i:before{transition-duration:var(--t-ui);transition-timing-function:var(--ease-out)}
+a{transition:color var(--t-hover) ease}
+@media (hover:hover) and (pointer:fine){
+  .nav-item:hover svg{transform:translateX(2px)}
+}
+@media (prefers-reduced-motion:no-preference){
+  /* 切页：页头、卡片、表格容器依次浮起 */
+  .tab-in>*{animation:tabRise 380ms var(--ease-out) both}
+  .tab-in>*:nth-child(2){animation-delay:60ms}
+  .tab-in>*:nth-child(3){animation-delay:120ms}
+  .tab-in>*:nth-child(n+4){animation-delay:180ms}
+  /* 数据到位：表格行逐行出现（前 10 行错开，其余一起） */
+  .rows-in tbody tr{animation:rowIn 360ms var(--ease-out) both;animation-delay:240ms}
+  .rows-in tbody tr:nth-child(1){animation-delay:0ms}
+  .rows-in tbody tr:nth-child(2){animation-delay:24ms}
+  .rows-in tbody tr:nth-child(3){animation-delay:48ms}
+  .rows-in tbody tr:nth-child(4){animation-delay:72ms}
+  .rows-in tbody tr:nth-child(5){animation-delay:96ms}
+  .rows-in tbody tr:nth-child(6){animation-delay:120ms}
+  .rows-in tbody tr:nth-child(7){animation-delay:144ms}
+  .rows-in tbody tr:nth-child(8){animation-delay:168ms}
+  .rows-in tbody tr:nth-child(9){animation-delay:192ms}
+  .rows-in tbody tr:nth-child(10){animation-delay:216ms}
+  /* 仪表盘：数字浮起，趋势柱从底部长出 */
+  .rows-in .stat .v{animation:tabRise 520ms var(--ease-out) both}
+  .rows-in .stat:nth-child(2) .v{animation-delay:60ms}
+  .rows-in .stat:nth-child(3) .v{animation-delay:120ms}
+  .rows-in .stat:nth-child(4) .v{animation-delay:180ms}
+  .rows-in .bar{transform-origin:bottom;animation:barGrow 760ms var(--ease-expo) both}
+  .rows-in .col:nth-child(2) .bar{animation-delay:40ms}
+  .rows-in .col:nth-child(3) .bar{animation-delay:80ms}
+  .rows-in .col:nth-child(4) .bar{animation-delay:120ms}
+  .rows-in .col:nth-child(5) .bar{animation-delay:160ms}
+  .rows-in .col:nth-child(6) .bar{animation-delay:200ms}
+  .rows-in .col:nth-child(7) .bar{animation-delay:240ms}
+  /* 对话框：遮罩淡入，内容从中心轻微放大 */
+  .dialog[style*="flex"]{animation:fadeIn 200ms ease both}
+  .dialog[style*="flex"] .box{animation:boxIn var(--t-ui) var(--ease-out) both}
+  /* 「正在处理」提示条从下方升起 */
+  #requestStatus:not([hidden]){animation:tabRise var(--t-ui) var(--ease-out) both}
+}
+@keyframes tabRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes rowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes barGrow{from{transform:scaleY(0)}to{transform:none}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes boxIn{from{opacity:0;transform:scale(.97) translateY(6px)}to{opacity:1;transform:none}}
+
+/* ---- 第二层动效：滑动指示条、数字滚动、外壳入场、菜单与展开、行内元素 ---- */
+.side-nav{position:relative}
+.nav-ind{position:absolute;left:0;right:0;top:0;height:34px;border-radius:6px;background:var(--active);z-index:0;pointer-events:none;
+  transition:transform 380ms var(--ease-out),opacity 200ms ease}
+.side-nav .nav-item{position:relative;z-index:1}
+.side-nav.has-ind .nav-item.on{background:transparent}
+.groupbar{position:relative}
+.grp-ind{position:absolute;left:0;bottom:-1px;height:2px;width:1px;background:var(--accent);transform-origin:left;pointer-events:none;
+  transition:transform 380ms var(--ease-out)}
+.groupbar.has-ind .gbtn.on{border-bottom-color:transparent}
+tbody tr{transition:background-color var(--t-hover) ease}
+.badge{transition:transform var(--t-press) var(--ease-out)}
+input[type=checkbox]{transition:transform var(--t-press) var(--ease-out)}
+input[type=checkbox]:active{transform:scale(.88)}
+.sw:active i:before{width:17px}
+.sw input:checked:active+i:before{transform:translateX(11px)}
+.ver-chip,.lang-sel,.top-btn{transition:border-color var(--t-hover) ease,background-color var(--t-hover) ease,color var(--t-hover) ease,transform var(--t-press) var(--ease-out)}
+.top-btn svg{transition:transform var(--t-ui) var(--ease-out)}
+#setBtn[aria-expanded="true"] svg:first-child{transform:rotate(60deg)}
+@media (hover:hover) and (pointer:fine){
+  .btn:hover svg{transform:translateX(1px)}
+  .gbtn:not(.points):hover b{color:var(--accent)}
+  tbody tr:hover .badge{transform:scale(1.04)}
+}
+@media (prefers-reduced-motion:no-preference){
+  /* 登录后 / 首次打开：侧边栏导航逐项滑入，顶栏落下，主区浮起 */
+  .shell-in .side-nav .nav-item{animation:navIn 420ms var(--ease-out) both}
+  .shell-in .side-nav .nav-item:nth-child(2){animation-delay:30ms}
+  .shell-in .side-nav .nav-item:nth-child(3){animation-delay:60ms}
+  .shell-in .side-nav .nav-item:nth-child(4){animation-delay:90ms}
+  .shell-in .side-nav .nav-item:nth-child(5){animation-delay:120ms}
+  .shell-in .side-nav .nav-item:nth-child(6){animation-delay:150ms}
+  .shell-in .side-nav .nav-item:nth-child(n+7){animation-delay:180ms}
+  .shell-in .brand{animation:navIn 420ms var(--ease-out) both}
+  .shell-in .side-foot{animation:dropIn 460ms var(--ease-out) 80ms both}
+  .shell-in main{animation:mainIn 620ms var(--ease-expo) 120ms both}
+  /* 行内：状态标签与开关随行出现时轻弹入 */
+  .rows-in tbody .badge,.rows-in tbody .sw{animation:popIn 320ms var(--ease-out) 160ms both}
+  /* 筛选栏、提示条、分页条随切页浮起 */
+  .rows-in .groupbar,.rows-in details.ew{animation:tabRise 420ms var(--ease-out) both}
+  /* 展开 / 收起的内容 */
+  details[open]>:not(summary){animation:tabRise 260ms var(--ease-out) both}
+  /* 下拉菜单从按钮处展开 */
+  .top-menu-list:not([hidden]){transform-origin:top right;animation:menuIn var(--t-ui) var(--ease-out) both}
+  .top-menu-list:not([hidden]) button{animation:tabRise 260ms var(--ease-out) both}
+  .top-menu-list:not([hidden]) button:nth-child(2){animation-delay:30ms}
+  .top-menu-list:not([hidden]) button:nth-child(3){animation-delay:60ms}
+  /* 「有新版本」提醒卡片 */
+  .upd-notice.nd-in{animation:menuIn 320ms var(--ease-out) both}
+  /* 加载中的提示行 */
+  .tab-loading{animation:breathe 1.6s ease-in-out infinite}
+}
+@keyframes navIn{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:none}}
+@keyframes dropIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+@keyframes mainIn{from{opacity:0;transform:translateY(18px) scale(.992)}to{opacity:1;transform:none}}
+@keyframes popIn{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:none}}
+@keyframes menuIn{from{opacity:0;transform:scale(.96) translateY(-6px)}to{opacity:1;transform:none}}
+@keyframes breathe{0%,100%{opacity:.55}50%{opacity:1}}
 @keyframes chRise{from{transform:translateY(112%)}to{transform:none}}
 @keyframes liRise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
 @keyframes formIn{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
@@ -928,7 +1038,7 @@ async function submitLogin(){
   finally{if(btn&&btn.setAttribute)btn.setAttribute('aria-busy','false');}
   adminKey=r.token;localStorage.setItem(LS_KEY,r.token);
   ENTER_PENDING.add(curTab);
-  leaveLogin();refresh();
+  leaveLogin();refresh();setTimeout(shellEnter,700);
 }
 function logout(){adminKey='';localStorage.removeItem(LS_KEY);showLogin();}
 
@@ -948,8 +1058,58 @@ function replayClass(el,cls,ms){
   el.classList.remove(cls);void el.offsetWidth;el.classList.add(cls);
   clearTimeout(el['_'+cls]);el['_'+cls]=setTimeout(()=>el.classList.remove(cls),ms);
 }
-function tabEnter(t){ENTER_PENDING.add(t);replayClass(q('#tab-'+t),'tab-in',800);}
-function rowsEnter(t){if(ENTER_PENDING.delete(t))replayClass(q('#tab-'+t),'rows-in',1200);}
+function tabEnter(t){ENTER_PENDING.add(t);replayClass(q('#tab-'+t),'tab-in',800);moveNavInd();}
+function rowsEnter(t){
+  if(!ENTER_PENDING.delete(t))return;
+  const sec=q('#tab-'+t);
+  replayClass(sec,'rows-in',1200);
+  countUp(sec);
+}
+const motionOK=()=>typeof matchMedia!=='function'||!matchMedia('(prefers-reduced-motion: reduce)').matches;
+/** 数字从 0 滚到实际值（只在切页 / 首次进入时，自动刷新不重播）；「3/48」这类两段数字分别滚 */
+function countUp(root){
+  if(!root||typeof root.querySelectorAll!=='function'||!motionOK()||typeof requestAnimationFrame!=='function')return;
+  root.querySelectorAll('.stat .v, .gbtn b').forEach(el=>{
+    const text=el.textContent.trim();
+    if(!/^\d+(?:\/\d+)?$/.test(text)||text==='0')return;
+    const parts=text.split('/').map(Number),t0=performance.now(),dur=720;
+    const step=now=>{
+      const k=Math.min(1,(now-t0)/dur),e=1-Math.pow(1-k,4);
+      if(el.textContent.trim()!==text&&k<1&&!el._counting)return;      // 期间被刷新改写：放弃
+      el._counting=k<1;
+      el.textContent=parts.map(v=>Math.round(v*e)).join('/');
+      if(k<1)requestAnimationFrame(step);else el.textContent=text;
+    };
+    el._counting=true;el.textContent=parts.map(()=>0).join('/');requestAnimationFrame(step);
+  });
+}
+/** 侧边栏选中块：一块底色在导航项之间滑动 */
+function moveNavInd(){
+  const nav=q('.side-nav');if(!nav||typeof nav.querySelector!=='function')return;
+  const on=nav.querySelector('.nav-item.on');if(!on)return;
+  let ind=nav.querySelector('.nav-ind');
+  if(!ind){ind=document.createElement('span');ind.className='nav-ind';nav.prepend(ind);nav.classList.add('has-ind');
+    ind.style.transition='none';requestAnimationFrame(()=>{ind.style.transition='';});}
+  ind.style.transform='translateY('+on.offsetTop+'px)';
+}
+/** 筛选栏下划线：从上一个选中项滑到新的（筛选栏每次刷新会重画，所以记住上一次的位置） */
+function moveGroupInd(bar){
+  if(!bar||typeof bar.querySelector!=='function')return;
+  const on=bar.querySelector('.gbtn.on');if(!on)return;
+  const ind=document.createElement('span');ind.className='grp-ind';bar.append(ind);bar.classList.add('has-ind');
+  const to='translateX('+on.offsetLeft+'px) scaleX('+on.offsetWidth+')';
+  const from=bar._grpInd;
+  if(from&&from!==to&&motionOK()){
+    ind.style.transition='none';ind.style.transform=from;void ind.offsetWidth;ind.style.transition='';
+  }
+  ind.style.transform=to;bar._grpInd=to;
+}
+/** 外壳入场：登录后 / 打开页面时导航、顶栏、主区依次到位 */
+function shellEnter(){
+  const b=document.body;if(!b||!b.classList)return;
+  replayClass(b,'shell-in',1100);
+  setTimeout(moveNavInd,0);
+}
 /** 已经加载过的页：再切回来先显示上次的内容，后台刷新；没加载过的显示一行「正在加载…」 */
 const LOADED_TABS=new Set();
 function tabLoadingNote(tab,on){
@@ -1538,6 +1698,7 @@ function renderGroupBar(d,container,jump){
     '<span class="gbtn points" title="正常组（满额+半额+冷却+生成中）的剩余总额度；'
       +'seedance-2.5 每条 2 点、seedance-2.0-fast 每条 3 点">剩余额度 <b>'+pts+'</b> 点'
       +'<span class="n">≈2.5 可出 '+Math.floor(pts/2)+' 条</span></span>';
+  moveGroupInd(q(container||'#groupBar'));
 }
 /** 出口显示名（HTML）：直连 / 绑定的代理名 + host:port（egress 本身已去掉代理凭据）。 */
 function egressLabel(e,accs){
@@ -3566,7 +3727,7 @@ async function startStress(){
 
 /* 启动：探测鉴权，401 才弹登录遮罩（ADMIN_KEY 留空时免登录） */
 (async function boot(){
-  try{ await api('/api/admin/accounts'); hide('loginMask'); refresh(); checkUpdateBadge(); }
+  try{ await api('/api/admin/accounts'); hide('loginMask'); shellEnter(); refresh(); checkUpdateBadge(); }
   catch(e){ /* 401 已在 api() 内触发 showLogin */ }
 })();
 timer=setInterval(()=>{if(autoRefresh)refresh();},10000);
