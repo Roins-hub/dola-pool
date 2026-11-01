@@ -475,6 +475,9 @@ input[type=checkbox]:active{transform:scale(.88)}
 .ver-chip,.lang-sel,.top-btn{transition:border-color var(--t-hover) ease,background-color var(--t-hover) ease,color var(--t-hover) ease,transform var(--t-press) var(--ease-out)}
 .top-btn svg{transition:transform var(--t-ui) var(--ease-out)}
 #setBtn[aria-expanded="true"] svg:first-child{transform:rotate(60deg)}
+#refreshBtn[aria-busy="true"]{cursor:progress}
+#refreshBtn[aria-busy="true"] svg{animation:spin .8s linear infinite}
+#lastUpdate.just-updated{animation:fadeIn .5s var(--ease-out);color:var(--accent)}
 @media (hover:hover) and (pointer:fine){
   .btn:hover svg{transform:translateX(1px)}
   .gbtn:not(.points):hover b{color:var(--accent)}
@@ -715,7 +718,7 @@ input[type=checkbox]:active{transform:scale(.88)}
     <label class="sw-row"><input type="checkbox" id="autoCk" checked onchange="autoRefresh=this.checked">自动刷新</label>
     <span id="lastUpdate"></span>
     <div class="top-actions">
-      <button class="btn top-btn" onclick="refresh()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4.5V11h-6.5"/></svg>刷新</button>
+      <button class="btn top-btn" id="refreshBtn" onclick="manualRefresh(this)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4.5V11h-6.5"/></svg>刷新</button>
       <div class="top-menu">
         <button class="btn top-btn" id="setBtn" aria-haspopup="menu" aria-expanded="false" onclick="toggleTopMenu(event)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>设置<svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></button>
         <div class="top-menu-list" id="topMenu" role="menu" hidden>
@@ -1155,25 +1158,48 @@ async function prefetchTabs(){
   }
 }
 
-const refreshingTabs=new Set();
-async function refresh(){
-  if(q('#loginMask').style.display!=='none')return;
+const refreshingTabs=new Map();   // tab -> 正在进行的刷新
+function loginShowing(){
+  const m=q('#loginMask');
+  // 登录成功后遮罩还要播约 1 秒退场动画（is-filling / is-leaving），这时已经可以拉数据
+  return m.style.display!=='none'&&!(m.classList&&m.classList.contains('is-filling'));
+}
+function refresh(){
+  if(loginShowing())return Promise.resolve();
   const tab=curTab;
-  if(refreshingTabs.has(tab))return;
-  refreshingTabs.add(tab);
+  if(refreshingTabs.has(tab))return refreshingTabs.get(tab);
+  const run=refreshTab(tab).finally(()=>refreshingTabs.delete(tab));
+  refreshingTabs.set(tab,run);
+  return run;
+}
+/** 顶栏「刷新」：图标转圈直到完成；自动刷新正在进行时等它结束再刷一次，点击不会被吞掉 */
+async function manualRefresh(btn){
+  if(!btn||btn.getAttribute('aria-busy')==='true')return;
+  btn.setAttribute('aria-busy','true');
+  const started=Date.now();
   try{
-    if(curTab==='dash')await loadDash();
-    else if(curTab==='accounts')await loadAccounts();
-    else if(curTab==='proxies')await loadProxies();
-    else if(curTab==='tasks')await loadTasks();
-    else if(curTab==='videos')await loadVideos();
-    else if(curTab==='keys')await loadKeys();
-    else if(curTab==='users')await loadUsers();
+    const pending=refreshingTabs.get(curTab);
+    if(pending)await pending;
+    await refresh();
+    replayClass(q('#lastUpdate'),'just-updated',900);
+  }finally{
+    // 至少转半圈，快的请求也能看出点到了
+    setTimeout(()=>btn.setAttribute('aria-busy','false'),Math.max(0,450-(Date.now()-started)));
+  }
+}
+async function refreshTab(tab){
+  try{
+    if(tab==='dash')await loadDash();
+    else if(tab==='accounts')await loadAccounts();
+    else if(tab==='proxies')await loadProxies();
+    else if(tab==='tasks')await loadTasks();
+    else if(tab==='videos')await loadVideos();
+    else if(tab==='keys')await loadKeys();
+    else if(tab==='users')await loadUsers();
     LOADED_TABS.add(tab);tabLoadingNote(tab,false);rowsEnter(tab);
     q('#lastUpdate').textContent='更新于 '+new Date().toLocaleTimeString();
     if(!tabsPrefetched)setTimeout(prefetchTabs,800);
   }catch(e){if(e.message!=='unauthorized')q('#lastUpdate').textContent='刷新失败，请重试';}
-  finally{refreshingTabs.delete(tab);}
 }
 
 /* ---- 全局并发：输入不会被后台自动刷新覆盖 ---- */
