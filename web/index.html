@@ -721,6 +721,7 @@ input[type=checkbox]:active{transform:scale(.88)}
         <div class="top-menu-list" id="topMenu" role="menu" hidden>
           <button role="menuitem" onclick="closeTopMenu();openConcurrencySettings()">全局并发</button>
           <button role="menuitem" onclick="closeTopMenu();openUpscaleSettings()">视频超分</button>
+          <button role="menuitem" onclick="closeTopMenu();openResponderSettings()">AI 代答</button>
           <button role="menuitem" onclick="closeTopMenu();openStress()">压力测试</button>
         </div>
       </div>
@@ -1432,6 +1433,55 @@ function watchUpdate(){
     updatePollTimer=setTimeout(tick,1200);
   };
   updatePollTimer=setTimeout(tick,800);
+}
+
+/* ---- AI 代答：dola 追问时，通用回复用完仍不开工，交给兼容 OpenAI 的模型写一句回复 ---- */
+async function openResponderSettings(){
+  showDlg(`<h2>AI 代答</h2><p class="hint">正在读取设置…</p>`);
+  const epoch=dialogEpoch;
+  try{
+    const c=await api('/api/admin/settings/responder');
+    if(epoch!==dialogEpoch)return;
+    showDlg(`<h2>AI 代答</h2>
+      <p class="hint">dola 有时不直接生成，而是反问（用哪个比例、要不要开始、说已经生成过了……）。程序会先自动发两次「重申参数、直接生成」的通用回复；
+        仍在问时，再把 dola 的原话和任务参数交给这里配置的模型写一句回复。模型只能确认、重申参数或选择与参数一致的选项，
+        回复里出现与参数不一致的比例或秒数会被丢弃。都不行才结束任务（此时尚未开始生成，不扣点）。</p>
+      <label class="sw-row" style="margin-top:14px"><span class="sw"><input type="checkbox" id="rpEnabled" ${c.enabled?'checked':''}><i></i></span>开启 AI 代答</label>
+      <label for="rpBase">接口地址（兼容 OpenAI）</label>
+      <input id="rpBase" placeholder="https://你的网关/v1" value="${esc(c.base_url||'')}" autocomplete="off" spellcheck="false">
+      <label for="rpKey">API Key</label>
+      <input id="rpKey" type="password" autocomplete="new-password" placeholder="${c.api_key_set?esc('已保存 '+(c.api_key_hint||'')+'，留空不修改'):'sk-…'}">
+      <label for="rpModel">模型</label>
+      <input id="rpModel" placeholder="例如 gpt-4o-mini、claude-haiku-5-5" value="${esc(c.model||'')}" autocomplete="off" spellcheck="false">
+      <p id="rpFeedback" class="hint" role="status" aria-live="polite" style="margin-top:12px">${c.ready?'已开启，配置完整。':'未开启或配置不全：只用通用回复。'}</p>
+      <div class="row"><button class="btn" onclick="hide('dlg')">关闭</button>
+        <button class="btn" id="rpTest" onclick="testResponder()">测试</button>
+        <button class="btn btn-p" id="rpSave" onclick="saveResponderSettings()">保存</button></div>`);
+  }catch(e){
+    if(epoch===dialogEpoch&&e.message!=='unauthorized')showDlg(`<h2>AI 代答</h2><p role="alert">${esc(e.message)}</p><button class="btn" onclick="openResponderSettings()">重试</button>`);
+  }
+}
+async function saveResponderSettings(){
+  const fb=q('#rpFeedback'),btn=q('#rpSave');if(!btn||btn.disabled)return;
+  const body={enabled:q('#rpEnabled').checked,base_url:q('#rpBase').value.trim(),model:q('#rpModel').value.trim()};
+  const key=q('#rpKey').value.trim();if(key)body.api_key=key;
+  btn.disabled=true;fb.textContent='正在保存…';
+  try{
+    const c=await api('/api/admin/settings/responder',{method:'PATCH',body});
+    q('#rpKey').value='';
+    if(c.api_key_set)q('#rpKey').placeholder=`已保存 ${c.api_key_hint||''}，留空不修改`;
+    fb.textContent=c.ready?'已保存并开启。可以点「测试」看看它会怎么回。':'已保存，但未开启或配置不全：只用通用回复。';
+  }catch(e){if(e.message!=='unauthorized')fb.textContent='保存失败：'+e.message;}
+  finally{btn.disabled=false;}
+}
+async function testResponder(){
+  const fb=q('#rpFeedback'),btn=q('#rpTest');if(!btn||btn.disabled)return;
+  btn.disabled=true;fb.textContent='正在测试（先保存再测试）…';
+  try{
+    const r=await api('/api/admin/settings/responder/test',{method:'POST'});
+    fb.innerHTML='示例追问：<span translate="no">'+esc(r.sample)+'</span><br>模型回复：<strong translate="no">'+esc(r.reply)+'</strong>';
+  }catch(e){if(e.message!=='unauthorized')fb.textContent='测试失败：'+e.message;}
+  finally{btn.disabled=false;}
 }
 
 /* ---- 视频超分：fal（字节超分）或自建开源模型；在任务列表 / 视频管理里对已完成的视频发起 ---- */

@@ -39,6 +39,7 @@ import proxy_store
 import sites
 import updater
 import upscale
+import dola_responder
 import video_link
 from prompt_context import dispatch_prompt, reference_supplement
 from add_account import add_account_flow
@@ -1181,6 +1182,7 @@ def open_thread_pool() -> int:
 async def resume_incomplete_tasks():
     """服务重启后恢复已受理会话，并重新排队尚未开始的 queued 任务。"""
     open_thread_pool()
+    _load_responder()
     # 先处理崩溃时留下的 processing 孤儿任务（有 conversation 保留续轮询，
     # 无 conversation 清空账号重新派号），避免永久卡死。
     stale_refs = sweep_stale_references()
@@ -1947,6 +1949,59 @@ async def admin_upscale_settings_save(body: UpscaleSettingsPatch, x_admin_key: s
     except upscale.UpscaleError as exc:
         raise HTTPException(422, str(exc)) from exc
     return upscale.public_settings(saved)
+
+
+# ---------------------------------------------------------------- AI 代答（dola_responder 第二层）
+RESPONDER_KEY = "ai_responder"
+
+
+class ResponderPatch(BaseModel):
+    enabled: bool | None = None
+    base_url: str | None = None
+    api_key: str | None = None        # None / 不传 = 保持；空字符串 = 清除
+    model: str | None = None
+
+
+def _load_responder() -> dict:
+    try:
+        saved = json.loads(store.get_setting(RESPONDER_KEY) or "{}")
+    except ValueError:
+        saved = {}
+    return dola_responder.apply_settings(saved)
+
+
+@app.get("/api/admin/settings/responder")
+async def admin_responder_settings(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return dola_responder.public_settings()
+
+
+@app.patch("/api/admin/settings/responder")
+async def admin_responder_settings_save(body: ResponderPatch, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    current = dict(dola_responder.SETTINGS)
+    for key, value in body.model_dump(exclude_unset=True).items():
+        if value is None:
+            continue
+        current[key] = value
+    base = str(current.get("base_url") or "").strip()
+    if base and not re.match(r"^https?://", base):
+        raise HTTPException(422, "接口地址需以 http:// 或 https:// 开头")
+    store.set_setting(RESPONDER_KEY, json.dumps(dola_responder.apply_settings(current), ensure_ascii=False))
+    return dola_responder.public_settings()
+
+
+@app.post("/api/admin/settings/responder/test")
+async def admin_responder_test(x_admin_key: str | None = Header(default=None)):
+    """用一句示例追问试一下 AI 代答，返回它会回的话（不发给 dola）。"""
+    _admin_auth(x_admin_key)
+    if not dola_responder.enabled():
+        raise HTTPException(422, "AI 代答未开启或配置不全")
+    sample = "この動画はすでに生成されています。追加の生成や調整が必要な場合はお知らせください。"
+    reply = await dola_responder.ai_reply(sample, "16:9", 10, 1)
+    if not reply:
+        raise HTTPException(502, "模型没有给出可用的回复（接口出错，或回复不符合安全规则），请检查地址、Key 和模型名")
+    return {"sample": sample, "reply": reply}
 
 
 @app.post("/api/admin/tasks/{task_id}/upscale")

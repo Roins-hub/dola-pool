@@ -740,13 +740,17 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     limit_seen = 0
     stall_key, stall_since, stall_noted, stall_hits = None, 0.0, False, 0
     answered = set()
+    nudges, ai_tried, last_answer_at, tried_replies = 0, False, 0.0, []
     import config as _config
+    import dola_responder
 
     async def _answer(text):
         """在会话输入框里回一句话（回复 dola 的追问）。"""
+        nonlocal last_answer_at
         box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')
         if not box:
             return False
+        last_answer_at = time.time()
         try:
             await box.click()
             await page.keyboard.type(text, delay=120)
@@ -874,7 +878,8 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             if category:
                 previous, hits = failure_seen
                 failure_seen = (joined, hits + 1 if previous == joined else 1)
-                if failure_seen[1] >= 2:
+                nudgeable = category == "需要补充信息" and nudges < dola_responder.GENERIC_LIMIT
+                if failure_seen[1] >= 2 and not nudgeable:
                     raise UpstreamReplyError(category, joined)
             else:
                 failure_seen = (None, 0)
@@ -908,21 +913,40 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             if key != stall_key:
                 stall_key, stall_since, stall_noted, stall_hits = key, now, False, 0
             stall_hits += 1
-            if latest.get("clarifying") and stall_hits >= 2:
+            # dola 在等答话：带追问标记连续两轮，或没标记但说完后 45 秒不动。不再逐句识别话术——
+            # 先发通用回复（重申参数、说明是新请求，最多 2 次），仍不动再交给 AI 代答（若已配置），都不行才结束。
+            asking = (latest.get("clarifying") and stall_hits >= 2) or now - stall_since >= 45
+            if asking:
+                reply, how = None, ""
+                if nudges < dola_responder.GENERIC_LIMIT:
+                    reply, how = dola_responder.generic_reply(ratio, duration, poll.get("userAttachments"), nudges), "通用回复"
+                    nudges += 1
+                elif not ai_tried and dola_responder.enabled():
+                    ai_tried = True
+                    emit_feedback(on_poll, progress="dola 仍在追问，正在请 AI 代答")
+                    reply, how = await dola_responder.ai_reply(latest_text, ratio, duration,
+                                                              poll.get("userAttachments")), "AI 代答"
+                if reply and await _answer(reply):
+                    tried_replies.append(f"{how}：{reply}")
+                    answered.add(latest.get("index"))
+                    emit_feedback(on_poll, progress=f"dola 在追问，已{how}：{reply[:60]}，等待开始生成")
+                    stall_key = None
+                    continue
                 raise UpstreamReplyError(
                     "上游在等待回复",
-                    f"dola 在追问、等待答复（尚未开始生成，未扣点），程序无法代为回答：{latest_text[:1500]}")
+                    f"dola 在追问、等待答复（尚未开始生成，未扣点），已尝试 {len(tried_replies)} 次自动回复仍未开始："
+                    f"{latest_text[:1200]}" + (f"（最后一次回复：{tried_replies[-1][:120]}）" if tried_replies else ""))
             if not stall_noted and now - stall_since >= 30:
                 stall_noted = True
-                emit_feedback(on_poll, progress="dola 已回复但没有开始生成，可能在等答复；"
-                                                f"{_config.STALL_REPLY_SECONDS} 秒内仍无进展将结束任务（不扣点）")
-            if now - stall_since >= _config.STALL_REPLY_SECONDS:
-                raise UpstreamReplyError(
-                    "上游在等待回复",
-                    f"dola 回复后 {int(now - stall_since)} 秒没有开始生成（未受理、未扣点），"
-                    f"可能在追问需要补充的信息：{latest_text[:1500]}")
+                emit_feedback(on_poll, progress="dola 已回复但没有开始生成，可能在等答复，正在自动回复")
         else:
             stall_key = None
+            if (last_answer_at and not accepted and not videos and not latest
+                    and now - last_answer_at > max(150, _config.STALL_REPLY_SECONDS)):
+                raise UpstreamReplyError(
+                    "上游在等待回复",
+                    f"自动回复后 {int(now - last_answer_at)} 秒 dola 没有任何回应（尚未开始生成，未扣点）："
+                    + (tried_replies[-1][:160] if tried_replies else ""))
         if videos:
             emit_feedback(on_poll, progress="上游已返回视频，正在获取下载地址")
             video_models = poll.get("videoModels", [])

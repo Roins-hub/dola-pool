@@ -90,42 +90,24 @@ MISSING_REF = ('只ひとつ確認させてください：現在のところ動�
                '確認後、10秒・16:9で直接生成します。')
 
 
-def test_missing_reference_question_fails_fast_without_answering():
-    """2026-10-31 线上：dola 说这一轮没收到参照图、让选 A/B；之前不认识，任务空等 30 分钟超时。"""
+def test_missing_reference_question_without_attachments_ends_after_generic_replies():
+    """dola 说这一轮没有参照图：没有附件时不能答 A，先通用回复两次，仍在问才结束（不扣点）。"""
     from upstream_reply import reply_failure
     assert reply_failure(MISSING_REF) == '需要补充信息'
     assert start_confirm_reply(MISSING_REF, 10) is None and duration_reply(MISSING_REF, 10) is None
-    # 只是顺带说明、照常生成的不算
     assert reply_failure('参照画像が提供されていませんので、テキストから動画を生成します。') is None
 
-    class Context:
-        async def cookies(self, *a): return []
 
-    class Page:
-        calls = 0
-        async def evaluate(self, *a):
-            self.calls += 1
-            assert self.calls <= 2                     # 两次确认就结束，不等到超时
-            return {'texts': [MISSING_REF], 'assistantTexts': [MISSING_REF], 'assistantCount': 1,
-                    'latestAssistant': {'id': 'q', 'text': MISSING_REF, 'finished': True}, 'videos': []}
-        async def query_selector(self, *a): raise AssertionError('must not answer A/B for the customer')
-
-    async def no_wait(*a): pass
-    fn = load_worker_function(
-        'poll_conversation', cookie_value=lambda *a: '',
-        asyncio=SimpleNamespace(sleep=no_wait, wait_for=asyncio.wait_for),
-        POLL_JS='', emit_feedback=lambda cb, **kw: None,
-        DAILY_LIMIT_PATTERN=re.compile('x^'), FREE_LIMIT_REPLY=re.compile('x^'),
-        _parse_balance_texts=lambda x: (None, None, ''))
-    with pytest.raises(UpstreamReplyError, match='需要补充信息'):
-        _run(fn('acc141', Page(), Context(), 'c1', 1800, duration=10, on_poll=lambda *a, **k: None))
+def test_missing_reference_without_attachments_is_not_answered_with_a():
+    err, typed = _stall_run([_poll(MISSING_REF, clarifying=True)] * 8, with_typed=True)
+    assert 'A' not in typed and len(typed) == 2
+    assert err.category in ('上游在等待回复', '需要补充信息')
 
 
-# ---------------------------------------------------------------- 兜底：认不出的追问
 UNKNOWN_Q = '生成の前に一つ教えてください：背景は夜と昼のどちらがよろしいでしょうか？'
 
 
-def _stall_run(polls, *, after=None, seconds=180):
+def _stall_run(polls, *, after=None, seconds=180, ratio=None, with_typed=False):
     """按 polls 依次返回；每次轮询时钟走 60 秒。polls 用完后连续抛网络错误让循环结束。"""
     clock = {'t': 1_000_000.0}
     typed = []
@@ -133,6 +115,9 @@ def _stall_run(polls, *, after=None, seconds=180):
     class Keyboard:
         async def type(self, text, delay=0): typed.append(text)
         async def press(self, key): pass
+
+    class Box:
+        async def click(self): pass
 
     class Context:
         async def cookies(self, *a): return []
@@ -146,7 +131,7 @@ def _stall_run(polls, *, after=None, seconds=180):
             if self.calls > len(polls):
                 raise ConnectionError('end of script')
             return polls[self.calls - 1]
-        async def query_selector(self, *a): raise AssertionError('must not answer an unknown question')
+        async def query_selector(self, *a): return Box()
         async def wait_for_timeout(self, *a): pass
 
     async def no_wait(*a): pass
@@ -162,9 +147,12 @@ def _stall_run(polls, *, after=None, seconds=180):
             DAILY_LIMIT_PATTERN=re.compile('x^'), FREE_LIMIT_REPLY=re.compile('x^'),
             _parse_balance_texts=lambda x: (None, None, ''))
         with pytest.raises(UpstreamReplyError) as exc:
-            _run(fn('acc1', Page(), Context(), 'c1', 7200, duration=10, on_poll=lambda *a, **k: None))
+            _run(fn('acc1', Page(), Context(), 'c1', 7200, duration=10, ratio=ratio,
+                    on_poll=lambda *a, **k: None))
     finally:
         config.STALL_REPLY_SECONDS = old
+    if with_typed:
+        return exc.value, typed
     assert not typed
     return exc.value
 
@@ -179,9 +167,11 @@ def _poll(text, *, finished=True, tools=(), any_tool=False, index='5', video_gen
             'videos': []}
 
 
-def test_unknown_question_ends_the_task_after_the_stall_window():
-    err = _stall_run([_poll(UNKNOWN_Q)] * 5)
-    assert err.category == '上游在等待回复' and '未扣点' in str(err) and UNKNOWN_Q in str(err)
+def test_unknown_question_gets_two_generic_replies_then_ends():
+    err, typed = _stall_run([_poll(UNKNOWN_Q)] * 8, ratio='16:9', with_typed=True)
+    replies = [t for t in typed if t not in ('Enter',)]
+    assert len(replies) == 2 and '16:9' in replies[0] and '10 秒' in replies[0] and '新的' in replies[1]
+    assert err.category == '上游在等待回复' and '已尝试 2 次' in str(err) and UNKNOWN_Q in str(err)
 
 
 @pytest.mark.parametrize('poll', [
@@ -195,10 +185,10 @@ def test_accepted_or_running_generations_are_never_treated_as_stalled(poll):
     assert err.category == '网络失败'                              # 只因脚本结束而停，不是判卡住
 
 
-def test_stall_window_restarts_when_dola_says_something_new():
+def test_each_new_question_gets_its_own_generic_reply():
     polls = [_poll(UNKNOWN_Q)] * 2 + [_poll('もう一つ質問です：音楽は必要ですか？', index='6')] * 2
-    err = _stall_run(polls)                                       # 每段都没满 3 分钟
-    assert err.category == '网络失败'
+    err, typed = _stall_run(polls, with_typed=True)
+    assert len(typed) == 2 and err.category == '网络失败'          # 两次都答了，脚本结束才停
 
 
 def test_stall_watchdog_can_be_disabled():
@@ -215,11 +205,18 @@ def test_accepted_message_without_eta_is_protected_by_has_video_gen():
     assert err.category == '网络失败'                 # 受理在前一条，最新一条是纯文字
 
 
-def test_clarifying_flag_ends_the_task_within_two_polls():
-    """e6e8 实测：追问消息 is_creation_clarifying=1，不必等 3 分钟。"""
-    clock_polls = [_poll(UNKNOWN_Q, clarifying=True)] * 3
-    err = _stall_run(clock_polls, seconds=180)
-    assert err.category == '上游在等待回复' and '无法代为回答' in str(err)
+def test_clarifying_flag_gets_generic_replies_then_ends():
+    """e6e8 / 15:51 实测：追问标记 is_creation_clarifying=1。先通用回复两次，仍在问才结束。"""
+    err, typed = _stall_run([_poll(UNKNOWN_Q, clarifying=True)] * 8, with_typed=True)
+    assert len(typed) == 2 and err.category == '上游在等待回复' and '已尝试 2 次' in str(err)
+
+
+def test_already_generated_reply_is_answered_as_a_new_request():
+    """2026-11-01 15:51 acc13：dola 记得同一提示词，说「この動画はすでに生成されています」。通用回复说明这是新请求。"""
+    done = 'この動画はすでに生成されています。追加の生成や調整が必要な場合はお知らせください。'
+    accepted = _poll('動画は5分以内に生成されます。', video_gen=True, index='8')
+    err, typed = _stall_run([_poll(done, clarifying=True)] * 2 + [accepted] * 3, ratio='16:9', with_typed=True)
+    assert len(typed) == 1 and '新的视频' in typed[0] and err.category == '网络失败'   # 答完开工，正常等出片
 
 
 def test_reuse_question_is_answered_with_a_when_we_uploaded_attachments():
