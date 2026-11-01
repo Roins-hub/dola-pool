@@ -1697,9 +1697,9 @@ async def _update_check_loop() -> None:
 
 
 async def _update_loop() -> None:
-    """有更新请求时：等生成中的任务和后台作业清空后放行更新程序；等太久就放弃。"""
+    """有更新请求时：等生成中的任务和后台作业清空后放行更新程序；等太久就放弃。每秒查一次，空闲后尽快开始。"""
     while True:
-        await asyncio.sleep(3)
+        await asyncio.sleep(1)
         try:
             if updater.current_request():
                 await asyncio.to_thread(updater.tick, await asyncio.to_thread(_update_busy))

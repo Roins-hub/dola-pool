@@ -508,6 +508,30 @@ input[type=checkbox]:active{transform:scale(.88)}
   /* 加载中的提示行 */
   .tab-loading{animation:breathe 1.6s ease-in-out infinite}
 }
+/* ---- 更新进度：等待任务时是右下角卡片，开始换版本后铺满整屏（服务会短暂中断） ---- */
+.upd-run{position:fixed;right:20px;bottom:20px;z-index:115;width:340px;max-width:calc(100vw - 32px)}
+.upd-run .ur-box{background:var(--surface);border-radius:12px;padding:18px 20px 16px;box-shadow:var(--float)}
+.upd-run.full{inset:0;right:0;bottom:0;width:auto;max-width:none;z-index:130;display:flex;align-items:center;justify-content:center;
+  background:var(--frame);padding:24px}
+.upd-run.full .ur-box{width:420px;max-width:100%;padding:28px 30px 24px}
+.upd-run h3{font-size:15px;font-weight:600;margin:0 0 14px}
+.upd-run.full h3{font-size:22px;letter-spacing:-.01em;margin-bottom:20px}
+.ur-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.ur-steps li{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--faint);transition:color var(--t-ui) ease}
+.ur-steps li::before{content:"";flex:none;width:14px;height:14px;border-radius:50%;border:2px solid var(--control);box-sizing:border-box;
+  transition:background-color var(--t-ui) ease,border-color var(--t-ui) ease}
+.ur-steps li.done{color:var(--muted)}
+.ur-steps li.done::before{background:var(--accent);border-color:var(--accent)}
+.ur-steps li.on{color:var(--text);font-weight:600}
+.ur-steps li.on::before{border-color:var(--accent);border-top-color:transparent;animation:spin .8s linear infinite}
+.ur-bar{height:3px;border-radius:2px;background:var(--raised);margin:16px 0 10px;overflow:hidden}
+.ur-bar i{display:block;height:100%;width:100%;background:var(--accent);transform-origin:left;transition:transform 600ms var(--ease-out)}
+.ur-msg{margin:0;font-size:12.5px;color:var(--muted);min-height:1.2em}
+.ur-time{margin:6px 0 0;font-size:12px;color:var(--faint)}
+@media (prefers-reduced-motion:no-preference){
+  .upd-run{animation:menuIn 320ms var(--ease-out) both}
+  .upd-run.full .ur-box{animation:boxIn 360ms var(--ease-out) both}
+}
 @keyframes navIn{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:none}}
 @keyframes dropIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
 @keyframes mainIn{from{opacity:0;transform:translateY(18px) scale(.992)}to{opacity:1;transform:none}}
@@ -1234,8 +1258,43 @@ function updateBadge(info){
 function reloadIfNewVersion(info){
   if(!info||!info.current)return;
   if(!PAGE_VERSION){PAGE_VERSION=info.current;return;}
-  if(info.current!==PAGE_VERSION&&!updateReloadAt){updateReloadAt=Date.now();setTimeout(()=>location.reload(),3000);}
+  if(info.current!==PAGE_VERSION)goNewVersion(info.current);
 }
+/** 服务器已经是新版本：给一句提示，马上刷新到新页面 */
+function goNewVersion(v){
+  if(updateReloadAt)return;
+  updateReloadAt=Date.now();
+  updRunShow(UPDATE_INFO,{reloading:v});
+  setTimeout(()=>location.reload(),350);
+}
+const UR_STEPS=['等待生成中的任务完成','下载并安装新版本','重启服务','打开新版本'];
+function urStep(state){
+  if(['started','backing_up','downloading','installing'].includes(state))return 1;
+  if(['restarting','verifying'].includes(state))return 2;
+  if(state==='done')return 3;
+  return 0;
+}
+/** 更新进度卡：等任务时在右下角；开始换版本（或服务暂时连不上）后铺满整屏 */
+function updRunShow(info,opt={}){
+  if(typeof document.createElement!=='function')return;
+  const req=(info&&info.request)||{},prog=(info&&info.progress)||{};
+  const state=prog.state||req.state||'';
+  const target=req.version||prog.to_version||opt.reloading||'';
+  const step=opt.reloading?3:opt.down?Math.max(2,urStep(state)):urStep(state);
+  let el=q('#updRun');
+  if(!el){el=document.createElement('div');el.id='updRun';el.className='upd-run';el.setAttribute('role','status');
+    el.setAttribute('aria-live','polite');document.body.append(el);}
+  el.classList.toggle('full',step>=1);
+  const since=req.requested_at?Math.max(0,Math.round(Date.now()/1000-req.requested_at)):0;
+  const mmss=Math.floor(since/60)+':'+String(since%60).padStart(2,'0');
+  const msg=opt.reloading?'新版本已就绪，正在打开…':opt.down?'服务重启中，几秒后自动打开新版本…':(prog.message||req.message||'');
+  el.innerHTML=`<div class="ur-box"><h3>正在更新到 <span translate="no">v${esc(target)}</span></h3>
+    <ol class="ur-steps">${UR_STEPS.map((t,i)=>`<li class="${i<step?'done':i===step?'on':''}">${t}</li>`).join('')}</ol>
+    <div class="ur-bar"><i style="transform:scaleX(${Math.min(1,(step+.5)/UR_STEPS.length)})"></i></div>
+    <p class="ur-msg" translate="no">${esc(msg)}</p>
+    ${since?`<p class="ur-time">已用 <span translate="no">${mmss}</span></p>`:''}</div>`;
+}
+function updRunHide(){const el=q('#updRun');if(el&&el.remove)el.remove();}
 async function checkUpdateBadge(){
   try{UPDATE_INFO=await api('/api/admin/update');updateBadge(UPDATE_INFO);reloadIfNewVersion(UPDATE_INFO);
     if(UPDATE_INFO.request&&!updatePollTimer)watchUpdate();
@@ -1336,30 +1395,42 @@ async function checkUpdateNow(){
 }
 async function startUpdate(version){
   if(!await confirm(dialogText`更新到 v${version}？会暂停派新单，等正在生成的任务完成后重启服务，失败自动回滚。`))return;
-  try{UPDATE_INFO=await api('/api/admin/update',{method:'POST',body:{version}});renderUpdate(UPDATE_INFO);watchUpdate();}
+  try{UPDATE_INFO=await api('/api/admin/update',{method:'POST',body:{version}});renderUpdate(UPDATE_INFO);hide('dlg');watchUpdate();}
   catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);}
 }
 async function cancelUpdate(){
   if(!await confirm('取消这次更新？'))return;
-  try{UPDATE_INFO=await api('/api/admin/update/cancel',{method:'POST'});renderUpdate(UPDATE_INFO);}
+  try{UPDATE_INFO=await api('/api/admin/update/cancel',{method:'POST'});renderUpdate(UPDATE_INFO);updRunHide();}
   catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);}
 }
 /** 关掉对话框不停止盯更新进度：更新完成后仍要自动刷新页面 */
 function closeUpdate(){hide('dlg');}
-/** 更新进行中每 3 秒刷新进度；服务重启的那几秒请求会失败，忽略；版本号变了就自动刷新页面。 */
+/** 更新进行中约每 1.2 秒刷新进度；服务重启时接口连不上，就每秒直接问 /health 的版本号；版本一变立刻刷新页面。 */
 function watchUpdate(){
-  clearInterval(updatePollTimer);
+  clearTimeout(updatePollTimer);
   if(!UPDATE_INFO||!UPDATE_INFO.request)return;
   if(!PAGE_VERSION)PAGE_VERSION=UPDATE_INFO.current;
-  updatePollTimer=setInterval(async()=>{
-    let info;
+  updRunShow(UPDATE_INFO);
+  const tick=async()=>{
+    let info=null;
     try{info=await api('/api/admin/update');}
-    catch(e){const box=q('#dlgBox');if(box&&e.message!=='unauthorized'&&!q('#updRestart'))box.insertAdjacentHTML('beforeend','<p class="hint" id="updRestart">服务重启中…</p>');return;}
+    catch(e){if(e.message==='unauthorized'){updRunHide();return;}}
+    if(!info){
+      updRunShow(UPDATE_INFO,{down:true});
+      try{
+        const r=await fetch('/health',{cache:'no-store'});
+        if(r.ok){const h=await r.json();if(h&&h.version&&h.version!==PAGE_VERSION){goNewVersion(h.version);return;}}
+      }catch(e){}
+      updatePollTimer=setTimeout(tick,1000);return;
+    }
     UPDATE_INFO=info;updateBadge(info);
     if(q('#dlg').style.display!=='none'&&q('#dlgBox').querySelector('[data-dlg="update"]'))renderUpdate(info);
-    reloadIfNewVersion(info);
-    if(!info.request){clearInterval(updatePollTimer);updatePollTimer=null;}
-  },3000);
+    if(info.current&&PAGE_VERSION&&info.current!==PAGE_VERSION){goNewVersion(info.current);return;}
+    if(!info.request){updRunHide();updatePollTimer=null;return;}   // 结束但版本没变：失败 / 回滚 / 取消，结果在版本对话框里
+    updRunShow(info);
+    updatePollTimer=setTimeout(tick,1200);
+  };
+  updatePollTimer=setTimeout(tick,800);
 }
 
 /* ---- 视频超分：fal（字节超分）或自建开源模型；在任务列表 / 视频管理里对已完成的视频发起 ---- */
