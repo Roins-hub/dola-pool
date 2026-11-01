@@ -595,6 +595,7 @@ input[type=checkbox]:active{transform:scale(.88)}
 .empty{padding:28px 4px;text-align:left;color:var(--muted)}
 .video-wrap{display:flex;gap:8px;align-items:center}
 .upscale-cell{margin-top:6px}
+.up-dim{color:var(--accent);margin-top:2px;white-space:nowrap}
 .upd-notes{max-height:42vh;overflow:auto;overflow-wrap:anywhere;background:var(--raised);border-radius:8px;padding:14px 16px;font-size:13px;line-height:1.7;color:var(--text)}
 .upd-notes h4{font-size:13.5px;font-weight:600;margin:14px 0 6px}
 .upd-notes h4:first-child,.upd-notes .upd-h1{margin-top:0}
@@ -1575,6 +1576,20 @@ async function saveUpscaleSettings(){
 }
 
 /** 任务 / 视频行里的超分状态与按钮（只对已完成、视频还在的任务显示） */
+/** 超分完成的视频：按档位短边（1080p / 2K / 4K = 1080 / 1440 / 2160）和原片比例算出成片尺寸 */
+const UPSCALE_SHORT={'1080p':1080,'2k':1440,'4k':2160};
+function upscaleDims(v){
+  const short=UPSCALE_SHORT[String(v.upscale_target||'').toLowerCase()];
+  const w=Number(v.video_width),h=Number(v.video_height);
+  if(!short||!w||!h)return '';
+  const k=short/Math.min(w,h),even=x=>Math.round(x*k/2)*2;
+  return even(w)+'×'+even(h);
+}
+function upscaleDimLine(v){
+  if(v.upscale_status!=='completed'||!v.upscale_target)return '';
+  const d=upscaleDims(v);
+  return '<div class="tiny up-dim" translate="no">'+esc(String(v.upscale_target).toUpperCase())+(d?' · '+d:'')+'</div>';
+}
 function upscaleCell(t){
   if(t.status!=='completed'||!t.video_url)return '';
   const st=t.upscale_status||'';
@@ -3583,8 +3598,8 @@ async function loadVideos(){
   const rows=(r.videos||[]).map(v=>{
     const size=fmtSize(v.video_size||v.file_size);
     const dur=fmtDur(v.video_duration||v.duration);
-    const dim=(v.video_width&&v.video_height)?v.video_width+'×'+v.video_height
-      :(v.ratio&&v.ratio!=='default'?v.ratio:'-');
+    const dim=((v.video_width&&v.video_height)?v.video_width+'×'+v.video_height
+      :(v.ratio&&v.ratio!=='default'?v.ratio:'-'))+upscaleDimLine(v);
     const state=v.video_url
       ?(v.file_exists===false?'<span class="badge b-orange">文件缺失</span>':'<span class="badge b-green">正常</span>')
       :'<span class="badge b-gray">文件已删</span>';
