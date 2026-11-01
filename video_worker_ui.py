@@ -830,7 +830,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                     emit_feedback(on_poll, progress=f"dola 问是否使用刚上传的 {poll.get('userAttachments')} 张参考图，"
                                                     "已回复「A」（使用），等待出片")
                     continue
-            # 提示词和比例参数不一致时 dola 会问「用哪个比例（A/B/C）」：按提示词写明的比例答，没写才用参数
+            # 提示词和比例参数不一致时 dola 会问「用哪个比例（A/B/C）」：按请求参数答（客户端参数为准）
             from upstream_reply import ratio_choice_reply
             pick = ratio_choice_reply("\n".join(texts), prompt, ratio)
             if pick:

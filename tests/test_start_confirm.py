@@ -268,12 +268,12 @@ RATIO_Q = ('この動画生成リクエストには複数のアスペクト比�
 PROMPT_916 = '8K写实古风写真，9:16竖幅，蝶梦主题。女子穿淡粉青纱唐风齐胸襦裙'
 
 
-def test_ratio_question_follows_the_prompt_then_the_parameter():
-    """2026-11-01：参数 16:9、提示词 9:16。同一请求另一条直接出了 720x1280，所以按提示词答。"""
+def test_ratio_question_follows_the_client_parameter():
+    """2026-11-01：参数 16:9、提示词 9:16。以客户端参数为准；参数没给有效比例才看提示词。"""
     from upstream_reply import ratio_choice_reply, prompt_ratio
-    assert ratio_choice_reply(RATIO_Q, PROMPT_916, '16:9') == 'A. 9:16'
-    assert ratio_choice_reply(RATIO_Q, '海边日落', '16:9') == 'B. 16:9'          # 提示词没写比例
-    assert ratio_choice_reply(RATIO_Q, '先 16:9 再 9:16', '9:16') == 'A. 9:16'   # 写了两个，用参数
+    assert ratio_choice_reply(RATIO_Q, PROMPT_916, '16:9') == 'B. 16:9'
+    assert ratio_choice_reply(RATIO_Q, PROMPT_916, None) == 'A. 9:16'           # 没有参数：用提示词
+    assert ratio_choice_reply(RATIO_Q, PROMPT_916, 'default') == 'A. 9:16'
     assert ratio_choice_reply(RATIO_Q, '海边日落', None) is None                  # 无从判断：不乱答
     assert ratio_choice_reply(RATIO_Q, '1:1 方图', '1:1') is None                 # 选项里没有：不答
     assert ratio_choice_reply('動画が生成されました。', PROMPT_916, '16:9') is None
@@ -318,4 +318,17 @@ def test_browser_poll_answers_the_ratio_question_and_keeps_waiting():
     with pytest.raises(UpstreamReplyError, match='网络失败'):       # 答完后正常等出片，直到脚本结束
         _run(fn('acc13', Page(), Context(), 'c1', 1800, duration=10, ratio='16:9', prompt=PROMPT_916,
                 on_poll=lambda *a, **k: None))
-    assert typed == ['A. 9:16', 'Enter']
+    assert typed == ['B. 16:9', 'Enter']
+
+
+def test_ratio_note_makes_the_parameter_win_only_on_conflict():
+    """提示词写的比例和参数冲突时，在发给 dola 的文字末尾注明以参数为准；客户原文不改。"""
+    from prompt_context import ratio_note, dispatch_prompt
+    note = ratio_note(PROMPT_916, '16:9')
+    assert note == '【画面比例】以 16:9（横幅）为准，忽略上文中的其他比例描述。'
+    assert ratio_note('竖屏人像', '16:9') and ratio_note('9:16 竖屏', '9:16') == ''
+    assert ratio_note('海边日落', '16:9') == '' and ratio_note('16:9 横幅海景', '16:9') == ''
+    assert ratio_note(PROMPT_916, None) == '' and ratio_note(PROMPT_916, 'default') == ''
+    sent = dispatch_prompt(PROMPT_916, '素材说明', '16:9')
+    assert sent.startswith('素材说明\n\n' + PROMPT_916) and sent.endswith(note)
+    assert dispatch_prompt('海边日落', '', '16:9') == '海边日落'

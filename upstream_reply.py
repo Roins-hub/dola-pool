@@ -176,8 +176,8 @@ def reference_reuse_reply(text, attachments):
 
 
 # 2026-11-01 线上：参数 16:9、提示词写「9:16竖幅」，dola 问「この動画生成リクエストには複数のアスペクト比が
-# 記載されています。どちらで生成しますか？ A. 9:16 縦幅 B. 16:9 横幅 C. その他」。同一请求另一条直接按 9:16 出片，
-# 所以按提示词里写明的比例回答（提示词没写或写了几个不同的，才用请求参数）。
+# 記載されています。どちらで生成しますか？ A. 9:16 縦幅 B. 16:9 横幅 C. その他」。
+# 以客户端参数为准：按请求参数回答；参数没给有效比例时才看提示词写明的比例。
 _KNOWN_RATIOS = {'16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21', '3:2', '2:3'}
 _RATIO_IN_TEXT = re.compile(r'(?<![\d.])(\d{1,2})\s*[:：比]\s*(\d{1,2})(?![\d.])')
 _RATIO_OPTION = re.compile(r'(?<![A-Za-z])([A-D])\s*[.．、)）]\s*(\d{1,2})\s*[:：]\s*(\d{1,2})')
@@ -197,17 +197,15 @@ def prompt_ratio(prompt):
 
 
 def ratio_choice_reply(text, prompt=None, ratio=None):
-    """dola 列出 A/B/C 比例选项问用哪个 → 回提示词写明的比例（否则用请求参数）对应的选项；对不上就 None。"""
+    """dola 列出 A/B/C 比例选项问用哪个 → 回请求参数的比例（参数无效才用提示词写明的）对应的选项；对不上就 None。"""
     if not text or reply_failure(text):
         return None
     clean = text.replace('**', '')
     options = [(m.group(1).upper(), f'{int(m.group(2))}:{int(m.group(3))}') for m in _RATIO_OPTION.finditer(clean)]
     if len(options) < 2 or not _RATIO_ASK.search(clean):
         return None
-    want = prompt_ratio(prompt)
-    if not want and ratio:
-        r = str(ratio).replace('：', ':').strip()
-        want = r if r in _KNOWN_RATIOS else None
+    r = str(ratio or '').replace('：', ':').strip()
+    want = r if r in _KNOWN_RATIOS else prompt_ratio(prompt)     # 客户端参数说了算；没给有效比例才看提示词
     for letter, value in options:
         if value == want:
             return f'{letter}. {value}'

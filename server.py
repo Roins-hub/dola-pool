@@ -40,7 +40,7 @@ import sites
 import updater
 import upscale
 import video_link
-from prompt_context import reference_supplement, submission_prompt
+from prompt_context import dispatch_prompt, reference_supplement
 from add_account import add_account_flow
 from cookie_login import import_cookie_account, import_cookie_accounts_from_text
 from cookie_export import CookieExportError, build_export
@@ -863,7 +863,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         try:
             async with timeout_scope:
                 result = await pool.generate_video(
-                    submission_prompt(prompt, (store.get(task_id) or {}).get("prompt_supplement") or ""),
+                    dispatch_prompt(prompt, (store.get(task_id) or {}).get("prompt_supplement") or "", ratio),
                     ratio, duration, model,
                     on_conversation_id=on_conversation_id, on_poll=on_poll,
                     reference_image_paths=reference_paths,
@@ -1547,7 +1547,7 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
         supplement = reference_supplement(reference_source, bool(reference_images))
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    if len(submission_prompt(prompt or "", supplement)) > config.MAX_PROMPT_CHARS:
+    if len(dispatch_prompt(prompt or "", supplement, ratio)) > config.MAX_PROMPT_CHARS:
         raise HTTPException(422, f"提交提示词（含素材来源说明）超过 {config.MAX_PROMPT_CHARS} 字符上限")
     if sites.is_doubao_model(model):
         resolved = _check_doubao_model(model, duration)
