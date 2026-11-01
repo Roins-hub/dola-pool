@@ -2675,16 +2675,30 @@ function buildRecord(f){
   return {name:name||null,email,password,totp};
 }
 
+/** 自动命名：从已有 accN（含加号中 / 加号失败的记录）的最大编号往后取，跳过已被占用的名字。
+ *  以前用「账号总数 + 1」，号名不连续时（acc13、acc150…）会撞上已有的号，那几条被静默跳过。 */
+function takenAccNames(){
+  const taken=new Set((typeof allAccountNames!=='undefined'&&allAccountNames)||[]);
+  try{(allAccounts||[]).forEach(a=>taken.add(a.name||a));}catch(e){}
+  try{Object.keys((accountSnapshot&&accountSnapshot.j&&accountSnapshot.j.jobs)||{}).forEach(n=>taken.add(n));}catch(e){}
+  return taken;
+}
+function nextFreeAccName(taken){
+  let n=0;
+  taken.forEach(x=>{const m=/^acc(\d+)$/i.exec(String(x));if(m)n=Math.max(n,Number(m[1]));});
+  do{n++;}while(taken.has('acc'+n));
+  return 'acc'+n;
+}
 function parseBatchInput(text){
   const out=[];
-  let autoN=allAccounts.length;   // 分页后可见行数恒为 30，必须用账号总数
+  const taken=takenAccNames();
   // 统一全角分隔符
   text=String(text||'').replace(/[，；｜]/g,c=>({'，':',','；':';','｜':'|'}[c]));
   // 先按换行/分号/逗号切成块
   const blocks=text.split(/[\n;,]/).map(s=>s.trim()).filter(Boolean);
   const pushRec=(f)=>{
     const rec=buildRecord(f);
-    if(rec){ if(!rec.name) rec.name='acc'+(++autoN); out.push(rec); }
+    if(rec){ if(!rec.name){ rec.name=nextFreeAccName(taken); } taken.add(rec.name); out.push(rec); }
   };
   for(const block of blocks){
     // 1) 字段用 --- 分隔：邮箱---密码 / 账号名---邮箱---密码---TOTP
@@ -2778,8 +2792,7 @@ async function submitBatchAdd(){
 
 let addMode='google';
 function nextAccName(){
-  let def='acc2';try{def='acc'+(allAccounts.length+1);}catch(e){}
-  return def;
+  try{return nextFreeAccName(takenAccNames());}catch(e){return 'acc1';}
 }
 function addModeSwitch(){
   return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
