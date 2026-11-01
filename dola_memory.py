@@ -18,5 +18,7 @@ def memory_outcome(res: dict, want: bool = False) -> tuple[bool, str]:
     on = value is True or value in (1, "1", "true", "on")
     if on == want:
         return True, "记忆已关闭" if not want else "记忆已开启"
+    if upd and (body.get("data") or {}).get("res") is True:
+        return False, f"Dola 回复成功，但回读仍是{'开启' if on else '关闭'}（未生效）"
     return False, f"回读仍是{'开启' if on else '关闭'}（switch_status={value!r}）"
 

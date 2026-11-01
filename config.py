@@ -82,7 +82,9 @@ HIGH_BITRATE_ATTEMPTS = max(1, int(os.getenv("DOLA_HIGH_BITRATE_ATTEMPTS", "3"))
 STALL_REPLY_SECONDS = int(os.getenv("DOLA_STALL_REPLY_SECONDS", "180"))
 
 # 新号加号成功后自动关闭 dola「记忆」：记忆开着时，同号收到做过的提示词会回「この動画はすでに生成されています」不再生成。
-AUTO_MEMORY_OFF = os.getenv("DOLA_AUTO_MEMORY_OFF", "1") == "1"
+# 默认关：2026-11-01 实测 acc20 / acc148 无论接口调用还是在设置页点开关，Dola 都回成功，但刷新后仍是开启，
+# 自动执行只会让每个新号白开一次浏览器。确认能关掉后再改回 1。
+AUTO_MEMORY_OFF = os.getenv("DOLA_AUTO_MEMORY_OFF", "0") == "1"
 
 # SQLite 任务库
 DB_PATH = os.getenv("DOLA_DB_PATH", "tasks.db")

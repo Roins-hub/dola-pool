@@ -10,7 +10,7 @@
   3. 都不行才结束任务（此时尚未开始生成，不扣点），报错里写明已尝试几次、最后一次回复了什么。我们回话后 dola 一直不吭声的，也不再空等到出片超时。
   「需要补充信息」类回复同样先走通用回复。已有的专门规则（开始确认、比例追问、用上一轮的图回 A）照旧优先。
 - 参考图上传失败大幅减少：浏览器上传参考图时，字节图片上传服务器（`*.bytevcloudapi.com`、`*.vodupload.com`）改由服务器直连，打开 Dola、提交生成、查结果等其余流量仍走账号自己的代理。2026-10-29～11-01 共 77 次上传失败，74 次是浏览器经代理访问 `imagex-ap-southeast-1.bytevcloudapi.com`（ApplyImageUpload 64 次、Commit 10 次）报 `net::ERR_FAILED`，4 条代理都约一半失败；同代理 curl 10/10 成功、服务器直连 10/10（0.3 秒）。上传凭签名鉴权、不认 IP，纯协议路径早已用直连兜底（`DOLA_REFERENCE_UPLOAD_DIRECT_FALLBACK`）。直连上传仍失败时直接换号重试，不再把该号的代理线路暂停 30～300 秒。`DOLA_UPLOAD_PROXY_BYPASS` 可改绕过的域名，设为空恢复全部走代理。CloakBrowser 运行时不受影响。
-- 关闭 dola「记忆」：记忆开着时，同一个号收到做过的提示词会在新会话里回「この動画はすでに生成されています」不再生成。账号管理新增「关闭记忆」（勾选的号，不勾选则全部），逐个在账号自己的 Dola 页面里调用 `/alice/bot/update_bot`（`bot_memory_switch_status=false`，2026-11-01 网页抓包得到）并用 `/alice/bot/get_bot_list_v2` 回读确认；正在出片的号跳过。新号加号成功后自动关闭（`DOLA_AUTO_MEMORY_OFF=1`，默认开）。豆包号与纯协议 Cookie 号不适用。
+- 关闭 dola「记忆」：记忆开着时，同一个号收到做过的提示词会在新会话里回「この動画はすでに生成されています」不再生成。账号管理新增「关闭记忆」（勾选的号，不勾选则全部），逐个在账号自己的 Dola 页面里调用 `/alice/bot/update_bot`（`bot_memory_switch_status=false`，2026-11-01 网页抓包得到）并用 `/alice/bot/get_bot_list_v2` 回读确认；正在出片的号跳过。新号加号成功后自动关闭可用 `DOLA_AUTO_MEMORY_OFF=1` 开启，默认关：2026-11-01 实测 acc20、acc148 无论接口调用还是在设置页点开关，Dola 都回成功、刷新后仍是开启，结果按回读如实显示「未生效」。豆包号与纯协议 Cookie 号不适用。
 
 ### 管理面板
 

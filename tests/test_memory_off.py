@@ -32,6 +32,12 @@ def test_memory_outcome(res, ok):
     assert memory_outcome(res, want=False)[0] is ok
 
 
+def test_memory_outcome_names_silent_ignore():
+    # 2026-11-01 acc20 / acc148：update_bot 回 res=true，回读仍是开启
+    ok, msg = memory_outcome(_res(True), want=False)
+    assert not ok and "未生效" in msg
+
+
 def test_batch_memory_off_runs_each_account(tmp_path, monkeypatch):
     import server
     _, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a", "acc2": "b"})
