@@ -758,7 +758,6 @@ input[type=checkbox]:active{transform:scale(.88)}
           </select>
           <button class="btn btn-danger" id="btnDelSel" onclick="deleteSelectedAccounts()" disabled>删除选中</button>
           <button class="btn" id="btnVerifySel" onclick="batchVerifySelected()" disabled>一键验证</button>
-          <button class="btn" id="btnMemorySel" onclick="batchMemoryOffSelected()" title="关闭所选账号在 Dola 的「记忆」：开着时同号收到做过的提示词会说「已经生成过了」不再生成">关闭记忆</button>
           <button class="btn" id="btnProbeHello" onclick="batchProbeHello()" title="按账号模式探测：Cloak 使用独立浏览器，超时未确认不判风控；不勾选则探测当前筛选账号">你好探测</button>
           <button class="btn" id="btnProbeIps_accounts" onclick="batchProbeIps('accounts')" title="探测勾选账号；未勾选时探测当前筛选结果，忙碌账号跳过">一键探测出口 IP</button>
           <button class="btn" id="btnBatchRecover" onclick="batchRecover()" title="批量把选中的号从【风控】/【异常】组放出来（风控恢复后回到【待激活】，建议接着探测一次）">批量恢复</button>
@@ -2285,8 +2284,6 @@ function updateSelButtons(){
   if(del){del.disabled=n===0;del.textContent=n?`删除选中（${n}）`:'删除选中';}
   const verifyBtn=q('#btnVerifySel');
   if(verifyBtn){verifyBtn.disabled=n===0;verifyBtn.textContent=n?`一键验证（${n}）`:'一键验证';}
-  const memBtn=q('#btnMemorySel');
-  if(memBtn&&memBtn.textContent!==undefined)memBtn.textContent=n?`关闭记忆（${n}）`:'关闭记忆（全部）';
   const proxyBtn=q('#btnProxySel');
   if(proxyBtn){proxyBtn.disabled=n===0;proxyBtn.textContent=n?`更改代理（${n}）`:'更改代理';}
   const exportBtn=q('#btnExportCookies');
@@ -2318,31 +2315,13 @@ async function batchVerifySelected(){
   batchPollTimer=setInterval(()=>pollBatch(r.job_id),2000);
 }
 
-/** 关闭 Dola 记忆：勾选了就处理勾选的，没勾选就处理全部 Dola 号 */
-async function batchMemoryOffSelected(){
-  const list=selAccounts.size?[...selAccounts]:allAccountNames.slice();
-  if(!list.length)return alert('没有账号');
-  if(!await confirm(dialogText`关闭 ${list.length} 个账号在 Dola 的「记忆」？
-会逐个打开账号网页修改设置并回读确认（每号约 15-30 秒），正在出片的号会跳过、稍后可再试。`))return;
-  let r;
-  try{r=await api('/api/admin/accounts/batch-memory-off',{method:'POST',body:{names:list}});}
-  catch(e){return alert(dialogText`${e.message}`);}
-  stopBatchPoll();
-  showDlg(`<h2>关闭记忆（${list.length} 个账号）</h2>
-    <div id="batchProg" class="tiny" style="margin:8px 0;white-space:pre-wrap"></div>
-    <div id="batchOut" class="tiny log-pane"></div>
-    <div class="row"><button class="btn" onclick="hide('dlg');stopBatchPoll();refresh()">关闭</button></div>`);
-  pollBatch(r.job_id);
-  batchPollTimer=setInterval(()=>pollBatch(r.job_id),2000);
-}
 async function pollBatch(jobId){
   let j;
   try{j=await api('/api/admin/batch/'+jobId);}catch(e){stopBatchPoll();return;}
   const prog=q('#batchProg'),out=q('#batchOut');
   if(!prog||!out)return;
   const pct=j.total?Math.round((j.done/j.total)*100):0;
-  const [okWord,badWord]=j.kind==='memory'?['已关闭','失败']:['有效','失效'];
-  prog.textContent=`进度 ${j.done}/${j.total}（${pct}%）  ${okWord} ${j.ok_count||0}  ${badWord} ${j.failed_count||0}`
+  prog.textContent=`进度 ${j.done}/${j.total}（${pct}%）  有效 ${j.ok_count||0}  失效 ${j.failed_count||0}`
     +(j.current?`\n当前：${j.current}`:'')+(j.status==='completed'?'\n已完成 ✓':'');
   out.textContent=(j.results||[]).slice().reverse()
     .map(x=>`${x.ok===true?'✓':(x.ok===false?'✗':'–')} ${x.name}  ${x.message||''}`).join('\n');

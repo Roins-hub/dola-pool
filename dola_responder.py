@@ -43,10 +43,24 @@ def _spec(ratio, duration, attachments) -> str:
     return "，".join(parts)
 
 
-def generic_reply(ratio=None, duration=None, attachments=0, round_no=0) -> str:
+# dola 跨会话记忆认出同号做过同一提示词时的说法（2026-11-01：「この動画はすでに生成されています」）。
+# 网页版的记忆开关回成功却存不住（acc20 / acc148 / 客户自己的号刷新后都是オン），只能在回复里说明。
+_ALREADY = re.compile(r'(すでに|既に|もう)\s*(生成|作成)|(生成|作成)済み|已经?(生成|做)(过|好)|生成过|'
+                      r'already\s+(been\s+)?(generated|created|made)', re.I)
+
+
+def says_already_generated(text: str) -> bool:
+    return bool(_ALREADY.search(text or ''))
+
+
+def generic_reply(ratio=None, duration=None, attachments=0, round_no=0, dola_text=None) -> str:
     """第 round_no 次通用回复（0 起）。第二次措辞更直接，避免 dola 把两次当成同一句。"""
     spec = _spec(ratio, duration, attachments)
-    if round_no == 0:
+    if says_already_generated(dola_text):
+        text = ("这是一条新的生成请求，和之前生成过的视频无关，请不要沿用之前的结果，现在重新生成一条新的视频：按上面的提示词"
+                if round_no == 0 else
+                "请再生成一次：之前那条不算，这次需要一条全新的视频，直接开始生成，不要再提问：按上面的提示词")
+    elif round_no == 0:
         text = "请直接生成一条新的视频，不需要再确认或询问：按我上面的提示词"
     else:
         text = "这是一条新的生成请求（与之前的任何视频无关），请现在就开始生成，不要再提问：按上面的提示词"

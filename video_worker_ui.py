@@ -30,7 +30,7 @@ import proxy_store
 from browser import cookie_value, launch_account_context
 from browser_feedback import BrowserReplies, emit as emit_feedback
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
-from video_worker import MEMORY_JS, POLL_JS, RiskControlError, _download, extract_unwatermarked_url
+from video_worker import POLL_JS, RiskControlError, _download, extract_unwatermarked_url
 
 # Dola 返回的每日上限文案（当前日文 UI 实测：動画生成の 1 日あたりの上限に達しました。）
 DAILY_LIMIT_PATTERN = re.compile(
@@ -915,11 +915,15 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             stall_hits += 1
             # dola 在等答话：带追问标记连续两轮，或没标记但说完后 45 秒不动。不再逐句识别话术——
             # 先发通用回复（重申参数、说明是新请求，最多 2 次），仍不动再交给 AI 代答（若已配置），都不行才结束。
-            asking = (latest.get("clarifying") and stall_hits >= 2) or now - stall_since >= 45
+            # 「已经生成过了」（dola 跨会话记忆）不会自己开工，认出来就直接回，不必等 45 秒
+            asking = ((latest.get("clarifying") and stall_hits >= 2) or now - stall_since >= 45
+                      or (dola_responder.says_already_generated(latest_text)
+                          and latest.get("index") not in answered))
             if asking:
                 reply, how = None, ""
                 if nudges < dola_responder.GENERIC_LIMIT:
-                    reply, how = dola_responder.generic_reply(ratio, duration, poll.get("userAttachments"), nudges), "通用回复"
+                    reply, how = dola_responder.generic_reply(ratio, duration, poll.get("userAttachments"), nudges,
+                                                              latest_text), "通用回复"
                     nudges += 1
                 elif not ai_tried and dola_responder.enabled():
                     ai_tried = True
@@ -1243,24 +1247,3 @@ if __name__ == "__main__":
     except Exception:
         import traceback
         traceback.print_exc()
-
-
-async def set_dola_memory(account: str, on: bool = False) -> dict:
-    """在账号自己的 Dola 页面里改「记忆」开关并回读确认。返回 {ok, message, before, after}。"""
-    async with async_playwright() as p:
-        context = await launch_account_context(p, account)
-        try:
-            page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
-            await page.wait_for_timeout(5000)
-            raise_if_region_restricted(page, account)
-            if await is_logged_out(page):
-                raise LoginExpiredError(f"{account} 登录态失效，无法修改记忆设置")
-            ms_token = cookie_value(await context.cookies(), "msToken")
-            res = await asyncio.wait_for(page.evaluate(MEMORY_JS, {"msToken": ms_token, "status": bool(on)}), timeout=45)
-        finally:
-            await context.close()
-    from dola_memory import memory_outcome
-    ok, message = memory_outcome(res, want=bool(on))
-    print(f"[{account}] 记忆开关 → {'开' if on else '关'}：{message}", flush=True)
-    return {"ok": ok, "message": message, "before": (res or {}).get("before"), "after": (res or {}).get("after")}

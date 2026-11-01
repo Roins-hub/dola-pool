@@ -25,6 +25,32 @@ def test_generic_reply_restates_parameters_and_says_new():
     assert r.generic_reply(None, None, 0, 0).endswith('提示词。')
 
 
+ALREADY = 'この動画はすでに生成されています。別の内容で作成しますか？'   # 2026-11-01 15:51 原话
+
+
+@pytest.mark.parametrize('text,hit', [
+    (ALREADY, True), ('既に作成済みです', True), ('这个视频已经生成过了', True),
+    ('This video has already been generated.', True),
+    (UNKNOWN_Q, False), ('動画を生成しています', False), ('', False), (None, False),
+])
+def test_says_already_generated(text, hit):
+    assert r.says_already_generated(text) is hit
+
+
+def test_already_generated_gets_a_new_request_reply():
+    first = r.generic_reply('16:9', 10, 0, 0, ALREADY)
+    second = r.generic_reply('16:9', 10, 0, 1, ALREADY)
+    assert '和之前生成过的视频无关' in first and '重新生成' in first and '16:9' in first
+    assert '全新的视频' in second and second != first
+    assert '无关' not in r.generic_reply('16:9', 10, 0, 0, UNKNOWN_Q)
+
+
+def test_poll_answers_already_generated_with_the_new_request_wording():
+    err, typed = _stall_run([_poll(ALREADY)] * 8, ratio='16:9', with_typed=True)
+    replies = [t for t in typed if t != 'Enter']
+    assert replies and '和之前生成过的视频无关' in replies[0]
+
+
 @pytest.mark.parametrize('reply,ok', [
     ('B. 16:9，请直接生成 10 秒视频', True),
     ('好的，改成 9:16 竖幅', False),        # 改了比例

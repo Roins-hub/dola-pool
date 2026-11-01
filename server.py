@@ -2813,71 +2813,6 @@ async def _run_batch_verify_job(job_id: str, names: list[str]) -> None:
         job["finished_at"] = time.time()
 
 
-@app.post("/api/admin/accounts/batch-memory-off")
-async def admin_batch_memory_off(body: BatchAccountsBody, x_admin_key: str | None = Header(default=None)):
-    """一键关闭记忆：逐个在账号自己的 Dola 页面里关掉「记忆」并回读确认（后台任务，面板轮询进度）。"""
-    _admin_auth(x_admin_key)
-    names = _clean_batch_names(body.names)
-    if not names:
-        raise HTTPException(400, "请先勾选账号")
-    if any(job.get("status") == "running" for job in BATCH_JOBS.values()):
-        raise HTTPException(409, "已有批量任务在进行中，请等待完成")
-    job_id = "batch_" + uuid.uuid4().hex[:12]
-    BATCH_JOBS[job_id] = {"kind": "memory", "status": "running", "total": len(names), "done": 0,
-                          "ok_count": 0, "failed_count": 0, "results": [], "current": "",
-                          "started_at": time.time(), "finished_at": None, "error": ""}
-    asyncio.create_task(_run_batch_memory_job(job_id, names))
-    return {"ok": True, "job_id": job_id, "total": len(names), "names": names}
-
-
-async def _run_batch_memory_job(job_id: str, names: list[str]) -> None:
-    job = BATCH_JOBS[job_id]
-    try:
-        async with BATCH_VERIFY_SEM:
-            for name in names:
-                job["current"] = name
-                item = {"name": name, "ok": None, "message": ""}
-                try:
-                    if name not in pool.accounts:
-                        item["message"] = "账号不存在"
-                    else:
-                        result = await pool.set_memory_off(name)
-                        item["ok"] = bool(result.get("ok"))
-                        item["message"] = result.get("message") or ("已关闭" if item["ok"] else "失败")
-                except Exception as exc:  # noqa: BLE001
-                    item["ok"] = False
-                    item["message"] = str(exc)[:200] or "失败"
-                job["results"].append(item)
-                job["done"] = len(job["results"])
-                job["ok_count"] = sum(1 for r in job["results"] if r["ok"])
-                job["failed_count"] = sum(1 for r in job["results"] if r["ok"] is False)
-        job["status"] = "completed"
-    except Exception as exc:  # noqa: BLE001
-        job["status"] = "failed"
-        job["error"] = str(exc)[:300]
-    finally:
-        job["current"] = ""
-        job["finished_at"] = time.time()
-
-
-async def _auto_memory_off(name: str) -> None:
-    """新号加号成功后关掉 dola 记忆（失败只记日志，不影响加号结果）。"""
-    if not config.AUTO_MEMORY_OFF:
-        return
-    await asyncio.sleep(5)
-    for _ in range(3):
-        try:
-            result = await pool.set_memory_off(name)
-            print(f"[memory] {name} 加号后关闭记忆：{result.get('message')}", flush=True)
-            return
-        except RuntimeError as exc:                     # 号忙：稍后再试
-            print(f"[memory] {name} 暂不能关闭记忆：{exc}", flush=True)
-            await asyncio.sleep(60)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[memory] {name} 关闭记忆失败：{exc}", flush=True)
-            return
-
-
 async def _run_batch_probe_job(job_id: str, names: list[str]) -> None:
     """批量「你好」探测：并发受 BATCH_PROBE_SEM 限制，进度写回 BATCH_JOBS 供面板轮询。
 
@@ -3709,7 +3644,6 @@ async def _run_add_job(name: str, email: str, password: str, totp: str,
                 pool.set_source(name, "login")
                 pool.set_login_status(name, True)
         JOBS[name] = {**JOBS[name], "status": "success", "stage": "", "finished_at": time.time()}
-        asyncio.create_task(_auto_memory_off(name))
     except Exception as e:
         JOBS[name] = {**JOBS[name], "status": "failed", "stage": "", "error": str(e)[:300],
                       "finished_at": time.time()}

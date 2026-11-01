@@ -1109,26 +1109,6 @@ class BrowserPool:
         ok, _reason = await self.verify_account_detail(name)
         return ok
 
-    async def set_memory_off(self, name: str) -> dict:
-        """关闭账号的 Dola「记忆」（避免新会话里回「已经生成过了」）。号忙抛 RuntimeError。"""
-        if name not in self.accounts:
-            raise FileNotFoundError(f"profile 不存在: {name}")
-        if self.site_of(name) != sites.DOLA:
-            return {"ok": False, "message": "豆包号不适用"}
-        if self._is_cookie_source(name) and not is_cloak_cookie_account(name):
-            return {"ok": False, "message": "Cookie 号（纯协议）暂不支持，请在网页里手动关闭"}
-        lock = self._locks.setdefault(name, asyncio.Lock())
-        if lock.locked():
-            raise RuntimeError("账号正在生成、验证或探测，稍后再试")
-        async with self._use_account(name, "memory"):
-            self._phases[name] = "正在关闭记忆"
-            try:
-                async with asyncio.timeout(120):
-                    from video_worker_ui import set_dola_memory
-                    return await set_dola_memory(name, on=False)
-            except TimeoutError as exc:
-                raise RuntimeError("超时：启动浏览器或代理连接过慢，请重试") from exc
-
     async def verify_account_detail(self, name: str) -> tuple[bool, str]:
         """验证登录态并写回缓存，同时返回失败原因（成功时为空串）。号忙抛 RuntimeError。
 
