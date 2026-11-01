@@ -350,6 +350,47 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--border);ma
 .mask button{width:100%;height:38px}
 .lang-sel{width:100%;padding:0 10px;font-size:13px;cursor:pointer}
 .mask .lang-sel{margin-top:14px}
+/* ---- 登录页：左侧品牌舞台 + 右侧表单；窄屏上下叠放 ---- */
+/* show() 会写 display:flex，所以用 flex 分栏而不是 grid */
+.mask.login{align-items:stretch;justify-content:stretch;background:var(--surface)}
+.login-stage{flex:1.25 1 0;min-width:0;position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;
+  padding:56px 64px;background:#0b2a20;color:#e8f2ed}
+.login-stage::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(60% 50% at 30% 35%,rgba(47,179,131,.20),transparent 70%)}
+.login-mark{position:relative;width:min(44vh,360px);aspect-ratio:1;margin:auto 0}
+.login-mark svg{width:100%;height:100%;overflow:visible}
+.lm-bowl{fill:#123a2d}
+.lm-ring{fill:none;stroke:#2fb383;stroke-width:16}
+.lm-stem{fill:#2fb383}
+.lm-wave-back{fill:#1f7a58;animation:lmDrift 9s linear infinite}
+.lm-wave-front{fill:#2fb383;animation:lmDrift 6s linear infinite reverse}
+.lm-wave{animation-play-state:running}
+@keyframes lmDrift{from{transform:translateX(0)}to{transform:translateX(120px)}}
+.login-copy{position:relative;max-width:520px}
+.login-eyebrow{font-family:var(--mono);font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:#7fcfae;margin-bottom:14px}
+.login-copy h1{font-size:clamp(30px,3.4vw,44px);line-height:1.18;font-weight:600;letter-spacing:-.02em;color:#f4faf7}
+.login-sub{margin-top:16px;font-size:14.5px;line-height:1.7;color:#a9c7ba;max-width:430px}
+.login-panel{flex:1 1 0;min-width:360px;display:flex;align-items:center;justify-content:center;padding:48px 32px}
+.login-form{width:100%;max-width:340px}
+.login-brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:16px;letter-spacing:-.02em;margin-bottom:36px}
+.login-form h2{font-size:24px;font-weight:600;letter-spacing:-.01em;margin-bottom:24px}
+.login-form label{display:block;font-size:13px;font-weight:500;color:var(--muted);margin-bottom:6px}
+.mask.login input{height:42px;margin-bottom:16px}
+.mask.login .err{margin:-6px 0 12px}
+.mask.login button{height:42px;margin-top:4px;font-weight:600}
+.login-foot{margin-top:28px;display:flex;justify-content:flex-start}
+.login-foot .lang-sel{margin-top:0;width:auto;min-width:120px}
+@media (max-width:860px){
+  .mask.login{flex-direction:column;overflow-y:auto}
+  .login-stage{flex:none;flex-direction:row;align-items:center;justify-content:flex-start;gap:18px;padding:24px 20px}
+  .login-mark{width:72px;margin:0;flex:none}
+  .login-copy h1{font-size:20px;line-height:1.3}
+  .login-eyebrow{margin-bottom:6px}
+  .login-sub{display:none}
+  .login-panel{flex:1 0 auto;min-width:0;align-items:flex-start;padding:32px 20px}
+  .login-brand{display:none}
+}
+@media (prefers-reduced-motion:reduce){.lm-wave{animation:none}}
 .dialog{position:fixed;inset:0;background:rgba(19,20,22,.32);display:flex;align-items:center;justify-content:center;z-index:90}
 .dialog .box{background:var(--surface);border-radius:12px;padding:24px 26px;width:440px;max-width:92vw;max-height:86vh;overflow:auto;box-shadow:var(--float)}
 .dialog h2{font-size:18px;font-weight:600;margin-bottom:14px}
@@ -476,15 +517,41 @@ details.note-line > div{padding-left:10px;border-left:2px solid var(--border);ma
 </head>
 <body>
 <div id="requestStatus" role="status" aria-live="polite" hidden></div>
-<div id="loginMask" class="mask" style="display:none">
-  <div class="box">
-    <h2>管理面板登录</h2>
-    <input id="loginUser" placeholder="用户名" autocomplete="username" onkeydown="if(event.key==='Enter')q('#loginPassword').focus()">
-    <input id="loginPassword" type="password" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
-    <div class="err" id="loginErr">用户名或密码错误</div>
-    <button class="btn btn-p" onclick="submitLogin()">登录</button>
-    <select class="lang-sel" data-i18n-switcher aria-label="Language"></select>
-  </div>
+<div id="loginMask" class="mask login" style="display:none">
+  <!-- 左：品牌舞台。标志的「池」里水位缓慢起伏（纯 SVG，无视频 / 外部素材） -->
+  <section class="login-stage" aria-hidden="true">
+    <div class="login-mark">
+      <svg viewBox="0 0 240 240">
+        <defs><clipPath id="loginBowl"><circle cx="100" cy="140" r="56"/></clipPath></defs>
+        <circle cx="100" cy="140" r="56" class="lm-bowl"/>
+        <g clip-path="url(#loginBowl)">
+          <path class="lm-wave lm-wave-back" d="M-120 150 Q-90 140 -60 150 T0 150 T60 150 T120 150 T180 150 T240 150 T300 150 V260 H-120Z"/>
+          <path class="lm-wave lm-wave-front" d="M-120 156 Q-90 146 -60 156 T0 156 T60 156 T120 156 T180 156 T240 156 T300 156 V260 H-120Z"/>
+        </g>
+        <rect x="164" y="15" width="36" height="210" rx="18" class="lm-stem"/>
+        <circle cx="100" cy="140" r="72" class="lm-ring"/>
+      </svg>
+    </div>
+    <div class="login-copy">
+      <p class="login-eyebrow" translate="no">dola-pool</p>
+      <h1>一池账号，<br>一个出片接口。</h1>
+      <p class="login-sub">多账号调度、额度记账、失败换号；对外兼容 OpenAI 与火山方舟协议。</p>
+    </div>
+  </section>
+  <!-- 右：登录 -->
+  <section class="login-panel">
+    <form class="login-form" onsubmit="event.preventDefault();submitLogin()">
+      <div class="login-brand"><span class="dot"></span><span translate="no">dola-pool</span></div>
+      <h2>登录管理面板</h2>
+      <label for="loginUser">用户名</label>
+      <input id="loginUser" autocomplete="username" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter'){event.preventDefault();q('#loginPassword').focus()}">
+      <label for="loginPassword">密码</label>
+      <input id="loginPassword" type="password" autocomplete="current-password">
+      <div class="err" id="loginErr" role="alert">用户名或密码错误</div>
+      <button class="btn btn-p" type="submit">登录</button>
+      <div class="login-foot"><select class="lang-sel" data-i18n-switcher aria-label="Language"></select></div>
+    </form>
+  </section>
 </div>
 
 <aside class="sidebar">
