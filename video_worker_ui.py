@@ -30,7 +30,7 @@ import proxy_store
 from browser import cookie_value, launch_account_context
 from browser_feedback import BrowserReplies, emit as emit_feedback
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
-from video_worker import POLL_JS, RiskControlError, _download, extract_unwatermarked_url
+from video_worker import MEMORY_JS, POLL_JS, RiskControlError, _download, extract_unwatermarked_url
 
 # Dola 返回的每日上限文案（当前日文 UI 实测：動画生成の 1 日あたりの上限に達しました。）
 DAILY_LIMIT_PATTERN = re.compile(
@@ -1243,3 +1243,24 @@ if __name__ == "__main__":
     except Exception:
         import traceback
         traceback.print_exc()
+
+
+async def set_dola_memory(account: str, on: bool = False) -> dict:
+    """在账号自己的 Dola 页面里改「记忆」开关并回读确认。返回 {ok, message, before, after}。"""
+    async with async_playwright() as p:
+        context = await launch_account_context(p, account)
+        try:
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
+            await page.wait_for_timeout(5000)
+            raise_if_region_restricted(page, account)
+            if await is_logged_out(page):
+                raise LoginExpiredError(f"{account} 登录态失效，无法修改记忆设置")
+            ms_token = cookie_value(await context.cookies(), "msToken")
+            res = await asyncio.wait_for(page.evaluate(MEMORY_JS, {"msToken": ms_token, "status": bool(on)}), timeout=45)
+        finally:
+            await context.close()
+    from dola_memory import memory_outcome
+    ok, message = memory_outcome(res, want=bool(on))
+    print(f"[{account}] 记忆开关 → {'开' if on else '关'}：{message}", flush=True)
+    return {"ok": ok, "message": message, "before": (res or {}).get("before"), "after": (res or {}).get("after")}

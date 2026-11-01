@@ -339,3 +339,41 @@ async def _main():
 
 if __name__ == "__main__":
     asyncio.run(_main())
+
+
+# Dola「记忆」开关（设置 → 管理记忆）。2026-11-01 从网页抓包：
+#   读：POST /alice/bot/get_bot_list_v2 {"bot_id_list":[主 Bot],"scene":"default"} → data[0].bot_memory_config
+#   写：POST /alice/bot/update_bot {"bot_id":主 Bot,"bot_memory_switch_status":false} → {"code":0,"data":{"res":true}}
+# 记忆开着时 dola 会记住「同一提示词做过了」，新会话里直接回「この動画はすでに生成されています」不再生成。
+MEMORY_JS = r"""
+async ({msToken, status}) => {
+  const params = new URLSearchParams({
+    version_code: "20800", language: "ja", device_platform: "web", doubao_device_platform: "web",
+    aid: "495671", real_aid: "495671", pkg_type: "release_version", pc_version: "3.43.4", doubao_pc_version: "3.43.4",
+    region: "JP", sys_region: "JP", samantha_web: "1", web_platform: "browser", "use-olympus-account": "1",
+    web_tab_id: crypto.randomUUID(),
+  });
+  if (msToken) params.set("msToken", msToken);
+  const post = async (path, body) => {
+    const r = await fetch(path + "?" + params.toString(), {method: "POST", credentials: "include",
+      headers: {"Content-Type": "application/json; encoding=utf-8", "agw-js-conv": "str", "Accept": "*/*"},
+      body: JSON.stringify(body)});
+    let data = null; try { data = await r.json(); } catch (e) {}
+    return {status: r.status, data};
+  };
+  const BOT = "7339470689562525703";
+  const read = async () => {
+    const r = await post("/alice/bot/get_bot_list_v2", {bot_id_list: [BOT], scene: "default"});
+    const bot = ((r.data || {}).data || [])[0] || {};
+    return {status: r.status, code: (r.data || {}).code, memory: bot.bot_memory_config || null};
+  };
+  const before = await read();
+  let update = null;
+  if (status !== null && status !== undefined) {
+    const u = await post("/alice/bot/update_bot", {bot_id: BOT, bot_memory_switch_status: !!status});
+    update = {status: u.status, body: u.data};
+  }
+  const after = await read();
+  return {before, update, after};
+}
+"""

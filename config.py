@@ -81,6 +81,9 @@ HIGH_BITRATE_ATTEMPTS = max(1, int(os.getenv("DOLA_HIGH_BITRATE_ATTEMPTS", "3"))
 # （认不出的追问），结束任务而不是空等到出片超时。0 = 关闭。没有卡片就没开始生成，不扣点。
 STALL_REPLY_SECONDS = int(os.getenv("DOLA_STALL_REPLY_SECONDS", "180"))
 
+# 新号加号成功后自动关闭 dola「记忆」：记忆开着时，同号收到做过的提示词会回「この動画はすでに生成されています」不再生成。
+AUTO_MEMORY_OFF = os.getenv("DOLA_AUTO_MEMORY_OFF", "1") == "1"
+
 # SQLite 任务库
 DB_PATH = os.getenv("DOLA_DB_PATH", "tasks.db")
 
