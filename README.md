@@ -5,8 +5,7 @@
 有兴趣的可以加群交流
 <img width="1305" height="2321" alt="301130c1842c3b30432394fc276a7a58" src="https://github.com/user-attachments/assets/39207d3c-955f-49ec-adbc-8db471f23b79" />
 
-**当前版本：v2.6.13** — 画面比例以客户端参数为准（提示词写了别的比例时注明以参数为准，dola 追问用哪个比例时自动按参数回答）；
-全新登录页与全面板动效，一键更新后更快切到新版本；按请求分辨率自动超分与面板一键更新。完整改动见 [更新日志](CHANGELOG.md)。
+**当前版本：v2.6.14** — 参考图上传改为服务器直连（经代理时约一半失败）；dola 追问认不出时自动回复（通用回复 + 可选 AI 代答），「已经生成过了」直接要一条新视频；加号失败的记录可重试 / 删除，新号自动命名接着最大的 accN。完整改动见 [更新日志](CHANGELOG.md)。
 
 把一组 [dola.com](https://www.dola.com)（字节 Seedance 视频模型国际版）和 [豆包 doubao.com](https://www.doubao.com)（国内版）账号组成号池，对外提供 **OpenAI 兼容的视频生成 / 生图 API**，并兼容火山方舟（Ark）任务式协议，可直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
 
