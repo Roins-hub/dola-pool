@@ -332,3 +332,13 @@ def test_ratio_note_makes_the_parameter_win_only_on_conflict():
     sent = dispatch_prompt(PROMPT_916, '素材说明', '16:9')
     assert sent.startswith('素材说明\n\n' + PROMPT_916) and sent.endswith(note)
     assert dispatch_prompt('海边日落', '', '16:9') == '海边日落'
+
+
+def test_ratio_not_listed_uses_the_other_option():
+    """参数 21:9、提示词 9:16，dola 只列 9:16 / 16:9 / その他：选「その他」并写明 21:9。"""
+    from upstream_reply import ratio_choice_reply
+    listed = RATIO_Q.replace('B. 16:9 横幅', 'B. 21:9 横幅')
+    assert ratio_choice_reply(listed, PROMPT_916, '21:9') == 'B. 21:9'
+    assert ratio_choice_reply(RATIO_Q, PROMPT_916, '21:9') == 'C. 21:9'
+    no_other = 'どちらで生成しますか？ A. 9:16 縦幅 B. 16:9 横幅'
+    assert ratio_choice_reply(no_other, PROMPT_916, '21:9') is None

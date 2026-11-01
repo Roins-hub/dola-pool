@@ -182,6 +182,7 @@ _KNOWN_RATIOS = {'16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21', '3:2', '2:
 _RATIO_IN_TEXT = re.compile(r'(?<![\d.])(\d{1,2})\s*[:：比]\s*(\d{1,2})(?![\d.])')
 _RATIO_OPTION = re.compile(r'(?<![A-Za-z])([A-D])\s*[.．、)）]\s*(\d{1,2})\s*[:：]\s*(\d{1,2})')
 _RATIO_ASK = re.compile(r'アスペクト比|縦横比|比例|画面比|aspect ratio|which ratio|どちら|哪个|哪一个|选择|選んで|choose|select', re.I)
+_OTHER_OPTION = re.compile(r'(?<![A-Za-z])([A-D])\s*[.．、)）]\s*(?:その他|それ以外|其他|其它|other)', re.I)
 _PORTRAIT_WORDS = re.compile(r'竖幅|竖屏|竖版|竖构图|縦長|縦型|portrait|vertical', re.I)
 _LANDSCAPE_WORDS = re.compile(r'横幅|横屏|横版|横构图|横長|横型|landscape|horizontal', re.I)
 
@@ -209,4 +210,8 @@ def ratio_choice_reply(text, prompt=None, ratio=None):
     for letter, value in options:
         if value == want:
             return f'{letter}. {value}'
+    # 选项里没有要的比例，但给了「其他（请指定）」：选它并写明比例，如「C. 21:9」
+    other = _OTHER_OPTION.search(clean)
+    if want and other:
+        return f'{other.group(1).upper()}. {want}'
     return None
