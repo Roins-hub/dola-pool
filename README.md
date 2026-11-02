@@ -232,6 +232,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `DOLA_UPLOAD_PROXY_BYPASS` | `*.bytevcloudapi.com,*.vodupload.com` | 浏览器上传参考图时直连的域名；留空 = 全部走代理 |
 | `DOLA_STALL_REPLY_SECONDS` | `180` | dola 说完话不开工超过这么久就结束任务（未扣点）；`0` = 关闭 |
 | `DOLA_GENERATION_FAILURE_RETRIES` | `2` | 上游确认生成失败后最多换号重提几次 |
+| `DOLA_PORTRAIT_RETRIES` | `3` | dola 以「肖像保护」拒绝、且还没开始生成时，换号重提几次（审核结果因号而异；拒绝不扣点）；`0` = 关闭 |
 | `DOLA_PURE_API` / `DOLA_PURE_FALLBACK_BROWSER` | `1` / `1` | 优先纯 HTTP 出片；失败时回退浏览器 |
 | `DOLA_COOKIE_RUNTIME` | `pure` | `cloak` = Dola Cookie 号使用 CloakBrowser 独立浏览器环境（见下） |
 | `DOUBAO_ALLOW_PAID` | `1` | 豆包免费额度用完后自动走付费额度；`0` = 换号 |

@@ -244,6 +244,7 @@ Set these in `dola.env` (one-command install), `.env`, or the environment. The f
 | `DOLA_UPLOAD_PROXY_BYPASS` | `*.bytevcloudapi.com,*.vodupload.com` | Hosts the browser reaches directly when uploading references; empty = everything through the proxy |
 | `DOLA_STALL_REPLY_SECONDS` | `180` | End the task when dola stops without starting for this long (nothing charged); `0` = off |
 | `DOLA_GENERATION_FAILURE_RETRIES` | `2` | How many times to resubmit on another account after upstream confirms a failure |
+| `DOLA_PORTRAIT_RETRIES` | `3` | When dola refuses for portrait protection before generating anything, retry on this many other accounts (the review varies by account; refusals are not charged); `0` = off |
 | `DOLA_PURE_API` / `DOLA_PURE_FALLBACK_BROWSER` | `1` / `1` | Prefer the pure HTTP path; fall back to the browser on failure |
 | `DOLA_COOKIE_RUNTIME` | `pure` | `cloak` = run each Dola cookie account in its own CloakBrowser profile (see below) |
 | `DOUBAO_ALLOW_PAID` | `1` | Use paid quota after the Doubao free quota runs out; `0` = switch accounts |

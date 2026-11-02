@@ -17,7 +17,7 @@ from pathlib import Path
 from dola_client import CreditError
 from generation_errors import (
     PreSubmissionUploadError, PreSubmissionParametersError, RegionRestrictedError,
-    UploadRouteError, UpstreamGenerationFailed, UpstreamReplyError,
+    UploadRouteError, UpstreamGenerationFailed, UpstreamReplyError, portrait_refusal,
 )
 from account_transport import diagnose_upload_route, egress_alive, redact_error
 from video_worker_ui import (
@@ -2076,6 +2076,7 @@ class BrowserPool:
             # max_attempts <= 0：不限次数，只要没到 deadline 就一轮轮换号重试。
             unlimited = max_attempts <= 0
             generation_retries = 0     # 已提交且上游确认失败后的换号重提次数
+            portrait_retries = 0       # 肖像保护拒绝（未开始生成）后的换号重提次数
             last_note = [""]
 
             def say(note: str) -> None:
@@ -2299,21 +2300,30 @@ class BrowserPool:
                                 (time.time() + COOLDOWN_SEC, account))
                             self._conn.commit()
                             last_err = e
-                        except UpstreamGenerationFailed as e:
-                            attempt_error = e
-                            # The original conversation ended with a failed creation card and
-                            # no video, so resubmitting elsewhere cannot duplicate a result.
-                            if not (e.retryable and generation_retries < config.GENERATION_FAILURE_RETRIES
-                                    and time_left()):
-                                raise
-                            generation_retries += 1
-                            print(f"[pool] {account} 上游确认生成失败（fail_code={e.code}，会话 "
-                                  f"{e.conversation_id} 已结束）→ 换号重提 {generation_retries}/"
-                                  f"{config.GENERATION_FAILURE_RETRIES}", flush=True)
-                            last_err = e
                         except UpstreamReplyError as e:
                             attempt_error = e
-                            raise
+                            if (portrait_refusal(e) and portrait_retries < config.PORTRAIT_RETRIES
+                                    and time_left()):
+                                # 肖像保护的审核结果因号而异（2026-11-02 同图同词 4 个号 2 过 2 拒）；
+                                # 拒绝时没开始生成、不扣点，换号重提不会重复出片
+                                portrait_retries += 1
+                                self._note_upstream_failure(account, str(e), attempt)
+                                say(f"{account} 被 dola 以肖像保护拒绝（未生成、不扣点）→ 换号重提 "
+                                    f"{portrait_retries}/{config.PORTRAIT_RETRIES}")
+                                print(f"[pool] {account} 肖像保护拒绝（未生成）→ 换号重提 "
+                                      f"{portrait_retries}/{config.PORTRAIT_RETRIES}", flush=True)
+                                last_err = e
+                            elif (isinstance(e, UpstreamGenerationFailed) and e.retryable
+                                  and generation_retries < config.GENERATION_FAILURE_RETRIES and time_left()):
+                                # The original conversation ended with a failed creation card and
+                                # no video, so resubmitting elsewhere cannot duplicate a result.
+                                generation_retries += 1
+                                print(f"[pool] {account} 上游确认生成失败（fail_code={e.code}，会话 "
+                                      f"{e.conversation_id} 已结束）→ 换号重提 {generation_retries}/"
+                                      f"{config.GENERATION_FAILURE_RETRIES}", flush=True)
+                                last_err = e
+                            else:
+                                raise
                         except (PreSubmissionUploadError, PreSubmissionParametersError) as e:
                             # Upload or parameter selection failed before the browser sent the generation prompt.
                             # Safe to try another account using its own profile/proxy.

@@ -51,6 +51,10 @@ VIDEO_MAX_ATTEMPTS = int(os.getenv("DOLA_VIDEO_MAX_ATTEMPTS", "0"))
 # 已提交后、上游会话最终卡片确认失败（status=5，无视频）时，每个任务最多换号重提几次。
 # 只对结构化确认的最终失败生效；内容拒绝、缺信息、结果未知都不重提。0 = 关闭。
 GENERATION_FAILURE_RETRIES = max(0, int(os.getenv("DOLA_GENERATION_FAILURE_RETRIES", "2")))
+# dola 以「肖像保护」拒绝（710082031 / 肖像保護…実在する人物）且还没开始生成时，换号重提几次。
+# 2026-11-02：同一提示词 + 同一张 AI 参考图同时派 4 个号，acc140 / acc136 出片，acc21 / acc13 被拒——
+# 审核结果因号而异，换号有机会过；拒绝时 dola 没生成，不扣点。0 = 关闭（遇到就结束任务）。
+PORTRAIT_RETRIES = max(0, int(os.getenv("DOLA_PORTRAIT_RETRIES", "3")))
 # 请求没写 reference_source 时，带参考图的任务按此处理（2026-10-29 起默认 ai_generated：附加「参考图人物由 AI 生成」说明）；
 # 纯文字任务永远不附加。调用方显式传 reference_source="unspecified" 可关闭单个任务。
 DEFAULT_REFERENCE_SOURCE = os.getenv("DOLA_DEFAULT_REFERENCE_SOURCE", "ai_generated").strip()

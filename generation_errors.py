@@ -22,11 +22,28 @@ class RegionRestrictedError(Exception):
 
 
 class UpstreamReplyError(RuntimeError):
-    """Explicit assistant refusal or missing input; do not resubmit with another account."""
-    def __init__(self, category, reply):
+    """Explicit assistant refusal or missing input; do not resubmit with another account.
+
+    generation_started: the conversation had a creation card / video-gen flag when this
+    was raised (None = unknown). Only a refusal with nothing started may be resubmitted.
+    """
+    def __init__(self, category, reply, *, generation_started=None):
         self.category = category
         self.reply = reply
+        self.generation_started = generation_started
         super().__init__(f"【{category}】{reply}")
+
+
+def portrait_refusal(error) -> bool:
+    """dola 以「肖像保护」拒绝、且确认还没开始生成：可以换号重提（不会重复出片）。"""
+    if not isinstance(error, UpstreamReplyError):
+        return False
+    import failure_text
+    if failure_text.label_for(getattr(error, "reply", "") or str(error)) != "肖像保护":
+        return False
+    if isinstance(error, UpstreamGenerationFailed):
+        return True                       # 会话的最终卡片已判失败，原会话不会再出片
+    return error.generation_started is False
 
 
 class UpstreamGenerationFailed(UpstreamReplyError):

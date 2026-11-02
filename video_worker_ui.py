@@ -880,7 +880,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 failure_seen = (joined, hits + 1 if previous == joined else 1)
                 nudgeable = category == "需要补充信息" and nudges < dola_responder.GENERIC_LIMIT
                 if failure_seen[1] >= 2 and not nudgeable:
-                    raise UpstreamReplyError(category, joined)
+                    # 记下会话里有没有开始生成（生成卡片 / 生成标记）：没开始的肖像拒绝才允许换号重提
+                    started = bool(videos or poll.get("anyTool") or poll.get("anyVideoGen"))
+                    raise UpstreamReplyError(category, joined, generation_started=started)
             else:
                 failure_seen = (None, 0)
             balance, _, source = _parse_balance_texts(texts)
