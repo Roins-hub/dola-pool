@@ -113,7 +113,7 @@
   --accent-d:var(--accent);--red:var(--negative);--orange:var(--warning);--blue:var(--info);--gray:var(--muted);--ok:var(--positive);--r:var(--radius-card);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{background:var(--frame)}
+html{background:var(--frame);scrollbar-gutter:stable}  /* 切页时滚动条出现 / 消失不再让内容左右挪 */
 body{font-family:var(--font);background:var(--frame);color:var(--text);font-size:14px;line-height:1.5;min-height:100vh;
   font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -427,11 +427,10 @@ a{transition:color var(--t-hover) ease}
   .nav-item:hover svg{transform:translateX(2px)}
 }
 @media (prefers-reduced-motion:no-preference){
-  /* 切页：页头、卡片、表格容器依次浮起 */
-  .tab-in>*{animation:tabRise 380ms var(--ease-out) both}
-  .tab-in>*:nth-child(2){animation-delay:60ms}
-  .tab-in>*:nth-child(3){animation-delay:120ms}
-  .tab-in>*:nth-child(n+4){animation-delay:180ms}
+  /* 切页：轻淡入（位移很小、错开很短），不做明显的上浮，免得切菜单时整页「弹一下」 */
+  .tab-in>*{animation:tabFade 220ms var(--ease-out) both}
+  .tab-in>*:nth-child(2){animation-delay:30ms}
+  .tab-in>*:nth-child(n+3){animation-delay:60ms}
   /* 数据到位：表格行逐行出现（前 10 行错开，其余一起） */
   .rows-in tbody tr{animation:rowIn 360ms var(--ease-out) both;animation-delay:240ms}
   .rows-in tbody tr:nth-child(1){animation-delay:0ms}
@@ -463,6 +462,7 @@ a{transition:color var(--t-hover) ease}
   #requestStatus:not([hidden]){animation:tabRise var(--t-ui) var(--ease-out) both}
 }
 @keyframes tabRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes tabFade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 @keyframes rowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @keyframes barGrow{from{transform:scaleY(0)}to{transform:none}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
@@ -1089,7 +1089,9 @@ function switchTab(t){
   document.querySelectorAll('.side-nav .nav-item').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
   ['dash','accounts','proxies','tasks','videos','keys','users'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
   tabLoadingNote(t,!LOADED_TABS.has(t));
-  tabEnter(t);
+  // 已有数据（预取过 / 来过）的页：只淡入一次；数据刷新回来后不再把表格行清空重播，
+  // 否则同一批行先显示、又变透明逐行出现，看起来像「弹一下」
+  tabEnter(t,!LOADED_TABS.has(t));
   refresh();
 }
 /** 切页动效：只在切换 / 首次进入时播放一次，每 10 秒的自动刷新不重播 */
@@ -1099,7 +1101,10 @@ function replayClass(el,cls,ms){
   el.classList.remove(cls);void el.offsetWidth;el.classList.add(cls);
   clearTimeout(el['_'+cls]);el['_'+cls]=setTimeout(()=>el.classList.remove(cls),ms);
 }
-function tabEnter(t){ENTER_PENDING.add(t);replayClass(q('#tab-'+t),'tab-in',800);moveNavInd();}
+function tabEnter(t,rows=true){
+  if(rows)ENTER_PENDING.add(t);else ENTER_PENDING.delete(t);
+  replayClass(q('#tab-'+t),'tab-in',500);moveNavInd();
+}
 function rowsEnter(t){
   if(!ENTER_PENDING.delete(t))return;
   const sec=q('#tab-'+t);
