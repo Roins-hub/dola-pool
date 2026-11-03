@@ -34,7 +34,7 @@ import failure_text
 import proxy_store
 import sites
 from concurrency import AdjustableConcurrency
-from doubao_gen import DoubaoModelLockedError, DoubaoQuotaError
+from doubao_gen import DoubaoModelLockedError, DoubaoQuotaError, quota_recover_at
 from pool import AccountConfig as _PoolAccountConfig, AccountPool as _PoolEngine
 try:
     from browser import is_cloak_cookie_account
@@ -154,6 +154,32 @@ CONTENT_REFUSAL_MARKERS = (
 SHORT_CLIP_MARKERS = (
     "只给了", "不拼接",
 )
+
+
+def _beijing_clock(ts: float) -> str:
+    """面板 / 报错里显示的恢复时刻（北京时间）。"""
+    return time.strftime("%m-%d %H:%M", time.gmtime(ts + 8 * 3600)) + "（北京时间）"
+
+
+def doubao_all_locked(rows: list[dict], model: str, member_only: bool, horizon: float) -> str:
+    """能接这个豆包模型的号是否都被额度锁到 horizon 之后；是就返回说明，否则返回空串。
+
+    2026-11-03：唯一的会员号 acc151「近 7 天额度已用完，预计11月5日 01:59 恢复」，
+    2.5 的任务却一轮轮「稍后再来一轮」排到任务时限才失败。
+    """
+    usable = [a for a in rows if a.get("site") == sites.DOUBAO and a.get("scheduling", True)
+              and not (member_only and a.get("tier") == "free")]
+    if not usable:
+        return ""
+    locks = []
+    for a in usable:
+        until = max(float(a.get("rate_limited_until") or 0), float(a.get("quota_blocked_until") or 0))
+        if until <= horizon:
+            return ""
+        reason = (a.get("limit_reason") or a.get("quota_reason") or "额度已用完").replace(f"{a['name']} ", "", 1)
+        locks.append(f"{a['name']}（{reason[:80]}，{_beijing_clock(until)}恢复）")
+    who = "会员号" if member_only else "豆包号"
+    return f"能出 {model} 的{who}额度都用完了：" + "；".join(locks) + "。尚未提交生成，未扣额度"
 
 
 def duration_cost(model: str, duration: int = 0) -> int:
@@ -633,12 +659,17 @@ class BrowserPool:
         )
         self._conn.commit()
 
-    def _mark_daily_limit(self, account: str, reason: str = ""):
+    def _mark_daily_limit(self, account: str, reason: str = "", until: float | None = None):
         """Dola 明确返回每日上限：未成功不扣本地点数（2026-09-02 规则），
-        只把账号限流标记到次日零点，期间跳过该号。"""
+        只把账号限流标记到次日零点，期间跳过该号。
+
+        until：上游明说了更晚的恢复时刻（豆包体验套餐按 7 天算额度）就锁到那一刻。"""
+        lock_until = self._next_limit_reset()
+        if until and until > lock_until:
+            lock_until = until
         self._conn.execute(
             "UPDATE accounts_meta SET last_used_at=?, rate_limited_until=?, limit_reason=? WHERE name=?",
-            (time.time(), self._next_limit_reset(), reason[:300], account),
+            (time.time(), lock_until, reason[:300], account),
         )
         self._conn.commit()
 
@@ -1739,7 +1770,7 @@ class BrowserPool:
                 self.set_tier(account, "free")
                 return {"ok": False, "account": account, "error": str(exc)[:300]}
             except DoubaoQuotaError as exc:
-                self._mark_daily_limit(account, str(exc))
+                self._mark_daily_limit(account, str(exc), until=quota_recover_at(str(exc)))
                 return {"ok": False, "account": account, "error": str(exc)[:300]}
             except Exception as exc:
                 if "登录态失效" in str(exc):
@@ -2096,6 +2127,11 @@ class BrowserPool:
                 return deadline is None or time.time() < deadline
 
             while attempts_left() and time_left():
+                if want_site == sites.DOUBAO:
+                    locked = doubao_all_locked(self.list_accounts(), model, member_only,
+                                               deadline if deadline is not None else time.time())
+                    if locked:
+                        raise RuntimeError(locked)
                 picked = False
                 temporary_reason = ""
                 temporary_delay = WAIT_FREE_ACCOUNT_STEP
@@ -2256,8 +2292,10 @@ class BrowserPool:
                             tried_order.append(account)
                             continue
                         except DoubaoQuotaError as e:
-                            print(f"[pool] {account} 豆包今日额度用完，标记到额度刷新: {e}", flush=True)
-                            self._mark_daily_limit(account, str(e))
+                            until = quota_recover_at(str(e))
+                            print(f"[pool] {account} 豆包额度用完，锁到"
+                                  f"{_beijing_clock(until) if until else '额度刷新'}: {e}", flush=True)
+                            self._mark_daily_limit(account, str(e), until=until)
                             last_err = e
                         except CreditInsufficientError as e:
                             print(f"[pool] {account} 生成前积分不足，跳过: {e}", flush=True)

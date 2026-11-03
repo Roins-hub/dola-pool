@@ -407,3 +407,65 @@ def test_flow_keeps_watermark_setting_when_auto_disabled(monkeypatch, tmp_path):
     res = _gen(monkeypatch, tmp_path, dp)
     assert dp.settings_posts == []
     assert res["unwatermarked"] is False        # 下载接口说「无水印」也不算：号的设置没关
+
+
+def _seven_day_text(account: str, days: float = 2.0) -> tuple[str, float]:
+    """体验套餐原话，恢复时刻取「现在 + days 天」（北京时间、精确到分）。"""
+    import time as _t
+    at = _t.time() + days * 86400
+    bj = _t.gmtime(at + 8 * 3600)
+    text = (f"{account} 豆包额度不足：近 7 天额度已用完，预计{bj.tm_mon}月{bj.tm_mday}日 "
+            f"{bj.tm_hour:02d}:{bj.tm_min:02d} 恢复。升级到标准套餐畅享更多额度。")
+    return text, at
+
+
+def test_quota_recover_at_reads_the_beijing_time():
+    import doubao_gen
+    now = 1793692800.0                                   # 2026-11-03 16:00 北京时间
+    at = doubao_gen.quota_recover_at("近 7 天额度已用完，预计11月5日 01:59 恢复。", now=now)
+    assert at == 1793815140.0                            # 2026-11-05 01:59 +08:00
+    assert doubao_gen.quota_recover_at("今日免费额度已用完", now=now) is None
+    dec = 1798689600.0                                   # 2026-12-31 12:00 北京时间 → 1 月 2 日是明年
+    assert doubao_gen.quota_recover_at("预计1月2日 08:00 恢复", now=dec) > dec
+
+
+def test_seven_day_quota_locks_until_the_stated_time(tmp_path, monkeypatch):
+    import doubao_gen
+    _browser_pool, bp = _pool(tmp_path, monkeypatch, doubao=("db1", "db2"))
+    text, _ = _seven_day_text("db1")
+
+    async def fake(account, prompt, ratio, duration, model, **_k):
+        if account == "db1":
+            raise doubao_gen.DoubaoQuotaError(text)
+        return {"account": account, "local_path": "x.mp4", "conversation_id": "c"}
+
+    bp._generate_effective = fake
+    _run(bp.generate_video("p", "16:9", 5, "doubao-seedance-2.0-fast", max_attempts=3))
+    row = {a["name"]: a for a in bp.list_accounts()}["db1"]
+    assert row["rate_limited"] and row["rate_limited_until"] == doubao_gen.quota_recover_at(text)
+    assert row["rate_limited_until"] > bp._next_limit_reset()        # 不是只锁到今天
+
+
+def test_member_model_fails_fast_when_every_member_is_locked(tmp_path, monkeypatch):
+    # 2026-11-03：唯一的会员号 acc151 近 7 天额度用完，2.5 任务一轮轮「稍后再来一轮」排到时限
+    import time as _t
+    import doubao_gen
+    _browser_pool, bp = _pool(tmp_path, monkeypatch, doubao=("db1",))
+    text, _ = _seven_day_text("db1")
+    calls = []
+
+    async def fake(account, *a, **k):
+        calls.append(account)
+        raise doubao_gen.DoubaoQuotaError(text)
+
+    bp._generate_effective = fake
+    started = _t.time()
+    with pytest.raises(RuntimeError, match="会员号额度都用完了") as err:
+        _run(bp.generate_video("p", "16:9", 10, "doubao-seedance-2.5", deadline=_t.time() + 600))
+    assert calls == ["db1"] and _t.time() - started < 30
+    assert "db1" in str(err.value) and "北京时间" in str(err.value) and "未扣额度" in str(err.value)
+    # 已经锁着的号：新任务一上来就失败，连试都不试
+    calls.clear()
+    with pytest.raises(RuntimeError, match="额度都用完了"):
+        _run(bp.generate_video("p", "16:9", 10, "doubao-seedance-2.5", deadline=_t.time() + 600))
+    assert calls == []

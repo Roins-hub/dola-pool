@@ -123,6 +123,36 @@ def _messages(chain: Any) -> list[dict]:
     return out
 
 
+_RECOVER_RE = re.compile(r"预计\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*恢复")
+
+
+def quota_recover_at(text: str, now: float | None = None) -> float | None:
+    """豆包额度用完时给的恢复时刻（北京时间）→ 时间戳；没说就返回 None。
+
+    2026-11-03 体验套餐原话：「近 7 天额度已用完，预计11月5日 01:59 恢复。升级到标准套餐畅享更多额度。」
+    额度按 7 天算，不是每天零点重置，所以要锁到它说的时刻。
+    """
+    m = _RECOVER_RE.search(text or "")
+    if not m:
+        return None
+    import datetime as _dt
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Shanghai")
+    except Exception:  # noqa: BLE001 - 没有 tzdata 时用固定 +8
+        tz = _dt.timezone(_dt.timedelta(hours=8))
+    now = time.time() if now is None else now
+    year = _dt.datetime.fromtimestamp(now, tz).year
+    month, day, hour, minute = (int(x) for x in m.groups())
+    try:
+        at = _dt.datetime(year, month, day, hour, minute, tzinfo=tz).timestamp()
+        if at < now - 86400:               # 跨年：12 月底说「1月2日恢复」
+            at = _dt.datetime(year + 1, month, day, hour, minute, tzinfo=tz).timestamp()
+    except ValueError:
+        return None
+    return at
+
+
 def _compact(text: str) -> str:
     return re.sub(r"[\s*]+", "", text or "")
 
