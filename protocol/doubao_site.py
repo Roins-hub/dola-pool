@@ -17,6 +17,7 @@ HOST = "www.doubao.com"
 AID = "497858"
 BOT_ID = "7338286299411103781"
 IMAGEX_REGION = "cn-north-1"
+UPLOAD_SCENE_ID = "5"          # 豆包网页 prepare_upload 的 scene_id（dola 是 "4"）
 REGION = "CN"
 PC_VERSION = "3.41.4"
 # 签名器页面环境：域名 / aid；/creativity（无水印下载接口）也要签
@@ -44,6 +45,7 @@ def load():
         module.AID = AID
         module.BOT_ID = BOT_ID
         module.IMAGEX_REGION = IMAGEX_REGION
+        module.UPLOAD_SCENE_ID = UPLOAD_SCENE_ID
         module.SIGNER_ENV = dict(SIGNER_ENV)
         _MODULE = module
         return module

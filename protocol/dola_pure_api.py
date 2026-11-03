@@ -52,6 +52,9 @@ UA = (
     "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
 )
 IMAGEX_REGION = "us-east-1"
+# /alice/resource/prepare_upload 的 scene_id：dola 网页发 "4"，豆包网页发 "5"（2026-11-03 抓到；
+# 豆包用 "4" 会回 710010703「调用下游服务器失败」，参考图一张都传不上）。
+UPLOAD_SCENE_ID = "4"
 IMAGEX_SERVICE = "imagex"
 NOWATERMARK_API_ENDPOINT = "http://47.104.150.143:8765/tools/dola/"
 NOWATERMARK_API_TIMEOUT = 60
@@ -1326,7 +1329,7 @@ def compact_json(obj: Any) -> str:
 
 
 def prepare_upload(session: requests.Session, ctx: dict[str, str], bh: dict[str, str], resource_type: int = 2) -> dict[str, Any]:
-    body = {"tenant_id": "5", "scene_id": "4", "resource_type": resource_type}
+    body = {"tenant_id": "5", "scene_id": UPLOAD_SCENE_ID, "resource_type": resource_type}
     data = dola_api_post_json(
         session,
         ctx,
