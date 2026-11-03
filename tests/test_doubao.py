@@ -142,6 +142,7 @@ class _FakeDP:
         self.script = script               # [(需要先回几次, 文本, buttons)]
         self.vid_after = vid_after
         self.replies: list[str] = []
+        self.reply_payloads: list[dict] = []
         self.BASE = self._real.BASE
         self.DolaNoDataError = self._real.DolaNoDataError
         self.downloaded = []
@@ -150,22 +151,33 @@ class _FakeDP:
         return getattr(self._real, name)
 
     def submit_chat_completion(self, *a, **k):
-        if k.get("video_ability"):
+        if not k.get("conversation_id"):          # 首条：新建会话、提交生成
             return types.SimpleNamespace(error="", error_code="", conversation_id="conv1")
-        self.replies.append(k.get("prompt"))
+        # 会话里的回话：按真实请求体走一遍 payload_hook，记下最终发出去的文字和是否带视频技能
+        payload = {"messages": [{"content_block": [self._real.build_text_block(
+                       self._real.build_prompt_text(k.get("prompt"), k.get("ratio"), k.get("duration"))
+                       if k.get("video_ability") else k.get("prompt"))]}]}
+        if k.get("video_ability"):
+            payload["chat_ability"] = self._real.build_ability(k.get("model"), k.get("duration"), k.get("ratio"),
+                                                               prompt=k.get("prompt"))
+        if k.get("payload_hook"):
+            k["payload_hook"](payload)
+        self.replies.append(payload["messages"][0]["content_block"][0]["content"]["text_block"]["text"])
+        self.reply_payloads.append(payload)
         return types.SimpleNamespace(error="", error_code="", conversation_id="conv1")
 
     def fetch_single_chain(self, *a, **k):
         msgs = [{"message_id": "u1", "index_in_conv": 1, "user_type": 1,
                  "content_block": [{"content": {"text_block": {"text": "生成视频：x，5s"}}, "is_finish": True}]}]
         idx = 3
-        for need, text, buttons in self.script:
+        for need, text, buttons, *ext in self.script:
             if len(self.replies) < need:
                 break
             blocks = [{"content": {"text_block": {"text": text}}, "is_finish": True}]
             for b in buttons or []:
                 blocks.append({"content": {"button_block": b}, "is_finish": True})
-            msgs.append({"message_id": f"b{idx}", "index_in_conv": idx, "user_type": 2, "content_block": blocks})
+            msgs.append({"message_id": f"b{idx}", "index_in_conv": idx, "user_type": 2, "content_block": blocks,
+                         "ext": ext[0] if ext else {}})
             idx += 2
         if self.vid_after is not None and len(self.replies) >= self.vid_after:
             msgs.append({"message_id": "v", "index_in_conv": idx, "user_type": 2, "content_block": [
@@ -230,6 +242,30 @@ def test_flow_confirm_then_paid_then_video(monkeypatch, tmp_path):
     assert dp.replies == ["确认生成", "确认生成"]
     assert res["doubao_paid"] is True and res["unwatermarked"] is True and res["site"] == "doubao"
     assert dp.downloaded == ["https://cdn/x.mp4"]
+
+
+def test_confirm_reply_goes_to_the_video_skill(monkeypatch, tmp_path):
+    # 2026-11-03：不带技能的「确认生成」被普通对话（seed_main）接走，视频创作没开始
+    monkeypatch.setattr(config, "DOUBAO_ALLOW_PAID", True)
+    dp = _FakeDP([(0, CONFIRM, []), (1, FREE_ACCEPTED, [])], vid_after=1)
+    _gen(monkeypatch, tmp_path, dp)
+    assert dp.replies == ["确认生成"]                              # 原话，不是「生成视频：确认生成，16:9，5s」
+    ability = dp.reply_payloads[0]["chat_ability"]
+    param = json.loads(ability["ability_param"])
+    assert ability["ability_type"] == 17 and param["duration"] == 5 and param["ratio"] == "16:9"
+    assert param["model"] == sites.doubao_spec("doubao-seedance-2.0-mini")[0]
+    assert param["input_box_content"]["user_input_content"] == "确认生成"
+
+
+def test_confirm_taken_by_plain_chat_ends_without_waiting(monkeypatch, tmp_path):
+    import doubao_gen
+    monkeypatch.setattr(config, "DOUBAO_ALLOW_PAID", True)
+    plain = {"agent_name": "豆包", "agent_intention": "seed_main"}
+    dp = _FakeDP([(0, CONFIRM, [], {"agent_name": "Agent-Creation", "use_creation": "1"}),
+                  (1, "好的，已确认，开始生成这个视频，稍等片刻，视频很快就出来啦。", [], plain)])
+    with pytest.raises(doubao_gen.PureApiError, match="普通对话"):
+        _gen(monkeypatch, tmp_path, dp)
+    assert dp.replies == ["确认生成"]
 
 
 def test_flow_paid_disabled_raises_quota_without_reply(monkeypatch, tmp_path):

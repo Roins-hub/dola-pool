@@ -106,6 +106,7 @@ def _messages(chain: Any) -> list[dict]:
             index = int(raw.get("index_in_conv") or 0)
         except (TypeError, ValueError):
             index = 0
+        ext = raw.get("ext") if isinstance(raw.get("ext"), dict) else {}
         out.append({
             "index": index,
             "bot": str(raw.get("user_type")) == "2",
@@ -113,6 +114,10 @@ def _messages(chain: Any) -> list[dict]:
             "buttons": buttons,
             "vids": vids,
             "finished": finished,
+            # 哪个智能体回的：视频创作是 Agent-Creation（带 use_creation），普通对话是 seed_main
+            "agent_intention": str(ext.get("agent_intention") or ""),
+            "creation": bool(ext.get("use_creation") or ext.get("has_video_gen")
+                             or str(ext.get("agent_name") or "") == "Agent-Creation"),
         })
     out.sort(key=lambda m: m["index"])
     return out
@@ -177,13 +182,38 @@ def confirm_mismatch(text: str, *, duration: int, model_display: str) -> str:
 
 # ---------------------------------------------------------------- 上游接口
 
-def _reply(dp, session, ctx, headers, conversation_id: str, text: str = CONFIRM_REPLY):
+def _keep_reply_text(dp, text: str):
+    """视频模式会把文字改写成「生成视频：…，比例，时长」；确认只发原话（输入框原文也是原话）。"""
+    def hook(payload):
+        for message in payload.get("messages") or []:
+            for block in message.get("content_block") or []:
+                text_block = (block.get("content") or {}).get("text_block")
+                if isinstance(text_block, dict):
+                    text_block["text"] = text
+        ability = payload.get("chat_ability")
+        if isinstance(ability, dict) and ability.get("ability_param"):
+            param = json.loads(ability["ability_param"])
+            if isinstance(param.get("input_box_content"), dict):
+                param["input_box_content"]["user_input_content"] = text
+            ability["ability_param"] = dp.compact_json(param)
+    return hook
+
+
+def _reply(dp, session, ctx, headers, conversation_id: str, text: str = CONFIRM_REPLY, *,
+           model: str = "", duration: int = 5, ratio: str | None = None):
+    """在会话里回一句话。
+
+    给了 model（视频任务的确认 / 付费确认）时按「视频生成」技能发：带和首条消息同样的 chat_ability。
+    2026-11-03 实测：不带技能的「确认生成」被豆包普通对话（seed_main）接走，它嘴上说「已确认，开始生成」，
+    视频创作智能体（Agent-Creation）却没收到，永远不出片。
+    """
     chain = dp.fetch_single_chain(session, ctx, conversation_id)
     result = dp.submit_chat_completion(
-        session, ctx, headers, images=[], audios=[], prompt=text, duration=5, model="",
-        ratio=None, timeout_sec=180, video_ability=False, conversation_id=conversation_id,
+        session, ctx, headers, images=[], audios=[], prompt=text, duration=duration if model else 5,
+        model=model, ratio=ratio, timeout_sec=180, video_ability=bool(model), conversation_id=conversation_id,
         section_id=dp.find_latest_section_id(chain) or "",
-        last_message_index=dp.find_latest_message_index(chain))
+        last_message_index=dp.find_latest_message_index(chain),
+        payload_hook=_keep_reply_text(dp, text) if model else None)
     if getattr(result, "error", ""):
         raise PureApiError(f"回「{text}」失败: {result.error_code} {result.error}"[:300])
     return result
@@ -429,10 +459,14 @@ def generate_doubao_video(
                                 f"{account} 豆包今日免费额度已用完（未开启 DOUBAO_ALLOW_PAID，不走付费额度）")
                         if paid:
                             continue
-                        _reply(dp, session, ctx, headers, conversation_id)
+                        _reply(dp, session, ctx, headers, conversation_id,
+                               model=upstream_model, duration=duration, ratio=ratio)
                         paid = True
                         _emit_note_text(on_poll, "豆包：免费额度已用完，已确认使用付费额度")
                         continue
+                    if confirms and not m["creation"] and m["agent_intention"] == "seed_main":
+                        raise PureApiError(
+                            f"{account} 豆包的确认被普通对话接走，视频创作没有开始（未生成、不扣额度）：{text[:160]}")
                     if looks_like_accepted(text):
                         accepted = True
                         wait = _wait_seconds_from_texts(dp, [text])
@@ -452,7 +486,8 @@ def generate_doubao_video(
                             raise UnsupportedDurationError(f"{mismatch}，未确认（不扣额度）")
                         if confirms >= 2:
                             raise PureApiError(f"{account} 豆包反复要求确认，放弃：{text[:200]}")
-                        _reply(dp, session, ctx, headers, conversation_id)
+                        _reply(dp, session, ctx, headers, conversation_id,
+                               model=upstream_model, duration=duration, ratio=ratio)
                         confirms += 1
                 if not replied_any and time.time() - submitted_at > config.NO_ACK_SECONDS:
                     raise AbnormalNoAckError(
