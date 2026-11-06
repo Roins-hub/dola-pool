@@ -105,9 +105,6 @@ def test_watchdog_spares_just_requeued_task(tmp_path, monkeypatch):
     v.generate_video = _no_playwright
     v.resume_video = _no_playwright
     sys.modules["video_worker_ui"] = v
-    d = types.ModuleType("dola_client")
-    d.CreditError = type("CreditError", (Exception,), {})
-    sys.modules["dola_client"] = d
 
     import server
 

@@ -1,8 +1,7 @@
 """视频生成 worker：复用 accounts/<账号> profile 登录态，页面内 fetch 提交视频生成，
 轮询 /im/chain/single 出片，拿到 download_url 后下载到 downloads/。
 
-协议字段全部来自 dola_client.py 的逆向成果（_build_video_body / _poll_video），
-传输层换成「真实浏览器页面内 fetch」以规避滑块风控。
+传输层用「真实浏览器页面内 fetch」以规避滑块风控。
 
 用法：python video_worker.py <账号名> "提示词" [比例] [时长秒]
 示例：python video_worker.py acc1 "一只猫在草地上追蝴蝶" 9:16 5
@@ -22,16 +21,17 @@ from patchright.async_api import async_playwright
 import config
 import proxy_store
 from browser import cookie_value, launch_account_context
-from dola_client import CREDIT_FAIL_PATTERN, CreditError
+from generation_errors import CreditError
+from upstream_reply import QUOTA_RE as CREDIT_FAIL_PATTERN
 from video_probe import SUBMIT_JS
 
-# 轮询 /im/chain/single（字段对齐 dola_client._request_im_chain / _poll_video）
+# 轮询 /im/chain/single
 # 注意：Content-Type 要带 encoding=utf-8，agw-js-conv 用 str（不是 "str, str"）
 POLL_JS = r"""
 async ({conversationId, msToken, fp}) => {
   // 2026-08 现行协议：body 必须包 uplink_body.pull_singe_chain_uplink_body，
   // anchor_index=MAX_SAFE_INTEGER + direction=1 拉最新；channel=2, version="1"。
-  // （dola_client.py 里的扁平 body 是旧协议，返回 712010202）
+  // （扁平 body 是旧协议，返回 712010202）
   const params = new URLSearchParams({
     version_code: "20800", language: "ja", device_platform: "web",
     doubao_device_platform: "web", aid: "495671", real_aid: "495671",

@@ -25,9 +25,6 @@ def _stubs():
     v.resume_video = _r
     sys.modules["video_worker_ui"] = v
 
-    d = _mod("dola_client")
-    d.CreditError = type("CreditError", (Exception,), {})
-    sys.modules["dola_client"] = d
 
     b = _mod("browser")
     b.EDGE_MARKER = ".dola-browser"

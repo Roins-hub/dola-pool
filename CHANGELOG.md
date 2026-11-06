@@ -1,5 +1,12 @@
 # 更新日志
 
+## 未发布
+
+### 项目
+
+- 项目自己的代码以 MIT 协议开源（见 `LICENSE`）。第三方扩展 `extensions/dola30/`、上游 SDK（`bdcaptcha.js`、`protocol/js/bdms-sdk.js`）和 `web/fonts/` 的字体不在授权范围内，见 README「许可协议」。
+- 移除 `dola_client.py`：它译自 GPL-3.0 的 doubao-free-api，不能以 MIT 发布；服务只用到其中的 `CreditError`（已移到 `generation_errors.py`）。依赖它的调试脚本 `debug.py`、`verify.py` 一并移除。
+
 ## 2.6.18 — 2026-11-03
 
 ### 生成流程

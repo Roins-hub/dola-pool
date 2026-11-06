@@ -36,9 +36,6 @@ def _stubs():
     v.generate_video = _gen
     v.resume_video = _gen
     sys.modules["video_worker_ui"] = v
-    d = types.ModuleType("dola_client")
-    d.CreditError = type("CreditError", (Exception,), {})
-    sys.modules["dola_client"] = d
     yield
 
 

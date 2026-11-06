@@ -1,6 +1,6 @@
 """browser_pool 与选号引擎/proxy_store 的集成验证。
 
-注入桩模块（video_worker_ui / dola_client），避免依赖 patchright/fastapi。
+注入桩模块（video_worker_ui），避免依赖 patchright/fastapi。
 """
 from __future__ import annotations
 
@@ -25,9 +25,6 @@ def _stubs():
     v.resume_video = _resume
     sys.modules["video_worker_ui"] = v
 
-    d = types.ModuleType("dola_client")
-    d.CreditError = type("CreditError", (Exception,), {})
-    sys.modules["dola_client"] = d
     yield
 
 

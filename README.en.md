@@ -303,8 +303,16 @@ See [`USAGE.md`](USAGE.md) for the full steps.
 - **dola watermark**: the pool downloads the watermark-free version of the same video from dola's own response (`lr=unwatermarked`) and does not alter the frames. The third-party parsing service is off by default (`DOLA_PURE_REMOVE_WATERMARK=0`); see [`USAGE.md`](USAGE.md#7-去水印说明) for how it works and the risks.
 - **Credentials**: `accounts/`, `*.db`, `dola.env`, `cookies.txt` and `downloads/` are git-ignored. Never commit real credentials.
 
+## License
+
+This project's own code is released under the [MIT License](LICENSE). The following are not part of this project and are not covered by it:
+
+- `extensions/dola30/`: a third-party extension; its license and rights belong to its author.
+- `bdcaptcha.js` and `protocol/js/bdms-sdk.js`: SDK files obtained from upstream web pages; all rights belong to their owners.
+- `web/fonts/`: IBM Plex fonts, under the [SIL Open Font License 1.1](web/fonts/OFL.txt).
+
 ## Disclaimer
 
-This repository is a personal record of learning and interoperability research, including reverse-engineered implementations of upstream web APIs. It contains no accounts, cookies, keys or working credentials. `extensions/dola30/` is a third-party extension; its license and rights belong to its author.
+This repository is a personal record of learning and interoperability research, including reverse-engineered implementations of upstream web APIs. It contains no accounts, cookies, keys or working credentials.
 
 Users must follow the terms of service of dola.com and doubao.com and the laws where they live, including rules on labelling AI-generated content, and assess their own account and compliance risks.

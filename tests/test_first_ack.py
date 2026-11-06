@@ -18,9 +18,6 @@ def _stubs():
     v.generate_video = lambda *a, **k: None
     v.resume_video = lambda *a, **k: None
     sys.modules.setdefault("video_worker_ui", v)
-    d = types.ModuleType("dola_client")
-    d.CreditError = type("CreditError", (Exception,), {})
-    sys.modules.setdefault("dola_client", d)
 
 
 _stubs()

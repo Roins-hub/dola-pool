@@ -29,7 +29,8 @@ import config
 import proxy_store
 from browser import cookie_value, launch_account_context
 from browser_feedback import BrowserReplies, emit as emit_feedback
-from dola_client import CREDIT_FAIL_PATTERN, CreditError
+from generation_errors import CreditError
+from upstream_reply import QUOTA_RE as CREDIT_FAIL_PATTERN
 from video_worker import POLL_JS, RiskControlError, _download, extract_unwatermarked_url
 
 # Dola 返回的每日上限文案（当前日文 UI 实测：動画生成の 1 日あたりの上限に達しました。）

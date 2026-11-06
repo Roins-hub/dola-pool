@@ -291,8 +291,16 @@ DOLA_MIN_SUBMIT_INTERVAL_SECONDS=15
 - **dola 水印**：号池下载的是 dola 返回数据里同一条视频的无水印版本（`lr=unwatermarked`），不对画面做处理。第三方解析接口默认关闭（`DOLA_PURE_REMOVE_WATERMARK=0`），原理与风险见 [`USAGE.md`](USAGE.md#7-去水印说明)。
 - **凭据安全**：`accounts/`、`*.db`、`dola.env`、`cookies.txt`、`downloads/` 都已加入忽略列表，切勿提交真实凭据。
 
+## 许可协议
+
+本项目自己的代码以 [MIT 协议](LICENSE) 开源。以下内容不属于本项目，不在 MIT 授权范围内：
+
+- `extensions/dola30/`：第三方扩展，授权与使用权归原作者。
+- `bdcaptcha.js`、`protocol/js/bdms-sdk.js`：从上游网页获取的 SDK，权利归其所有者。
+- `web/fonts/`：IBM Plex 字体，遵循 [SIL Open Font License 1.1](web/fonts/OFL.txt)。
+
 ## 免责声明
 
-本仓库是个人学习与互操作性研究记录，包含对上游网页接口的逆向实现。代码不含任何账号、Cookie、密钥或可用凭据。`extensions/dola30/` 为第三方扩展，授权与使用权归原作者。
+本仓库是个人学习与互操作性研究记录，包含对上游网页接口的逆向实现。代码不含任何账号、Cookie、密钥或可用凭据。
 
 使用者须自行遵守 dola.com、doubao.com 的服务条款及所在地法律法规，包括人工智能生成内容的标识要求，并自行评估账号与合规风险。

@@ -1,6 +1,10 @@
 """Failure stages shared by browser workers and the account scheduler."""
 
 
+class CreditError(Exception):
+    """Account has too little quota for this request: switch accounts, do not retry on it."""
+
+
 class PreSubmissionUploadError(TimeoutError):
     """Reference upload failed before a video generation request was submitted.
 

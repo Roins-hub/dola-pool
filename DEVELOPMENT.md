@@ -40,7 +40,7 @@
 
 ## 3. 核心技术路线演进（为什么这么做）
 
-1. **HTTP 逆向（aiohttp 裸请求）**——协议字段逆向成功（`dola_client.py`），但提交视频必触发鲨鱼风控滑块（`710022004 slide`）。
+1. **HTTP 逆向（aiohttp 裸请求）**——协议字段逆向成功，但提交视频必触发鲨鱼风控滑块（`710022004 slide`）。
 2. **页面内裸 fetch**——仍有滑块。根因：前端真实请求带 **`a_bogus` 签名**（webmssdk 生成），裸 fetch 没有，被风控一眼识破。
 3. **真实 UI 流（当前主线，已验证出片）**——点「创建视频」→ 输入 → 回车，由前端自己签名提交。风控仍可能弹滑块（headless + 机房 IP），但**滑块可解**（OpenCV 缺口 + 拟人轨迹），解完前端自动重试提交。
 4. 轮询出片协议已更新为 2026-08 现行版（见 §4.1），旧扁平 body 返回 `712010202`。
@@ -62,7 +62,7 @@
 - body 必须包 `uplink_body.pull_singe_chain_uplink_body`：
   `{conversation_id, anchor_index: Number.MAX_SAFE_INTEGER, conversation_type: 3, direction: 1, limit: 20, ext:{}, filter:{index_list:[]}}`
   外加 `sequence_id: uuid, channel: 2, version: "1"`。
-  （`dola_client.py` 里的扁平 body 是旧协议，返回 712010202，勿用。）
+  （扁平 body 是旧协议，返回 712010202，勿用。）
 - query 无需 msToken/a_bogus：`version_code=20800&language=ja&device_platform=web&doubao_device_platform=web&aid=495671&real_aid=495671&pkg_type=release_version&pc_version=3.32.61&doubao_pc_version=3.32.61&region=JP&sys_region=JP&samantha_web=1&web_platform=browser&use-olympus-account=1&web_tab_id=<uuid>`。
 - 出片判定：`downlink_body.pull_singe_chain_downlink_body.messages[].content`（JSON 字符串需 parse）里 `block_type=2074` 且 `creations[].type==2` → `video.download_url`（CDN 临时链接，带 `download=true`）。
 - `conversation_id` 获取：UI 提交后 URL 从 `/chat/local_<ts>` 变成 `/chat/<数字id>`。
@@ -131,7 +131,6 @@ F:\ai\视频逆向\dola-pool\
 ├── browser.py          # persistent context 统一启动（显式代理+反检测）★
 ├── store.py            # SQLite 任务表
 ├── config.py           # 环境变量配置（含 DOLA_PROXY/DOLA_PUBLIC_BASE）★改
-├── dola_client.py      # [历史] HTTP 逆向 SDK；轮询 body 已过期，仅留协议字段参考
 ├── pool.py             # [历史] aiohttp 号池（被 browser_pool 取代）
 ├── add_account.py        # [新] Google OAuth 自动登录加号（邮箱----密码----totp）★
 ├── login.py / verify_login.py   # 登录态采集/验证 ★改（显式代理）
@@ -153,8 +152,7 @@ F:\ai\视频逆向\dola-pool\
 3. **时长/比例选择器 best-effort**：UI 下拉选项文案未完全摸清，设置失败会落回默认 10s。
 4. **转存仍是本地静态**：`/videos/` 只在服务所在机可达；对外分发需 OSS 或公网机。
 5. **配额计数与 dola 实际积分可能漂移**（1 片=2 积分；UI 有剩余积分文案）。失败重试不记配额是有意保守。
-6. **dola_client.py 轮询 body 过期**（扁平结构），如复活 HTTP 版需按 §4.1 更新。
-7. **滑块兜底已实现但非 100%**：轨迹被拒时靠重试（最多 3 次）；连续失败需换 IP/冷却。
+6. **滑块兜底已实现但非 100%**：轨迹被拒时靠重试（最多 3 次）；连续失败需换 IP/冷却。
 
 ---
 

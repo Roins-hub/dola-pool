@@ -1,7 +1,7 @@
 """`/v1/videos` 请求体时长别名：new-api 的 sora 任务插件把 duration 改写成 seconds
 后转发过来，服务端必须一起认，否则 30 秒会被当成「没带时长」而落到默认 10 秒。
 
-注入桩模块（patchright / video_worker_ui / dola_client），避免依赖浏览器运行时。
+注入桩模块（patchright / video_worker_ui），避免依赖浏览器运行时。
 """
 from __future__ import annotations
 
@@ -38,9 +38,6 @@ def _stubs():
     v.resume_video = _resume
     sys.modules["video_worker_ui"] = v
 
-    d = types.ModuleType("dola_client")
-    d.CreditError = type("CreditError", (Exception,), {})
-    sys.modules["dola_client"] = d
     yield
 
 

@@ -319,9 +319,6 @@ def test_node_marked_dead_when_egress_unhealthy(tmp_path, monkeypatch):
     v.generate_video = _g
     v.resume_video = _r
     sys.modules["video_worker_ui"] = v
-    d = _types.ModuleType("dola_client")
-    d.CreditError = type("CreditError", (Exception,), {})
-    sys.modules["dola_client"] = d
 
     import browser_pool
     pid = _mk_extract()["id"]

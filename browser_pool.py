@@ -14,9 +14,8 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
-from dola_client import CreditError
 from generation_errors import (
-    PreSubmissionUploadError, PreSubmissionParametersError, RegionRestrictedError,
+    CreditError, PreSubmissionUploadError, PreSubmissionParametersError, RegionRestrictedError,
     UploadRouteError, UpstreamGenerationFailed, UpstreamReplyError, portrait_refusal,
 )
 from account_transport import diagnose_upload_route, egress_alive, redact_error
