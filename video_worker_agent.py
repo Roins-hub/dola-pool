@@ -18,6 +18,7 @@ import re
 import shutil
 import tempfile
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
@@ -55,6 +56,8 @@ QUIET_POLLS = 2
 ANSWER_GAP_POLLS = 3
 # 工具跑完、回复写完后这么多轮还没有视频 → 这条会话不会再出片
 SETTLED_POLLS = 6
+# 排队等名额时隔这么久报一次进度：看门狗 10 分钟没进度就把任务判成卡死
+SLOT_NOTE_SECONDS = 30
 THROTTLE_NOTE = "710022002 工作模式请求被 dola 拒绝，页面随后要退出登录（已拦下）"
 
 QUESTION_JS = r"""(selector) => {
@@ -95,6 +98,21 @@ def _work_slots() -> asyncio.Semaphore:
     if _slots is None:
         _slots = asyncio.Semaphore(max(1, config.WORK_15S_CONCURRENCY))
     return _slots
+
+
+@asynccontextmanager
+async def _work_slot(on_poll):
+    slots = _work_slots()
+    while True:
+        try:
+            await asyncio.wait_for(slots.acquire(), SLOT_NOTE_SECONDS)
+            break
+        except TimeoutError:
+            emit_feedback(on_poll, progress="工作模式：等前一单跑完（同一时间只跑一单）")
+    try:
+        yield
+    finally:
+        slots.release()
 
 
 class _WorkSession:
@@ -293,6 +311,7 @@ class _WorkSession:
             if await is_logged_out(self.page):
                 raise LoginExpiredError(f"{self.account} 工作模式生成中登录态失效")
             chain = await self.read_chain(query_text, conversation_id)
+            emit_feedback(self.on_poll, progress="工作模式：助手处理中")
             if chain is None:
                 continue
             found = video_models(chain)
@@ -329,8 +348,6 @@ class _WorkSession:
                 emit_feedback(self.on_poll, progress=f"工作模式：已{how}：{reply[:60]}")
                 await self.answer(reply)
                 stable, since_answer = 0, 0
-                continue
-            emit_feedback(self.on_poll, progress="工作模式：助手处理中")
         raise TimeoutError(f"{self.account} 工作模式等待超时，可能仍在生成，不换号重提")
 
 
@@ -383,7 +400,7 @@ async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
                               reference_image_paths: list[str] | None = None) -> dict:
     """工作模式出一条 15 秒。发送前的失败可以换号；发送后超时不换号，避免重复出片。"""
     text = build_prompt(prompt, ratio)
-    async with _work_slots():
+    async with _work_slot(on_poll):
         profile = tempfile.mkdtemp(prefix="dola-work-")
         context = None
         try:

@@ -2043,6 +2043,7 @@ function quotaCell(x,unit){
 function loadAccounts(){
   if(accountLoad)return accountLoad;
   accountLoad=Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]).then(([a,j])=>{
+    if(Array.isArray(a.v20_durations)&&a.v20_durations.length)TEST_GEN_DURATIONS['seedance-2.0-fast']=a.v20_durations;
     accountSnapshot={a,j};renderAccounts();
   }).finally(()=>{accountLoad=null;});
   return accountLoad;
@@ -2282,12 +2283,13 @@ function openTestGen(name){
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
       <button class="btn btn-p" id="tg_btn" onclick="submitTestGen('${name}')">开始生成</button></div>`);
 }
-/** 测试生成的时长档位：seedance-2.0-fast 上游只剩 5/10 秒；其它模型保持原有选项。 */
+/** 测试生成的时长档位：seedance-2.0-fast 由后端下发（开了工作模式才有 15 秒）；其它模型保持原有选项。 */
 const TEST_GEN_DURATIONS={'seedance-2.0-fast':[5,10]};
 function testGenDurationOptions(model,current){
   const list=TEST_GEN_DURATIONS[model]||[5,10,15,30];
   const pick=list.includes(Number(current))?Number(current):list[0];
-  return list.map(d=>`<option value="${d}"${d===pick?' selected':''}>${d}</option>`).join('');
+  const label=d=>model==='seedance-2.0-fast'&&d===15?'15（工作模式，约 6 分钟）':d;
+  return list.map(d=>`<option value="${d}"${d===pick?' selected':''}>${label(d)}</option>`).join('');
 }
 function syncTestGenDurations(){
   const sel=q('#tg_duration');if(!sel)return;

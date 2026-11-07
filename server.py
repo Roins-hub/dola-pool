@@ -2575,6 +2575,7 @@ async def admin_accounts(x_admin_key: str | None = Header(default=None)):
         acc["exit_probe_ok"] = bool(sess.get("last_probe_ok"))
         acc["exit_probe_detail"] = sess.get("last_probe_detail", "")
     return {
+        "v20_durations": list(config.V20_DURATIONS),
         "accounts": accounts,
         "engine": pool.engine_snapshot(),
         "next_reset_at": pool.next_quota_reset_at(),

@@ -1,4 +1,5 @@
 """工作模式等待循环：确认只回一次、被拒绝立即停、回复结束却没片要报错（假页面）。"""
+import asyncio
 import importlib.util
 import json
 import sys
@@ -197,6 +198,45 @@ def test_finished_tool_run_without_video_does_not_resubmit(monkeypatch):
         wait(item)
     assert caught.value.generation_started is True
     assert page.typed == []
+
+
+def test_waiting_for_a_slot_keeps_reporting_progress(monkeypatch):
+    # 第二单排队时没有进度，前一单超过 10 分钟就会被看门狗判卡死、重派
+    agent = load_agent(monkeypatch)
+    monkeypatch.setattr(agent.config, "WORK_15S_CONCURRENCY", 1)
+    monkeypatch.setattr(agent, "SLOT_NOTE_SECONDS", 0.01)
+    notes = []
+
+    async def scenario():
+        async with agent._work_slot(None):
+            waiter = asyncio.ensure_future(hold(agent, notes))
+            await asyncio.sleep(0.05)
+            assert not waiter.done()
+        await waiter
+    _run(scenario())
+    assert notes and notes[-1] == "got slot"
+    assert any("等前一单" in note for note in notes)
+
+
+async def hold(agent, notes):
+    async with agent._work_slot(lambda now, progress=None, **kw: notes.append(progress)):
+        notes.append("got slot")
+
+
+def test_failed_chain_read_still_reports_progress(monkeypatch):
+    page = Page([bot("", False)])
+    _, item = session(monkeypatch, page)
+    seen = []
+    item.on_poll = lambda now, progress=None, **kw: seen.append(progress)
+
+    async def unreadable(query, conversation_id):
+        if len(seen) >= 3:
+            item.logouts.append("/passport/web/logout/")
+        return None
+    item.read_chain = unreadable
+    with pytest.raises(Exception, match="710022002"):
+        wait(item)
+    assert len(seen) >= 3
 
 
 def test_deadline_reports_a_timeout_without_resubmitting(monkeypatch):

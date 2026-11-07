@@ -1,5 +1,6 @@
 """2.0 的 15 秒走工作模式：什么时候走、提示词、会话解析、派发和记账（2026-11-07）。"""
 import json
+import runpy
 
 import pytest
 
@@ -160,3 +161,10 @@ def test_pure_cookie_account_never_opens_work_mode(tmp_path, monkeypatch):
     bp._conn.commit()
     _dispatch(bp, "acc1")
     assert fake.calls == []
+
+
+@pytest.mark.parametrize("flag,expected", [("1", (5, 10, 15)), ("0", (5, 10))])
+def test_switch_decides_whether_20_offers_15_seconds(monkeypatch, flag, expected):
+    monkeypatch.setenv("DOLA_WORK_15S", flag)
+    monkeypatch.delenv("DOLA_V20_DURATIONS", raising=False)
+    assert runpy.run_path(config.__file__)["V20_DURATIONS"] == expected

@@ -152,10 +152,11 @@ Fields, error codes and admin endpoints are in [`API.md`](API.md).
 | Model | Duration | Points per video (4 per account per day by default) |
 |---|---|---|
 | `seedance-2.5` | 5 / 10 / 30 s | 5 s = 2, 10 s = 4, 30 s = 2 (4 in total when the second half has to be generated separately) |
-| `seedance-2.0-fast` | 5 / 10 s | 5 s = 2, 10 s = 4 |
+| `seedance-2.0-fast` | 5 / 10 s, plus 15 s with Work mode on | 5 s = 2, 10 s = 4; 15 s cost unknown |
 
 - **Output and references**: 1280×720, 24 fps, H.265. Up to 10 reference images; reference audio and video are not supported.
-- **15 seconds**: 15 s on seedance-2.5 costs 12 points, more than a free account gets per day, so it is rejected with 422. dola has retired 15 s for seedance-2.0-fast.
+- **15 s on 2.0 (optional)**: set `DOLA_WORK_15S=1` to route it through Dola Work mode, with reference images. It needs CloakBrowser and the Docker image does not include it. The assistant may rewrite the prompt, one video takes about 6 minutes, and an account that made one is not used again that day.
+- **15 seconds**: 15 s on seedance-2.5 costs 12 points, more than a free account gets per day, so it is rejected with 422. On seedance-2.0-fast, 15 s is gone from normal chat and is only available through Work mode above.
 - **30 seconds**: controlled by `DOLA_30S_MODE`.
   - `reject` (default): rejected.
   - `pair` (recommended): requests 30 s as is. dola usually delivers the full 30 s for 2 points; when it only delivers half, the second half is generated and stitched locally. Cookie-imported accounts only.
