@@ -27,6 +27,7 @@ from pure_api_gen import (
     AbnormalNoAckError, ShortClipError, UnsupportedDurationError, ensure_web_playable,
     generate_pure_video, hello_probe, probe_login,
 )
+from work_reply import QUOTA_NOTE as WORK_QUOTA_NOTE, uses_work_mode
 import config
 import cred_store
 import failure_text
@@ -1652,7 +1653,17 @@ class BrowserPool:
                 reference_image_paths=reference_image_paths,
             )
             return await self._web_playable(result)
-        if pure_state is not None and self._is_cookie_source(account) and not is_cloak_cookie_account(account):
+        pure_cookie = (pure_state is not None and self._is_cookie_source(account)
+                       and not is_cloak_cookie_account(account))
+        if uses_work_mode(model, duration) and not pure_cookie:
+            # 2.0 的 15 秒：工作模式，实际扣点未知，先按当天额度用完算
+            from video_worker_agent import generate_work_video
+            result = await generate_work_video(
+                account, prompt, ratio, on_conversation_id=on_conversation_id, on_poll=on_poll,
+                reference_image_paths=reference_image_paths)
+            self._set_credit_balance(account, 0, WORK_QUOTA_NOTE)
+            return await self._web_playable(result)
+        if pure_cookie:
             # cookie 号：纯 API 出片；失败抛真实错误，不再回退浏览器
             result = await asyncio.to_thread(
                 generate_pure_video,

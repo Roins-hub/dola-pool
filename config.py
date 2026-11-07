@@ -281,6 +281,14 @@ V20_START_POINTS = int(os.getenv("DOLA_V20_START_POINTS", "2"))
 # seedance-2.0(-fast) 能出的原生档位：2026-10-29 上游只剩 5/10 秒（15 秒已下线）；其余都必须走 2.5。
 V20_DURATIONS = tuple(int(x) for x in os.getenv("DOLA_V20_DURATIONS", "5,10").split(",") if x.strip())
 
+# 工作模式出 15 秒（见 video_worker_agent）：2.0 在普通聊天里只有 5/10 秒。默认关闭。
+# 需要 CloakBrowser；有头运行，一单占约 6 分钟，所以默认同一时间只跑一单。
+WORK_15S_ENABLED = os.getenv("DOLA_WORK_15S", "0") == "1"
+WORK_15S_TIMEOUT = int(os.getenv("DOLA_WORK_15S_TIMEOUT", "1500"))
+WORK_15S_CONCURRENCY = int(os.getenv("DOLA_WORK_15S_CONCURRENCY", "1"))
+if WORK_15S_ENABLED and 15 not in V20_DURATIONS:
+    V20_DURATIONS = (*V20_DURATIONS, 15)
+
 # ---- 时长白名单 ----
 # 原生档位：上游 UI 直出的四个选项，**任何情况下都放行**。30 秒是线上主力流量，
 # 绝不能被下面的上限夹掉（夹了就是把 30 秒片悄悄变成 15 秒片）。

@@ -149,8 +149,8 @@ else
   c_ok "已生成配置：$ENV_FILE"
 fi
 
-# 严格 Cookie 模式才安装可选 CloakBrowser wrapper；默认纯 API 部署不下载它。
-if grep -qE '^DOLA_COOKIE_RUNTIME=cloak([[:space:]]*|$)' "$ENV_FILE"; then
+# 严格 Cookie 模式或工作模式 15 秒才安装可选 CloakBrowser wrapper；默认纯 API 部署不下载它。
+if grep -qE '^(DOLA_COOKIE_RUNTIME=cloak|DOLA_WORK_15S=1)([[:space:]]*|$)' "$ENV_FILE"; then
   if [ -f "$DOLA_DIR/deploy-cloak-requirements.txt" ]; then
     c_info "安装 CloakBrowser Python wrapper（严格 Cookie 隔离模式）..."
     as_user "$DOLA_DIR/.venv/bin/pip" install -q -r "$DOLA_DIR/deploy-cloak-requirements.txt"

@@ -847,7 +847,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         # 放长到 DOLA_PURE_TIMEOUT_MAX，这里若只留 VIDEO_TIMEOUT（300 秒）会把它半路掐断。
         # 出片等待跟着 dola 的预计动态放长，最长 WAIT_HARD_MAX：兜底总超时要容得下
         last_attempt_wait = max(config.VIDEO_TIMEOUT, config.PURE_API_TIMEOUT,
-                                config.PURE_API_TIMEOUT_MAX, config.WAIT_HARD_MAX)
+                                config.PURE_API_TIMEOUT_MAX, config.WAIT_HARD_MAX,
+                                config.WORK_15S_TIMEOUT)
         if int(duration or 0) > 15 and config.LONG_VIDEO_MODE == "pair":
             # 30 秒每次出片最多等 LONG_VIDEO_TIMEOUT_MAX；只出了半截还要补后半段：最多等两次
             last_attempt_wait = 2 * max(last_attempt_wait, config.LONG_VIDEO_TIMEOUT_MAX)
