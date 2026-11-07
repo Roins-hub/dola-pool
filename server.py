@@ -3695,11 +3695,18 @@ async def _cred_try_refresh_once() -> None:
         creds = cred_store.load(name)
         if not creds or not creds.get("email") or not creds.get("password"):
             continue
+        # 重登要开这个号的浏览器 profile：必须持有账号锁，否则删除会和浏览器抢目录
+        # （2026-11-07 acc144：删到一半 Directory not empty，profile 只剩一部分）
+        if acct.get("busy"):
+            continue
         LAST_CRED_REFRESH[name] = now
         print(f"[cred-refresh] 尝试自动刷新账号 {name}", flush=True)
         try:
-            async with ADD_ACCOUNT_SEM:
+            async with ADD_ACCOUNT_SEM, pool._use_account(name, "verifying"):
+                if name not in pool.accounts:       # 排队期间号被删了
+                    continue
                 ADD_SEM_HOLDER["what"] = f"{name} 自动重登"
+                pool._phases[name] = "登录已失效，正在自动重新登录"
                 await add_account_flow(
                     name, creds["email"], creds["password"], creds.get("totp") or "",
                     force_login=True)

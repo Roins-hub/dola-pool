@@ -1122,10 +1122,21 @@ class BrowserPool:
     def delete_account(self, name: str):
         lock = self._locks.get(name)
         if lock and lock.locked():
-            raise RuntimeError("账号正在出片，不能删除")
+            # 账号锁不止出片会占：验证、重新登录、探测都会，提示要说实话
+            doing = {"generating": "正在出片", "probing": "正在探测"}.get(
+                self._activities.get(name), "正在验证或重新登录")
+            raise RuntimeError(f"账号{doing}，完成后才能删除")
         d = self.accounts_dir / name
-        if d.exists():
-            shutil.rmtree(d)
+        for attempt in range(3):
+            try:
+                if d.exists():
+                    shutil.rmtree(d)
+                break
+            except OSError as exc:
+                # 浏览器刚退出时还会往 profile 里写几个文件；账号记录先留着，下次可以接着删
+                if attempt == 2:
+                    raise RuntimeError("账号目录还被浏览器占用，这次没删完，请稍后再点一次删除") from exc
+                time.sleep(1)
         # 代理绑定 / 出口会话 / 今日额度都要一起清掉：否则同名新号（尤其是自动命名的 acc1）
         # 会继承旧状态 —— 表现为导入/出片时莫名套上一个旧代理（socks5 带鉴权时浏览器直接起不来），
         # 或者今天的额度一开始就被算掉。
