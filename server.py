@@ -40,6 +40,7 @@ import sites
 import updater
 import upscale
 import dola_responder
+import work_reply
 import video_link
 from prompt_context import dispatch_prompt, reference_supplement
 from add_account import add_account_flow
@@ -92,7 +93,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.17.0"
+APP_VERSION = "2.17.1"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -1184,6 +1185,7 @@ async def resume_incomplete_tasks():
     """服务重启后恢复已受理会话，并重新排队尚未开始的 queued 任务。"""
     open_thread_pool()
     _load_responder()
+    work_reply.apply_saved(store.get_setting(WORK_15S_KEY))
     # 先处理崩溃时留下的 processing 孤儿任务（有 conversation 保留续轮询，
     # 无 conversation 清空账号重新派号），避免永久卡死。
     stale_refs = sweep_stale_references()
@@ -1954,6 +1956,28 @@ async def admin_upscale_settings_save(body: UpscaleSettingsPatch, x_admin_key: s
 
 # ---------------------------------------------------------------- AI 代答（dola_responder 第二层）
 RESPONDER_KEY = "ai_responder"
+WORK_15S_KEY = "work_15s"
+
+
+class Work15Patch(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/admin/settings/work-15s")
+async def admin_work_15s_settings(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return work_reply.settings_view()
+
+
+@app.patch("/api/admin/settings/work-15s")
+async def admin_work_15s_save(body: Work15Patch, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    reason = work_reply.unavailable_reason()
+    if body.enabled and reason:
+        raise HTTPException(422, reason)
+    store.set_setting(WORK_15S_KEY, "1" if body.enabled else "0")
+    config.set_work_15s(body.enabled)
+    return work_reply.settings_view()
 
 
 class ResponderPatch(BaseModel):

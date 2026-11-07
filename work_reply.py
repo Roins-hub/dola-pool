@@ -1,4 +1,5 @@
 """工作模式 15 秒的纯逻辑：是否走这条路、提示词、会话内容解析。不碰浏览器，便于单测。"""
+import importlib.util
 import json
 import re
 
@@ -7,6 +8,27 @@ import config
 WORK_DURATION = 15
 CONFIRM_RE = re.compile(r"确认|確認")
 QUOTA_NOTE = "工作模式出过 15 秒：实际扣点未知，按今日额度用完处理，次日恢复"
+
+
+def unavailable_reason() -> str:
+    """这个环境开不了时说明原因；能开时返回空串。"""
+    if importlib.util.find_spec("cloakbrowser") is None:
+        return ("当前环境没有安装 CloakBrowser，开不了。Docker 镜像暂不支持；"
+                "服务器脚本部署可安装 deploy-cloak-requirements.txt 后重启服务。")
+    return ""
+
+
+def settings_view() -> dict:
+    reason = unavailable_reason()
+    return {"enabled": config.WORK_15S_ENABLED, "available": not reason, "reason": reason,
+            "v20_durations": list(config.V20_DURATIONS)}
+
+
+def apply_saved(saved: str | None) -> dict:
+    """启动时恢复：面板存过就听面板，没存过沿用环境变量；环境不支持时一律关闭。"""
+    wanted = saved == "1" if saved in ("0", "1") else config.WORK_15S_ENABLED
+    config.set_work_15s(wanted and not unavailable_reason())
+    return settings_view()
 
 
 def uses_work_mode(model: str, duration) -> bool:

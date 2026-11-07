@@ -155,7 +155,7 @@ Fields, error codes and admin endpoints are in [`API.md`](API.md).
 | `seedance-2.0-fast` | 5 / 10 s, plus 15 s with Work mode on | 5 s = 2, 10 s = 4; 15 s cost unknown |
 
 - **Output and references**: 1280×720, 24 fps, H.265. Up to 10 reference images; reference audio and video are not supported.
-- **15 s on 2.0 (optional)**: set `DOLA_WORK_15S=1` to route it through Dola Work mode, with reference images. It needs CloakBrowser and the Docker image does not include it. The assistant may rewrite the prompt, one video takes about 6 minutes, and an account that made one is not used again that day.
+- **15 s on 2.0 (optional)**: turn on "2.0 的 15 秒" in the panel settings menu to route it through Dola Work mode, with reference images. It takes effect at once. It needs CloakBrowser and the Docker image does not include it. The assistant may rewrite the prompt, one video takes about 6 minutes, and an account that made one is not used again that day.
 - **15 seconds**: 15 s on seedance-2.5 costs 12 points, more than a free account gets per day, so it is rejected with 422. On seedance-2.0-fast, 15 s is gone from normal chat and is only available through Work mode above.
 - **30 seconds**: controlled by `DOLA_30S_MODE`.
   - `reject` (default): rejected.

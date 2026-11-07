@@ -737,6 +737,7 @@ input[type=checkbox]:active{transform:scale(.88)}
           <button role="menuitem" onclick="closeTopMenu();openConcurrencySettings()">全局并发</button>
           <button role="menuitem" onclick="closeTopMenu();openUpscaleSettings()">视频超分</button>
           <button role="menuitem" onclick="closeTopMenu();openResponderSettings()">AI 代答</button>
+          <button role="menuitem" onclick="closeTopMenu();openWork15Settings()">2.0 的 15 秒</button>
           <button role="menuitem" onclick="closeTopMenu();openStress()">压力测试</button>
         </div>
       </div>
@@ -1476,6 +1477,37 @@ function watchUpdate(){
     updatePollTimer=setTimeout(tick,1200);
   };
   updatePollTimer=setTimeout(tick,800);
+}
+
+/* ---- 2.0 的 15 秒：走 Dola 工作模式，开关即时生效 ---- */
+async function openWork15Settings(){
+  showDlg(`<h2>2.0 的 15 秒</h2><p class="hint">正在读取设置…</p>`);
+  const epoch=dialogEpoch;
+  try{
+    const c=await api('/api/admin/settings/work-15s');
+    if(epoch!==dialogEpoch)return;
+    const off=c.available?'':'disabled';
+    showDlg(`<h2>2.0 的 15 秒</h2>
+      <p class="hint">开启后，seedance-2.0-fast 请求 15 秒时走 Dola 工作模式，支持参考图。一单约 6 分钟，同一时间只跑一单；助手可能改写提示词；实际扣点未知，出过一条的号当天不再派发。</p>
+      ${c.reason?`<p class="hint" role="alert" style="color:var(--red)">${esc(c.reason)}</p>`:''}
+      <label class="sw-row" style="margin-top:14px"><span class="sw"><input type="checkbox" id="w15Enabled" ${c.enabled?'checked':''} ${off}><i></i></span>开启</label>
+      <div id="w15Feedback" class="tiny" role="status" style="margin:10px 0;min-height:18px"></div>
+      <div class="row"><button class="btn" onclick="hide('dlg')">关闭</button>
+        <button class="btn btn-p" id="w15Save" onclick="saveWork15Settings()" ${off}>保存</button></div>`);
+  }catch(e){
+    if(epoch===dialogEpoch&&e.message!=='unauthorized')showDlg(`<h2>2.0 的 15 秒</h2><p role="alert">${esc(e.message)}</p>
+      <div class="row"><button class="btn" onclick="hide('dlg')">关闭</button></div>`);
+  }
+}
+async function saveWork15Settings(){
+  const fb=q('#w15Feedback'),btn=q('#w15Save');if(!btn||btn.disabled)return;
+  btn.disabled=true;fb.textContent='正在保存…';
+  try{
+    const c=await api('/api/admin/settings/work-15s',{method:'PATCH',body:{enabled:q('#w15Enabled').checked}});
+    TEST_GEN_DURATIONS['seedance-2.0-fast']=c.v20_durations;
+    fb.textContent=c.enabled?'已开启，立即生效。测试生成现在可以选 15 秒。':'已关闭，立即生效。';
+  }catch(e){if(e.message!=='unauthorized')fb.textContent='保存失败：'+e.message;}
+  finally{btn.disabled=false;}
 }
 
 /* ---- AI 代答：dola 追问时，通用回复用完仍不开工，交给兼容 OpenAI 的模型写一句回复 ---- */
@@ -2269,6 +2301,7 @@ function openTestGen(name){
     <select id="tg_duration" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
       ${testGenDurationOptions(isDoubao?'doubao-seedance-2.0-mini':'seedance-2.0-fast')}
     </select>
+    <div id="tg_hint" class="tiny" style="margin-top:6px">${testGenHint(isDoubao?'doubao-seedance-2.0-mini':'seedance-2.0-fast')}</div>
     <label>尺寸 / 画幅</label>
     <select id="tg_ratio" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
       <option value="16:9" selected>16:9</option>
@@ -2291,9 +2324,14 @@ function testGenDurationOptions(model,current){
   const label=d=>model==='seedance-2.0-fast'&&d===15?'15（工作模式，约 6 分钟）':d;
   return list.map(d=>`<option value="${d}"${d===pick?' selected':''}>${label(d)}</option>`).join('');
 }
+function testGenHint(model){
+  const off=model==='seedance-2.0-fast'&&!TEST_GEN_DURATIONS[model].includes(15);
+  return off?'需要 15 秒？<a href="#" onclick="openWork15Settings();return false">去开启</a>':'';
+}
 function syncTestGenDurations(){
   const sel=q('#tg_duration');if(!sel)return;
   sel.innerHTML=testGenDurationOptions(q('#tg_model').value,sel.value);
+  q('#tg_hint').innerHTML=testGenHint(q('#tg_model').value);
 }
 async function submitTestGen(name,force){
   const prompt=q('#tg_prompt').value.trim();

@@ -283,11 +283,22 @@ V20_DURATIONS = tuple(int(x) for x in os.getenv("DOLA_V20_DURATIONS", "5,10").sp
 
 # 工作模式出 15 秒（见 video_worker_agent）：2.0 在普通聊天里只有 5/10 秒。默认关闭。
 # 需要 CloakBrowser；有头运行，一单占约 6 分钟，所以默认同一时间只跑一单。
-WORK_15S_ENABLED = os.getenv("DOLA_WORK_15S", "0") == "1"
+# 环境变量只是默认值，面板开关保存后以面板为准（见 work_reply.apply_saved）。
+WORK_15S_ENABLED = False
+V20_BASE_DURATIONS = V20_DURATIONS
 WORK_15S_TIMEOUT = int(os.getenv("DOLA_WORK_15S_TIMEOUT", "1500"))
 WORK_15S_CONCURRENCY = int(os.getenv("DOLA_WORK_15S_CONCURRENCY", "1"))
-if WORK_15S_ENABLED and 15 not in V20_DURATIONS:
-    V20_DURATIONS = (*V20_DURATIONS, 15)
+
+
+def set_work_15s(enabled: bool) -> None:
+    """运行中切换：2.0 能下发的时长跟着变，不用重启。"""
+    global WORK_15S_ENABLED, V20_DURATIONS
+    WORK_15S_ENABLED = bool(enabled)
+    keep = () if 15 in V20_BASE_DURATIONS or not enabled else (15,)
+    V20_DURATIONS = (*V20_BASE_DURATIONS, *keep)
+
+
+set_work_15s(os.getenv("DOLA_WORK_15S", "0") == "1")
 
 # ---- 时长白名单 ----
 # 原生档位：上游 UI 直出的四个选项，**任何情况下都放行**。30 秒是线上主力流量，

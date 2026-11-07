@@ -150,7 +150,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `seedance-2.0-fast` | 5 / 10 秒，开启工作模式后加 15 秒 | 5 秒 = 2、10 秒 = 4；15 秒实际扣点未知 |
 
 - **输出与参考图**：成片 1280×720、24fps、H.265。参考图最多 10 张，不支持参考音频和视频。
-- **2.0 的 15 秒（可选）**：设置 `DOLA_WORK_15S=1` 后走 Dola 工作模式，支持参考图。需要 CloakBrowser，Docker 镜像暂不支持；助手可能改写提示词，一单约 6 分钟，出过一条的号当天不再派发。
+- **2.0 的 15 秒（可选）**：在面板右上角设置里打开「2.0 的 15 秒」，立即生效，走 Dola 工作模式，支持参考图。需要 CloakBrowser，Docker 镜像暂不支持；助手可能改写提示词，一单约 6 分钟，出过一条的号当天不再派发。
 - **15 秒**：seedance-2.5 的 15 秒要 12 点，超过免费号每天的额度，会直接拒绝（422）；seedance-2.0-fast 的 15 秒在普通聊天里已下线，只能走上面的工作模式。
 - **30 秒**：由 `DOLA_30S_MODE` 决定。默认 `reject` 直接拒绝。推荐设 `pair`：先原样请求 30 秒，dola 多数会出满，只扣 2 点；只出了半截时，再补一次后半段并本地拼接。只能派给 Cookie 导入的号。详见 [issue #4](https://github.com/Roins-hub/dola-pool/issues/4)。
 - **2.0 的名字**：`seedance-2.0-fast` 就是网页上的「Seedance 2.0 Fast」，旧名 `seedance-2.0` 仍可用。

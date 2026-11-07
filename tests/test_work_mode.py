@@ -168,3 +168,32 @@ def test_switch_decides_whether_20_offers_15_seconds(monkeypatch, flag, expected
     monkeypatch.setenv("DOLA_WORK_15S", flag)
     monkeypatch.delenv("DOLA_V20_DURATIONS", raising=False)
     assert runpy.run_path(config.__file__)["V20_DURATIONS"] == expected
+
+
+@pytest.fixture
+def switch_state(monkeypatch):
+    monkeypatch.setattr(config, "V20_BASE_DURATIONS", (5, 10))
+    monkeypatch.setattr(config, "V20_DURATIONS", (5, 10))
+    monkeypatch.setattr(config, "WORK_15S_ENABLED", False)
+    monkeypatch.setattr(wr, "unavailable_reason", lambda: "")
+
+
+def test_panel_switch_takes_effect_without_restart(switch_state):
+    config.set_work_15s(True)
+    assert config.V20_DURATIONS == (5, 10, 15) and wr.uses_work_mode("seedance-2.0", 15)
+    config.set_work_15s(False)
+    assert config.V20_DURATIONS == (5, 10) and not wr.uses_work_mode("seedance-2.0", 15)
+
+
+@pytest.mark.parametrize("saved,env_default,expected", [
+    ("1", False, True), ("0", True, False), (None, True, True), (None, False, False),
+])
+def test_saved_panel_choice_beats_the_environment_default(switch_state, saved, env_default, expected):
+    config.set_work_15s(env_default)
+    assert wr.apply_saved(saved)["enabled"] is expected
+
+
+def test_environment_without_cloak_stays_off_and_says_why(switch_state, monkeypatch):
+    monkeypatch.setattr(wr, "unavailable_reason", lambda: "没有安装")
+    view = wr.apply_saved("1")
+    assert view == {"enabled": False, "available": False, "reason": "没有安装", "v20_durations": [5, 10]}
