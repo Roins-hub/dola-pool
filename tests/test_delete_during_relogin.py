@@ -1,9 +1,9 @@
 """删除账号不能和后台重登抢目录，提示要说清账号在做什么（2026-11-07 acc144）。"""
 import shutil
+import time
 
 import pytest
 
-import browser_pool
 from test_account_throttle import _pool
 from test_task_deadline import _run
 
@@ -30,7 +30,7 @@ def test_delete_retries_and_keeps_the_record_when_the_folder_is_in_use(tmp_path,
         raise OSError(39, "Directory not empty")
 
     monkeypatch.setattr(shutil, "rmtree", busy)
-    monkeypatch.setattr(browser_pool.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(time, "sleep", lambda *_: None)
     with pytest.raises(RuntimeError, match="稍后再点一次删除"):
         bp.delete_account("acc1")
     assert len(calls) == 3 and bp._meta("acc1")           # 记录还在，可以再删一次
