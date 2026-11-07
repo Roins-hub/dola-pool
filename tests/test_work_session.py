@@ -215,12 +215,152 @@ def test_waiting_for_a_slot_keeps_reporting_progress(monkeypatch):
         await waiter
     _run(scenario())
     assert notes and notes[-1] == "got slot"
-    assert any("等前一单" in note for note in notes)
+    assert any("排队中" in note for note in notes)
 
 
 async def hold(agent, notes):
     async with agent._work_slot(lambda now, progress=None, **kw: notes.append(progress)):
         notes.append("got slot")
+
+
+def test_changing_concurrency_applies_to_new_jobs(monkeypatch):
+    agent = load_agent(monkeypatch)
+    monkeypatch.setattr(agent.config, "WORK_15S_CONCURRENCY", 2)
+    first = agent._work_slots()
+    assert agent._work_slots() is first
+    monkeypatch.setattr(agent.config, "WORK_15S_CONCURRENCY", 3)
+    assert agent._work_slots() is not first
+
+
+def test_queue_note_appears_at_once_when_every_slot_is_busy(monkeypatch):
+    agent = load_agent(monkeypatch)
+    monkeypatch.setattr(agent.config, "WORK_15S_CONCURRENCY", 1)
+    monkeypatch.setattr(agent, "SLOT_NOTE_SECONDS", 10)
+    notes = []
+
+    async def scenario():
+        async with agent._work_slot(None):
+            waiter = asyncio.ensure_future(hold(agent, notes))
+            await asyncio.sleep(0.01)
+            assert notes and "排队中" in notes[0]
+        await waiter
+    _run(scenario())
+
+
+class SkillPage(Page):
+    """菜单只有输入名字筛选后才露出 Creative video。"""
+    def __init__(self):
+        super().__init__([])
+        self.keys = ""
+
+    def get_by_text(self, pattern):
+        page, target = self, Target()
+
+        async def count():                # 真实 locator 每次重新查询
+            return 1 if "Creative" in page.keys else 0
+        target.count = count
+        return target
+
+    @property
+    def keyboard(self):
+        return self
+
+    @keyboard.setter
+    def keyboard(self, value):
+        pass
+
+    async def type(self, text, delay=0):
+        self.keys += text
+
+    async def press(self, key):
+        pass
+
+
+def test_skill_is_found_by_filtering_the_menu(monkeypatch):
+    page = SkillPage()
+    _, item = session(monkeypatch, page)
+    _run(item.choose_skill())
+    assert page.keys == "/Creative"
+
+
+class SendPage(Page):
+    """evaluate 返回输入框内容；可以配置前几次写不进去、回车不发送。"""
+    def __init__(self, lost_writes=0, enter_sends=True, button_sends=True):
+        super().__init__([])
+        self.text, self.lost, self.enter_sends, self.button_sends = "", lost_writes, enter_sends, button_sends
+        self.session, self.clicks = None, 0
+        self.keyboard = self
+
+    async def insert_text(self, text):
+        if self.lost > 0:
+            self.lost -= 1
+        else:
+            self.text = text
+
+    async def press(self, key):
+        if key == "Enter" and self.enter_sends:
+            self.session.sent.append("completion")
+
+    async def evaluate(self, script, args):
+        return self.text
+
+    def locator(self, selector):
+        target, page = Target(), self
+
+        async def click(**kwargs):
+            if "send_button" in selector:
+                page.clicks += 1
+                if page.button_sends:
+                    page.session.sent.append("completion")
+        target.click = click
+        return target
+
+
+def send_session(monkeypatch, **options):
+    page = SendPage(**options)
+    agent, item = session(monkeypatch, page)
+    page.session = item
+    return agent, item, page
+
+
+def test_prompt_is_retyped_when_the_composer_loses_it(monkeypatch):
+    _, item, page = send_session(monkeypatch, lost_writes=2)
+    _run(item.fill_prompt("一只橘猫在沙滩上慢慢走，15s"))
+    assert page.text.startswith("一只橘猫")
+
+
+def test_prompt_that_never_lands_is_reported_before_sending(monkeypatch):
+    agent, item, _ = send_session(monkeypatch, lost_writes=9)
+    with pytest.raises(agent.PreSubmissionParametersError, match="没有写进输入框"):
+        _run(item.fill_prompt("一只橘猫在沙滩上慢慢走，15s"))
+
+
+def test_send_button_is_used_when_enter_does_nothing(monkeypatch):
+    # acc22：回车后 15 秒没有请求
+    _, item, page = send_session(monkeypatch, enter_sends=False)
+    _run(item.press_send())
+    assert page.clicks == 1
+
+
+def test_unsent_request_says_what_was_left_in_the_composer(monkeypatch):
+    agent, item, page = send_session(monkeypatch, enter_sends=False, button_sends=False)
+    page.text = "一只橘猫"
+    with pytest.raises(agent.PreSubmissionParametersError, match="输入框内容：一只橘猫"):
+        _run(item.press_send())
+    assert page.clicks == 3
+
+
+def test_cloak_goes_through_the_local_relay_for_socks_auth(monkeypatch):
+    agent = load_agent(monkeypatch)
+    seen = {}
+
+    async def launch(profile, **kwargs):
+        seen.update(kwargs)
+        return "context"
+    monkeypatch.setitem(sys.modules, "cloakbrowser", SimpleNamespace(launch_persistent_context_async=launch))
+    monkeypatch.setattr(agent, "http_proxy", lambda account: "http://127.0.0.1:9999")
+    assert _run(agent._launch_cloak("acc1", "/tmp/x")) == "context"
+    assert seen["proxy"] == "http://127.0.0.1:9999"
 
 
 def test_failed_chain_read_still_reports_progress(monkeypatch):

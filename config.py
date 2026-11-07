@@ -282,12 +282,12 @@ V20_START_POINTS = int(os.getenv("DOLA_V20_START_POINTS", "2"))
 V20_DURATIONS = tuple(int(x) for x in os.getenv("DOLA_V20_DURATIONS", "5,10").split(",") if x.strip())
 
 # 工作模式出 15 秒（见 video_worker_agent）：2.0 在普通聊天里只有 5/10 秒。默认关闭。
-# 需要 CloakBrowser；有头运行，一单占约 6 分钟，所以默认同一时间只跑一单。
+# 需要 CloakBrowser；有头运行，一单占约 6 分钟，同时运行数可在面板改。
 # 环境变量只是默认值，面板开关保存后以面板为准（见 work_reply.apply_saved）。
 WORK_15S_ENABLED = False
 V20_BASE_DURATIONS = V20_DURATIONS
 WORK_15S_TIMEOUT = int(os.getenv("DOLA_WORK_15S_TIMEOUT", "1500"))
-WORK_15S_CONCURRENCY = int(os.getenv("DOLA_WORK_15S_CONCURRENCY", "1"))
+WORK_15S_CONCURRENCY = int(os.getenv("DOLA_WORK_15S_CONCURRENCY", "2"))
 
 
 def set_work_15s(enabled: bool) -> None:

@@ -6,6 +6,7 @@ import re
 import config
 
 WORK_DURATION = 15
+MAX_CONCURRENCY = 5
 CONFIRM_RE = re.compile(r"确认|確認")
 QUOTA_NOTE = "工作模式出过 15 秒：实际扣点未知，按今日额度用完处理，次日恢复"
 
@@ -21,13 +22,16 @@ def unavailable_reason() -> str:
 def settings_view() -> dict:
     reason = unavailable_reason()
     return {"enabled": config.WORK_15S_ENABLED, "available": not reason, "reason": reason,
+            "concurrency": config.WORK_15S_CONCURRENCY, "max_concurrency": MAX_CONCURRENCY,
             "v20_durations": list(config.V20_DURATIONS)}
 
 
-def apply_saved(saved: str | None) -> dict:
+def apply_saved(saved: str | None, concurrency: str | None = None) -> dict:
     """启动时恢复：面板存过就听面板，没存过沿用环境变量；环境不支持时一律关闭。"""
     wanted = saved == "1" if saved in ("0", "1") else config.WORK_15S_ENABLED
     config.set_work_15s(wanted and not unavailable_reason())
+    if concurrency and concurrency.isdigit():
+        config.WORK_15S_CONCURRENCY = min(MAX_CONCURRENCY, max(1, int(concurrency)))
     return settings_view()
 
 

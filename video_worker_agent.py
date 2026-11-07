@@ -24,10 +24,10 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 from patchright.async_api import async_playwright
 
+from account_transport import http_proxy
 import config
 import dola_responder
 import failure_text
-import proxy_store
 from browser import cookie_value, launch_account_context
 from browser_feedback import emit as emit_feedback
 from generation_errors import (
@@ -60,6 +60,11 @@ SETTLED_POLLS = 6
 SLOT_NOTE_SECONDS = 30
 THROTTLE_NOTE = "710022002 工作模式请求被 dola 拒绝，页面随后要退出登录（已拦下）"
 
+COMPOSER_TEXT_JS = r"""(selector) => {
+  const box = document.querySelector(selector);
+  return box ? (box.value || box.innerText || '') : '';
+}"""
+
 QUESTION_JS = r"""(selector) => {
   let node = document.querySelector(selector);
   for (let i = 0; node && i < 6; i++) node = node.parentElement;
@@ -91,24 +96,30 @@ CHAIN_JS = r"""async ({query, conversationId}) => {
 
 # 同一时间只开这么多 CloakBrowser：有头运行，一单要占约 6 分钟
 _slots: asyncio.Semaphore | None = None
+_slots_size = 0
 
 
 def _work_slots() -> asyncio.Semaphore:
-    global _slots
-    if _slots is None:
-        _slots = asyncio.Semaphore(max(1, config.WORK_15S_CONCURRENCY))
+    global _slots, _slots_size
+    size = max(1, config.WORK_15S_CONCURRENCY)
+    if _slots is None or _slots_size != size:
+        # 面板改了并发：新任务用新的名额，已经在跑的单子各自归还旧名额
+        _slots, _slots_size = asyncio.Semaphore(size), size
     return _slots
 
 
 @asynccontextmanager
 async def _work_slot(on_poll):
     slots = _work_slots()
+    note = f"工作模式：排队中（同时最多 {max(1, config.WORK_15S_CONCURRENCY)} 单）"
+    if slots.locked():
+        emit_feedback(on_poll, progress=note)
     while True:
         try:
             await asyncio.wait_for(slots.acquire(), SLOT_NOTE_SECONDS)
             break
         except TimeoutError:
-            emit_feedback(on_poll, progress="工作模式：等前一单跑完（同一时间只跑一单）")
+            emit_feedback(on_poll, progress=note)
     try:
         yield
     finally:
@@ -222,27 +233,61 @@ class _WorkSession:
         for _ in range(3):
             await page.locator(COMPOSER).first.click(timeout=8000)
             await page.keyboard.type("/", delay=120)
+            await page.wait_for_timeout(3000)
+            # 它排在菜单下方的分组里，列表没加载完就找不到；输入名字让菜单筛选出来
+            await page.keyboard.type("Creative", delay=80)
             for _ in range(10):
                 await page.wait_for_timeout(1000)
                 if await skill.count():
                     await skill.first.click(timeout=5000)
                     await page.wait_for_timeout(1500)
                     return
+            await page.keyboard.press("Control+A")
             await page.keyboard.press("Backspace")
             await page.wait_for_timeout(2500)
         raise PreSubmissionParametersError(f"{self.account} 技能列表里没有 Creative video")
 
+    async def composer_text(self) -> str:
+        return await self.page.evaluate(COMPOSER_TEXT_JS, COMPOSER)
+
+    async def fill_prompt(self, text: str) -> None:
+        """切模式、选技能后输入框可能重绘，文字写进去要读回来确认。"""
+        page, marker = self.page, text[:12]
+        for _ in range(3):
+            await page.locator(COMPOSER).first.click(timeout=8000)
+            await page.keyboard.insert_text(text)
+            await page.wait_for_timeout(1500)
+            if marker in await self.composer_text():
+                return
+            await page.wait_for_timeout(2000)
+        raise PreSubmissionParametersError(f"{self.account} 工作模式提示词没有写进输入框")
+
+    async def wait_sent(self, seconds: int) -> bool:
+        for _ in range(seconds):
+            await self.page.wait_for_timeout(1000)
+            if self.sent:
+                return True
+        return False
+
+    async def press_send(self) -> None:
+        """回车没发出去就点发送按钮：参考图还在处理时回车可能不生效。"""
+        page = self.page
+        await page.keyboard.press("Enter")
+        if await self.wait_sent(6):
+            return
+        button = page.locator('[data-testid="chat_input_send_button"]')
+        for _ in range(3):
+            if await button.count():
+                await button.first.click(timeout=4000)
+            if await self.wait_sent(8):
+                return
+        left = (await self.composer_text())[:40]
+        raise PreSubmissionParametersError(f"{self.account} 工作模式请求没有发出去（输入框内容：{left or '空'}）")
+
     async def send(self, text: str) -> str:
         page = self.page
-        await page.keyboard.insert_text(text)
-        await page.wait_for_timeout(1500)
-        await page.keyboard.press("Enter")
-        for _ in range(15):
-            await page.wait_for_timeout(1000)
-            if self.sent:
-                break
-        else:
-            raise PreSubmissionParametersError(f"{self.account} 工作模式请求没有发出去")
+        await self.fill_prompt(text)
+        await self.press_send()
         for _ in range(60):
             self.raise_if_rejected()
             match = re.search(r"/chat/(\d+)", page.url)
@@ -386,7 +431,8 @@ async def _launch_cloak(account: str, profile: str):
         from cloakbrowser import launch_persistent_context_async
     except ImportError as exc:
         raise PreSubmissionParametersError("工作模式需要 CloakBrowser，当前环境没有安装") from exc
-    proxy = proxy_store.proxy_url_for(account)
+    # 带密码的 socks5 浏览器连不上，要走号池的本地中转（和 patchright 路径一样）
+    proxy = http_proxy(account)
     if not proxy:
         raise PreSubmissionParametersError(f"{account} 没有绑定代理，工作模式不走直连")
     return await launch_persistent_context_async(
@@ -423,11 +469,14 @@ async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
             await context.route(re.compile(r"logout", re.I), stop_logout)
             session.watch()
 
+            emit_feedback(on_poll, progress="工作模式：打开页面")
             await session.open_chat()
+            emit_feedback(on_poll, progress="工作模式：切换到工作模式")
             await session.enter_work_mode()
             if reference_image_paths:
                 emit_feedback(on_poll, progress="工作模式：上传参考图")
                 await session.attach_references(reference_image_paths)
+            emit_feedback(on_poll, progress="工作模式：选择技能")
             await session.choose_skill()
             emit_feedback(on_poll, progress="工作模式：发送请求")
             conversation_id = await session.send(text)

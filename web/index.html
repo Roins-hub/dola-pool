@@ -191,6 +191,7 @@ main>section>*+*{margin-top:var(--gap)}
 /* ---- tables: rules and alignment ---- */
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--rule);vertical-align:middle;font-size:13.5px}
+.sort-th{all:unset;cursor:pointer;color:inherit}.sort-th:hover,.sort-th.on{color:var(--text,inherit);font-weight:500}.sort-th:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 th{color:var(--muted);font-weight:400;font-size:12.5px;white-space:nowrap;padding-top:8px;padding-bottom:8px;border-bottom-color:var(--border)}
 th:first-child,td:first-child{padding-left:4px}
 th:last-child,td:last-child{padding-right:4px}
@@ -1488,9 +1489,12 @@ async function openWork15Settings(){
     if(epoch!==dialogEpoch)return;
     const off=c.available?'':'disabled';
     showDlg(`<h2>2.0 的 15 秒</h2>
-      <p class="hint">开启后，seedance-2.0-fast 请求 15 秒时走 Dola 工作模式，支持参考图。一单约 6 分钟，同一时间只跑一单；助手可能改写提示词；实际扣点未知，出过一条的号当天不再派发。</p>
+      <p class="hint">开启后，seedance-2.0-fast 请求 15 秒时走 Dola 工作模式，支持参考图。一单约 6 分钟；助手可能改写提示词；实际扣点未知，出过一条的号当天不再派发。</p>
       ${c.reason?`<p class="hint" role="alert" style="color:var(--red)">${esc(c.reason)}</p>`:''}
       <label class="sw-row" style="margin-top:14px"><span class="sw"><input type="checkbox" id="w15Enabled" ${c.enabled?'checked':''} ${off}><i></i></span>开启</label>
+      <label for="w15Conc">同时运行几单（1～${c.max_concurrency}）</label>
+      <input id="w15Conc" type="number" min="1" max="${c.max_concurrency}" value="${c.concurrency}" ${off}>
+      <p class="tiny">每单开一个浏览器，还受「全局并发」限制；多单共用一个出口 IP 更容易被限流。</p>
       <div id="w15Feedback" class="tiny" role="status" style="margin:10px 0;min-height:18px"></div>
       <div class="row"><button class="btn" onclick="hide('dlg')">关闭</button>
         <button class="btn btn-p" id="w15Save" onclick="saveWork15Settings()" ${off}>保存</button></div>`);
@@ -1503,7 +1507,7 @@ async function saveWork15Settings(){
   const fb=q('#w15Feedback'),btn=q('#w15Save');if(!btn||btn.disabled)return;
   btn.disabled=true;fb.textContent='正在保存…';
   try{
-    const c=await api('/api/admin/settings/work-15s',{method:'PATCH',body:{enabled:q('#w15Enabled').checked}});
+    const c=await api('/api/admin/settings/work-15s',{method:'PATCH',body:{enabled:q('#w15Enabled').checked,concurrency:Number(q('#w15Conc').value)}});
     TEST_GEN_DURATIONS['seedance-2.0-fast']=c.v20_durations;
     fb.textContent=c.enabled?'已开启，立即生效。测试生成现在可以选 15 秒。':'已关闭，立即生效。';
   }catch(e){if(e.message!=='unauthorized')fb.textContent='保存失败：'+e.message;}
@@ -2080,6 +2084,31 @@ function loadAccounts(){
   }).finally(()=>{accountLoad=null;});
   return accountLoad;
 }
+/* 账号排序：点表头切换，选择记在本机。没有邮箱或创建时间的号不管升降序都沉底。 */
+const ACC_SORT_DEFAULT={key:'created',dir:'desc'};
+const ACC_SORT_KEYS={name:x=>x.name||'',email:x=>x.email||'',created:x=>x.created_at||0};
+let accSort=loadAccSort();
+function loadAccSort(){
+  try{
+    const s=JSON.parse(localStorage.getItem('accSort')||'null');
+    return s&&ACC_SORT_KEYS[s.key]&&(s.dir==='asc'||s.dir==='desc')?s:ACC_SORT_DEFAULT;
+  }catch(e){return ACC_SORT_DEFAULT;}
+}
+function compareAccounts(x,y,sort){
+  const pick=ACC_SORT_KEYS[sort.key],a=pick(x),b=pick(y);
+  if(!a||!b)return a?-1:b?1:0;
+  const order=typeof a==='number'?a-b:String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'});
+  return sort.dir==='asc'?order:-order;
+}
+function sortAccounts(key){
+  accSort=accSort.key===key?{key,dir:accSort.dir==='asc'?'desc':'asc'}:{key,dir:key==='created'?'desc':'asc'};
+  try{localStorage.setItem('accSort',JSON.stringify(accSort));}catch(e){}
+  accPage=1;renderAccounts();
+}
+function accSortHead(key,label){
+  const on=accSort.key===key,mark=on?(accSort.dir==='asc'?' ▲':' ▼'):'';
+  return `<button type="button" class="sort-th${on?' on':''}" title="点击排序" onclick="sortAccounts('${key}')">${label}${mark}</button>`;
+}
 function renderAccounts(){
   if(!accountSnapshot)return;
   const {a,j}=accountSnapshot;
@@ -2090,8 +2119,7 @@ function renderAccounts(){
   if(hint&&a.next_reset_at)hint.textContent=`额度重置：${a.reset_tz} 每天 ${a.reset_hour}:00（下次 ${fmt(a.next_reset_at)}）`;
   renderGroupBar(a);
   renderEgressWarn(a);
-  // 新增的号排最前（按创建时间倒序）；没有 created_at 的老号沉底，保持原有相对顺序
-  const sorted=[...a.accounts].sort((x,y)=>(y.created_at||0)-(x.created_at||0));
+  const sorted=[...a.accounts].sort((x,y)=>compareAccounts(x,y,accSort));
   filteredAccounts=sorted.filter(x=>
     (srcFilterVal==='all'||x.source===srcFilterVal)&&matchGroup(x)
     &&searchHit('accounts',x.name,x.email,x.note,x.proxy_name,x.effective_egress,x.exit_ip,x.group,
@@ -2142,7 +2170,7 @@ function renderAccounts(){
   scheduleAddJobPoll(jobs,new Set(allAccountNames));
   q('#accountsTable').innerHTML=table(
     ['<input type="checkbox" id="selAll" onchange="toggleAll(this.checked)" title="全选=当前筛选结果的全部账号（跨页保持）">',
-     '内部账号','名称','组','运行','来源','调度','剩余额度','最近使用','创建时间','备注','操作'],rows)
+     accSortHead('name','内部账号'),accSortHead('email','名称'),'组','运行','来源','调度','剩余额度','最近使用',accSortHead('created','创建时间'),'备注','操作'],rows)
     +accPager(accTotalPages);
   updateSelButtons();
 }

@@ -1524,6 +1524,20 @@ class BrowserPool:
                 "session": new_session,
                 "proxy_url": proxy_store.proxy_url_for(name)}
 
+    def rotate_proxy_accounts(self, proxy_id: str) -> dict:
+        """面板「换IP」：绑定在这条代理上的号全部换出口。
+
+        绑定关系以 proxy_store 为准：list_accounts() 的行里没有 proxy_id。
+        """
+        rotated, skipped = [], []
+        for acc in self.list_accounts():
+            info = proxy_store.get_account_proxy(acc["name"])
+            if not info or info.get("id") != proxy_id:
+                continue
+            result = self.rotate_account_ip(acc["name"], force=True)
+            (rotated if result.get("rotated") else skipped).append(acc["name"])
+        return {"rotated": rotated, "skipped": skipped}
+
     def _on_egress_unhealthy(self, egress: str, reason: str) -> None:
         """某个出口被上游判异常时：动态代理的号直接换 IP，而不是干等冷却。
 
@@ -1777,6 +1791,8 @@ class BrowserPool:
                     "local_path": str(local),
                     "video_url": f"{config.PUBLIC_BASE}/videos/{Path(local).name}",
                 }
+            except (PreSubmissionUploadError, PreSubmissionParametersError) as exc:
+                return {"ok": False, "account": account, "error": str(exc)}   # 没发出去，不是超时
             except TimeoutError as exc:
                 return {"ok": False, "account": account, "error": f"生成超时: {exc}"}
             except ShortClipError as exc:

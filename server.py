@@ -93,7 +93,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.17.1"
+APP_VERSION = "2.17.2"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -1185,7 +1185,7 @@ async def resume_incomplete_tasks():
     """服务重启后恢复已受理会话，并重新排队尚未开始的 queued 任务。"""
     open_thread_pool()
     _load_responder()
-    work_reply.apply_saved(store.get_setting(WORK_15S_KEY))
+    work_reply.apply_saved(store.get_setting(WORK_15S_KEY), store.get_setting(WORK_15S_CONCURRENCY_KEY))
     # 先处理崩溃时留下的 processing 孤儿任务（有 conversation 保留续轮询，
     # 无 conversation 清空账号重新派号），避免永久卡死。
     stale_refs = sweep_stale_references()
@@ -1957,10 +1957,12 @@ async def admin_upscale_settings_save(body: UpscaleSettingsPatch, x_admin_key: s
 # ---------------------------------------------------------------- AI 代答（dola_responder 第二层）
 RESPONDER_KEY = "ai_responder"
 WORK_15S_KEY = "work_15s"
+WORK_15S_CONCURRENCY_KEY = "work_15s_concurrency"
 
 
 class Work15Patch(BaseModel):
     enabled: bool
+    concurrency: int | None = Field(None, ge=1, le=work_reply.MAX_CONCURRENCY)
 
 
 @app.get("/api/admin/settings/work-15s")
@@ -1977,6 +1979,9 @@ async def admin_work_15s_save(body: Work15Patch, x_admin_key: str | None = Heade
         raise HTTPException(422, reason)
     store.set_setting(WORK_15S_KEY, "1" if body.enabled else "0")
     config.set_work_15s(body.enabled)
+    if body.concurrency is not None:
+        store.set_setting(WORK_15S_CONCURRENCY_KEY, str(body.concurrency))
+        config.WORK_15S_CONCURRENCY = body.concurrency
     return work_reply.settings_view()
 
 
@@ -3569,13 +3574,7 @@ async def admin_proxy_rotate_all(proxy_id: str,
                                  x_admin_key: str | None = Header(default=None)):
     """给绑定在该代理上的所有号换出口 IP。"""
     _admin_auth(x_admin_key)
-    rotated, skipped = [], []
-    for acc in pool.list_accounts():
-        if acc.get("proxy_id") != proxy_id:
-            continue
-        result = pool.rotate_account_ip(acc["name"], force=True)
-        (rotated if result.get("rotated") else skipped).append(acc["name"])
-    return {"ok": True, "rotated": rotated, "skipped": skipped}
+    return {"ok": True, **pool.rotate_proxy_accounts(proxy_id)}
 
 
 @app.get("/api/admin/users")

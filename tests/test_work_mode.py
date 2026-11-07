@@ -196,4 +196,26 @@ def test_saved_panel_choice_beats_the_environment_default(switch_state, saved, e
 def test_environment_without_cloak_stays_off_and_says_why(switch_state, monkeypatch):
     monkeypatch.setattr(wr, "unavailable_reason", lambda: "没有安装")
     view = wr.apply_saved("1")
-    assert view == {"enabled": False, "available": False, "reason": "没有安装", "v20_durations": [5, 10]}
+    assert (view["enabled"], view["available"], view["reason"]) == (False, False, "没有安装")
+    assert view["v20_durations"] == [5, 10]
+
+
+@pytest.mark.parametrize("saved,expected", [("3", 3), ("99", 5), ("0", 1), ("x", 2), (None, 2)])
+def test_saved_concurrency_stays_in_range(switch_state, monkeypatch, saved, expected):
+    monkeypatch.setattr(config, "WORK_15S_CONCURRENCY", 2)
+    assert wr.apply_saved(None, saved)["concurrency"] == expected
+
+
+def test_rotating_a_proxy_reaches_every_account_bound_to_it(tmp_path, monkeypatch):
+    # 面板显示 37 个号绑定，点「换IP」却是「已换 0 个」：list_accounts 的行里没有 proxy_id
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a", "acc2": "b", "acc3": "c"})
+    bound = {"acc1": {"id": "px_a"}, "acc2": {"id": "px_a"}, "acc3": {"id": "px_b"}}
+    monkeypatch.setattr(browser_pool.proxy_store, "get_account_proxy", bound.get)
+    calls = []
+
+    def rotate(name, reason="", force=False):
+        calls.append((name, force))
+        return {"rotated": name == "acc1"}
+    monkeypatch.setattr(bp, "rotate_account_ip", rotate)
+    assert bp.rotate_proxy_accounts("px_a") == {"rotated": ["acc1"], "skipped": ["acc2"]}
+    assert calls == [("acc1", True), ("acc2", True)]
