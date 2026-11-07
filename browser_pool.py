@@ -1669,7 +1669,9 @@ class BrowserPool:
             return await self._web_playable(result)
         pure_cookie = (pure_state is not None and self._is_cookie_source(account)
                        and not is_cloak_cookie_account(account))
-        if uses_work_mode(model, duration) and not pure_cookie:
+        if uses_work_mode(model, duration) and pure_cookie:
+            raise PreSubmissionParametersError(f"{account} 是纯 API 号，跑不了工作模式")
+        if uses_work_mode(model, duration):
             # 2.0 的 15 秒：工作模式，实际扣点未知，先按当天额度用完算
             from video_worker_agent import generate_work_video
             result = await generate_work_video(
@@ -2284,7 +2286,9 @@ class BrowserPool:
 
                             # Synchronous pure-API workers own their network timeouts;
                             # cancelling to_thread would not stop their submission.
-                            browser_preparation = not self.is_pure_account(account) and want_site == sites.DOLA
+                            # 工作模式要排队等名额、开浏览器，有自己的时限，不套提交准备超时
+                            browser_preparation = (not self.is_pure_account(account) and want_site == sites.DOLA
+                                                   and not uses_work_mode(model, duration))
                             preparation = asyncio.timeout(config.PREPARE_TIMEOUT if browser_preparation else None)
                             def acknowledged(*args):
                                 if browser_preparation and not preparation.expired():

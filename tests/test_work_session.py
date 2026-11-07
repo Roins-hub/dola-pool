@@ -2,6 +2,7 @@
 import asyncio
 import importlib.util
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -57,6 +58,8 @@ class Page:
         return Target()
 
     async def evaluate(self, script, args):
+        if args == "123":            # PAUSED_JS：当前会话那一行有没有暂停标记
+            return self.paused and len(self.typed) < self.picker_rounds
         if not isinstance(args, dict):
             return self.question
         chain = self.chains.pop(0) if len(self.chains) > 1 else self.chains[0]
@@ -83,6 +86,12 @@ def load_agent(monkeypatch):
     class LoginExpiredError(Exception):
         pass
 
+    class AccountLimitedError(Exception):
+        pass
+
+    class CreditInsufficientError(Exception):
+        pass
+
     async def logged_in(_page):
         return False
     noop = lambda *a, **k: None
@@ -91,7 +100,10 @@ def load_agent(monkeypatch):
         "video_worker": SimpleNamespace(RiskControlError=RiskControlError, _download=noop),
         "video_worker_ui": SimpleNamespace(
             LoginExpiredError=LoginExpiredError, dismiss_popups=noop, fetch_higher_bitrate_url=noop,
-            is_logged_out=logged_in, raise_if_region_restricted=noop),
+            is_logged_out=logged_in, raise_if_region_restricted=noop, find_captcha_frame=noop,
+            solve_slider=noop, AccountLimitedError=AccountLimitedError,
+            CreditInsufficientError=CreditInsufficientError,
+            DAILY_LIMIT_PATTERN=re.compile("每日生成上限|動画生成の 1日あたりの上限")),
     }
     for name, stub in stubs.items():
         monkeypatch.setitem(sys.modules, name, stub)
@@ -120,6 +132,19 @@ def test_picker_pause_is_confirmed_once_then_video_comes_back(monkeypatch):
     _, item = session(monkeypatch, page)
     assert json.loads(wait(item))["video_duration"] == 15.1
     assert page.typed == ["确认"]
+
+
+def test_old_conversation_paused_in_the_sidebar_is_ignored(monkeypatch):
+    # 只看当前会话：别的会话挂着「一時停止中」时不能在生成途中乱回确认
+    page = Page([bot("", False), bot("", False), bot("", False), bot("", False), bot("", False), video()])
+    _, item = session(monkeypatch, page)
+    wait(item)
+    assert page.typed == []
+
+
+def test_paused_check_is_scoped_to_this_conversation(monkeypatch):
+    agent = load_agent(monkeypatch)
+    assert "a[href*=" in agent.PAUSED_JS and "conversationId" in agent.PAUSED_JS
 
 
 def test_plain_reply_is_confirmed_once(monkeypatch):
@@ -164,8 +189,8 @@ def test_unknown_picker_also_reaches_ai(monkeypatch):
         return "选第一个"
     monkeypatch.setattr(agent.dola_responder, "enabled", lambda: True)
     monkeypatch.setattr(agent.dola_responder, "ai_reply", ai)
-    with pytest.raises(agent.UpstreamReplyError):
-        wait(item)
+    with pytest.raises(TimeoutError):      # 答完还在暂停：不判失败，等到时限
+        _run(item.wait_for_video("123", time.time() + 0.3))
     assert page.typed[-1] == "选第一个"
 
 
@@ -284,22 +309,37 @@ def test_skill_is_found_by_filtering_the_menu(monkeypatch):
 
 
 class SendPage(Page):
-    """evaluate 返回输入框内容；可以配置前几次写不进去、回车不发送。"""
-    def __init__(self, lost_writes=0, enter_sends=True, button_sends=True):
+    """可配置：写入丢失、回车不发送、回车把输入框清空、按钮禁用。"""
+    url = "https://www.dola.com/chat"
+
+    def __init__(self, lost_writes=0, enter_sends=True, button_sends=True, wipes=0, disabled=False, jumps=False):
         super().__init__([])
         self.text, self.lost, self.enter_sends, self.button_sends = "", lost_writes, enter_sends, button_sends
-        self.session, self.clicks = None, 0
+        self.wipes, self.disabled, self.jumps = wipes, disabled, jumps
+        self.session, self.clicks, self.enters, self.restores = None, 0, 0, 0
         self.keyboard = self
 
     async def insert_text(self, text):
         if self.lost > 0:
             self.lost -= 1
         else:
-            self.text = text
+            self.text = "Creative video " + text
+
+    def go_out(self):
+        self.url = "https://www.dola.com/chat/123"
+        self.session.sent.append("completion")
 
     async def press(self, key):
-        if key == "Enter" and self.enter_sends:
-            self.session.sent.append("completion")
+        if key != "Enter":
+            return
+        self.enters += 1
+        if self.wipes > 0:           # 重绘：内容没了，请求也没发
+            self.wipes -= 1
+            self.text = ""
+        elif self.jumps:             # 看不到请求，但页面已进新会话
+            self.url = "https://www.dola.com/chat/local_123"
+        elif self.enter_sends:
+            self.go_out()
 
     async def evaluate(self, script, args):
         return self.text
@@ -309,10 +349,15 @@ class SendPage(Page):
 
         async def click(**kwargs):
             if "send_button" in selector:
+                if page.disabled:
+                    raise AssertionError("点了禁用的按钮")
                 page.clicks += 1
                 if page.button_sends:
-                    page.session.sent.append("completion")
-        target.click = click
+                    page.go_out()
+
+        async def is_enabled():
+            return not page.disabled
+        target.click, target.is_enabled = click, is_enabled
         return target
 
 
@@ -320,34 +365,210 @@ def send_session(monkeypatch, **options):
     page = SendPage(**options)
     agent, item = session(monkeypatch, page)
     page.session = item
+
+    async def restored():
+        page.restores += 1
+        page.text = "Creative video "
+    item.enter_work_mode, item.choose_skill = (lambda: asyncio.sleep(0)), restored
     return agent, item, page
+
+
+PROMPT = "一只橘猫在沙滩上慢慢走，15s"
 
 
 def test_prompt_is_retyped_when_the_composer_loses_it(monkeypatch):
     _, item, page = send_session(monkeypatch, lost_writes=2)
-    _run(item.fill_prompt("一只橘猫在沙滩上慢慢走，15s"))
-    assert page.text.startswith("一只橘猫")
+    _run(item.fill_prompt(PROMPT))
+    assert page.text.endswith(PROMPT)
+
+
+def test_prompt_is_not_written_twice(monkeypatch):
+    _, item, page = send_session(monkeypatch)
+    page.text = "Creative video " + PROMPT
+    _run(item.fill_prompt(PROMPT))
+    assert page.text.count(PROMPT) == 1
 
 
 def test_prompt_that_never_lands_is_reported_before_sending(monkeypatch):
     agent, item, _ = send_session(monkeypatch, lost_writes=9)
     with pytest.raises(agent.PreSubmissionParametersError, match="没有写进输入框"):
-        _run(item.fill_prompt("一只橘猫在沙滩上慢慢走，15s"))
+        _run(item.fill_prompt(PROMPT))
 
 
 def test_send_button_is_used_when_enter_does_nothing(monkeypatch):
-    # acc22：回车后 15 秒没有请求
+    # acc22：回车后没有请求，内容还在
     _, item, page = send_session(monkeypatch, enter_sends=False)
-    _run(item.press_send())
+    page.text = "Creative video " + PROMPT
+    assert _run(item.press_send()) is True
     assert page.clicks == 1
 
 
-def test_unsent_request_says_what_was_left_in_the_composer(monkeypatch):
+def test_disabled_button_is_never_clicked(monkeypatch):
+    # acc46：按钮灰着还去点，报 Locator.click Timeout
+    _, item, page = send_session(monkeypatch, enter_sends=False, disabled=True)
+    assert _run(item.press_send()) is False
+    assert page.clicks == 0
+
+
+def test_wiped_composer_is_rebuilt_and_sent_once(monkeypatch):
+    # 页面重绘清空了输入框：重新选技能、重写提示词，只发一次
+    _, item, page = send_session(monkeypatch, wipes=1, disabled=True)
+    page.text = "Creative video "
+    assert _run(item.send(PROMPT)) == "123"
+    assert (page.enters, page.restores, len(item.sent)) == (2, 1, 1)
+
+
+def test_jump_to_a_new_conversation_counts_as_sent(monkeypatch):
+    # 没看到请求但页面已进新会话：再发一次就重复出片了
+    _, item, page = send_session(monkeypatch, jumps=True)
+    page.text = "Creative video "
+    assert _run(item.press_send()) is True
+    assert (page.enters, page.clicks) == (1, 0)
+
+
+def test_failed_request_is_reported_as_not_sent(monkeypatch):
+    # acc22：请求卡在代理上，Dola 没有新会话，可以放心换号
+    agent, item, page = send_session(monkeypatch, jumps=True)
+    page.text = "Creative video "
+    item.send_error = "net::ERR_CONNECTION_RESET"
+    with pytest.raises(agent.PreSubmissionParametersError, match="ERR_CONNECTION_RESET"):
+        _run(item.send(PROMPT))
+
+
+def waiting_session(monkeypatch, found):
+    agent, item, page = send_session(monkeypatch, jumps=True)
+    monkeypatch.setattr(agent, "CONVERSATION_WAIT_SECONDS", 2)
+    page.text = "Creative video "
+
+    async def lookup(since):
+        return found
+    item.find_conversation = lookup
+    return agent, item
+
+
+def test_unknown_outcome_after_sending_never_resubmits(monkeypatch):
+    agent, item = waiting_session(monkeypatch, (False, None))
+    with pytest.raises(TimeoutError, match="不换号") as caught:
+        _run(item.send(PROMPT))
+    assert not isinstance(caught.value, agent.PreSubmissionParametersError)
+
+
+def test_no_new_conversation_means_it_is_safe_to_switch_accounts(monkeypatch):
+    agent, item = waiting_session(monkeypatch, (True, None))
+    with pytest.raises(agent.PreSubmissionParametersError, match="没有新会话"):
+        _run(item.send(PROMPT))
+
+
+def test_conversation_found_in_the_list_is_followed(monkeypatch):
+    _, item = waiting_session(monkeypatch, (True, "55"))
+    assert _run(item.send(PROMPT)) == "55"
+
+
+def test_old_conversation_url_is_not_mistaken_for_a_send(monkeypatch):
+    # 页面本来就停在某个会话上：地址没变不算发出去
+    _, item, page = send_session(monkeypatch, enter_sends=False, disabled=True)
+    page.url = "https://www.dola.com/chat/999"
+    assert _run(item.press_send()) is False
+
+
+class PlaywrightLike(Exception):
+    pass
+
+
+PlaywrightLike.__module__ = "playwright._impl._errors"
+
+
+def test_browser_errors_are_split_by_whether_the_request_went_out(monkeypatch):
+    agent = load_agent(monkeypatch)
+    error = PlaywrightLike("Locator.click: Timeout 4000ms exceeded.\nCall log: https://www.dola.com/x")
+    assert agent.browser_error(error) and not agent.browser_error(ValueError("x"))
+    before = agent.translate_browser_error(error, "acc1", False)
+    after = agent.translate_browser_error(error, "acc1", True)
+    assert isinstance(before, agent.PreSubmissionParametersError) and "Call log" not in str(before)
+    assert isinstance(after, TimeoutError) and not isinstance(after, agent.PreSubmissionParametersError)
+    assert "不换号" in str(after)
+
+
+@pytest.mark.parametrize("reply,kind", [
+    ("今日の動画生成の 1日あたりの上限に達しました", "AccountLimitedError"),
+    ("今天的视频生成次数已用完", "AccountLimitedError"),
+    ("クレジットが不足しています", "CreditInsufficientError"),
+])
+def test_quota_replies_switch_accounts(monkeypatch, reply, kind):
+    agent = load_agent(monkeypatch)
+    assert type(agent.failure_from_reply("acc1", reply, ran_tools=True)).__name__ == kind
+
+
+def test_portrait_refusal_can_be_retried_but_other_refusals_cannot(monkeypatch):
+    agent = load_agent(monkeypatch)
+    monkeypatch.setattr(agent.failure_text, "label_for", lambda text: "肖像保护" if "肖像" in text else "内容违规")
+    assert agent.failure_from_reply("acc1", "肖像", ran_tools=True).generation_started is False
+    assert agent.failure_from_reply("acc1", "违规", ran_tools=True).generation_started is True
+    assert agent.failure_from_reply("acc1", "违规", ran_tools=False).generation_started is False
+
+
+def test_quota_reply_stops_without_nudging(monkeypatch):
+    page = Page([bot("クレジットが不足しています")] * 8)
+    agent, item = session(monkeypatch, page)
+    with pytest.raises(agent.CreditInsufficientError):
+        wait(item)
+    assert page.typed == []
+
+
+def test_slider_is_solved_while_waiting(monkeypatch):
+    page = Page([bot("", False)])
+    agent, item = session(monkeypatch, page)
+    frames, solved = ["frame"], []
+    monkeypatch.setattr(agent, "find_captcha_frame", lambda p: frames[0] if frames else None)
+
+    async def solve(p, frame, attempt, account):
+        solved.append(attempt)
+        frames.clear()
+        return True
+    monkeypatch.setattr(agent, "solve_slider", solve)
+    _run(item.solve_captcha())
+    assert solved == [1]
+
+
+def test_slider_that_never_passes_is_a_risk_error(monkeypatch):
+    page = Page([bot("", False)])
+    agent, item = session(monkeypatch, page)
+    monkeypatch.setattr(agent, "find_captcha_frame", lambda p: "frame")
+
+    async def solve(p, frame, attempt, account):
+        return False
+    monkeypatch.setattr(agent, "solve_slider", solve)
+    with pytest.raises(agent.RiskControlError, match="滑块"):
+        _run(item.solve_captcha())
+
+
+def test_address_lookup_is_retried_after_the_video_exists(monkeypatch):
+    agent = load_agent(monkeypatch)
+    calls = []
+
+    async def lookup(vm, account):
+        calls.append(1)
+        return "https://cdn/x.mp4" if len(calls) == 3 else None
+
+    async def download(url, account):
+        return "/tmp/x.mp4"
+
+    async def no_wait(seconds):
+        pass
+    monkeypatch.setattr(agent, "fetch_higher_bitrate_url", lookup)
+    monkeypatch.setattr(agent, "_download", download)
+    monkeypatch.setattr(agent.asyncio, "sleep", no_wait)
+    monkeypatch.setitem(sys.modules, "video_link", SimpleNamespace(enabled=lambda: False))
+    assert _run(agent._deliver("acc1", "{}", "1", None))["local_path"] == "/tmp/x.mp4"
+    assert len(calls) == 3
+
+
+def test_giving_up_says_what_was_left_in_the_composer(monkeypatch):
     agent, item, page = send_session(monkeypatch, enter_sends=False, button_sends=False)
-    page.text = "一只橘猫"
-    with pytest.raises(agent.PreSubmissionParametersError, match="输入框内容：一只橘猫"):
-        _run(item.press_send())
-    assert page.clicks == 3
+    page.text = "Creative video "
+    with pytest.raises(agent.PreSubmissionParametersError, match="输入框内容：Creative video"):
+        _run(item.send(PROMPT))
+    assert page.enters == 3
 
 
 def test_cloak_goes_through_the_local_relay_for_socks_auth(monkeypatch):

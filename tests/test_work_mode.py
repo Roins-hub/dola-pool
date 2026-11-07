@@ -156,10 +156,10 @@ def test_pure_cookie_account_never_opens_work_mode(tmp_path, monkeypatch):
     fake = FakeAgent(result={"local_path": ""})
     _agent(monkeypatch, fake)
     monkeypatch.setattr(browser_pool, "is_cloak_cookie_account", lambda name: False)
-    monkeypatch.setattr(browser_pool, "generate_pure_video", lambda **kwargs: {"local_path": ""})
     bp._conn.execute("UPDATE accounts_meta SET source='cookie' WHERE name='acc1'")
     bp._conn.commit()
-    _dispatch(bp, "acc1")
+    with pytest.raises(browser_pool.PreSubmissionParametersError, match="纯 API"):
+        _dispatch(bp, "acc1")
     assert fake.calls == []
 
 
@@ -219,3 +219,11 @@ def test_rotating_a_proxy_reaches_every_account_bound_to_it(tmp_path, monkeypatc
     monkeypatch.setattr(bp, "rotate_account_ip", rotate)
     assert bp.rotate_proxy_accounts("px_a") == {"rotated": ["acc1"], "skipped": ["acc2"]}
     assert calls == [("acc1", True), ("acc2", True)]
+
+
+def test_recent_conversation_list_is_parsed():
+    data = {"downlink_body": {"pull_recent_conv_chain_downlink_body": {"cells": [
+        {"conversation": {"conversation_id": "38", "conv_version": "1794018361839171"}},
+        {"conversation": {"conversation_id": "39"}}, {"other": 1}]}}}
+    assert wr.recent_conversations(data) == [("38", 1794018361)]
+    assert wr.recent_conversations({}) == []

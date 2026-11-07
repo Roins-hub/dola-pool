@@ -33,19 +33,21 @@ from browser_feedback import emit as emit_feedback
 from generation_errors import (
     PreSubmissionParametersError, PreSubmissionUploadError, UpstreamReplyError,
 )
+from upstream_reply import QUOTA_RE
 from video_worker import RiskControlError, _download
 from video_worker_ui import (
-    LoginExpiredError, dismiss_popups, fetch_higher_bitrate_url, is_logged_out,
-    raise_if_region_restricted,
+    DAILY_LIMIT_PATTERN, AccountLimitedError, CreditInsufficientError, LoginExpiredError,
+    dismiss_popups, fetch_higher_bitrate_url, find_captcha_frame, is_logged_out,
+    raise_if_region_restricted, solve_slider,
 )
 from work_reply import (
-    WORK_DURATION, asks_to_confirm, build_prompt, chain_messages, reply_finished, reply_text,
-    session_cookies, tools_ran, uploads_committed, video_models,
+    WORK_DURATION, asks_to_confirm, build_prompt, chain_messages, recent_conversations,
+    reply_finished, reply_text, session_cookies, tools_ran, uploads_committed, video_models,
 )
 
 SKILL_RE = re.compile(r"^(Creative video|创意视频|クリエイティブ動画|クリエイティブビデオ)$")
+SKILL_CHIP_RE = re.compile(r"Creative video|创意视频|クリエイティブ動画|クリエイティブビデオ")
 WORK_TAB_RE = re.compile(r"^(ワーク|工作|Work)$")
-PAUSED_RE = re.compile(r"一時停止中|已暂停|Paused")
 UPLOAD_ITEM_RE = re.compile(r"ファイルまたは画像|上传文件|Upload file", re.I)
 COMPOSER = 'textarea, [contenteditable="true"]'
 CONFIRM_OPTION_RE = re.compile(r"确认|確認|開始|开始")
@@ -58,11 +60,22 @@ ANSWER_GAP_POLLS = 3
 SETTLED_POLLS = 6
 # 排队等名额时隔这么久报一次进度：看门狗 10 分钟没进度就把任务判成卡死
 SLOT_NOTE_SECONDS = 30
+# 发出后等会话 id：带参考图时助手起步慢，代理差时更慢
+CONVERSATION_WAIT_SECONDS = 120
+# 关浏览器最多等这么久：卡住时不能一直占着名额
+CLOSE_SECONDS = 30
+LIMIT_RE = re.compile(r"(今日|本日|今天).{0,12}(额度|額度|次数|回数|上限).{0,12}(用完|用尽|已满|達し|到达|上限)|上限に達")
 THROTTLE_NOTE = "710022002 工作模式请求被 dola 拒绝，页面随后要退出登录（已拦下）"
 
 COMPOSER_TEXT_JS = r"""(selector) => {
   const box = document.querySelector(selector);
   return box ? (box.value || box.innerText || '') : '';
+}"""
+
+# 只看当前会话那一行：别的旧会话也可能挂着「一時停止中」
+PAUSED_JS = r"""(conversationId) => {
+  const row = document.querySelector(`a[href*="/chat/${conversationId}"]`);
+  return !!row && /一時停止中|已暂停|Paused/.test(row.innerText || '');
 }"""
 
 QUESTION_JS = r"""(selector) => {
@@ -82,6 +95,16 @@ PASTE_JS = r"""async ({selector, files}) => {
   target.focus();
   target.dispatchEvent(new ClipboardEvent('paste', {bubbles: true, cancelable: true, clipboardData: data}));
   return true;
+}"""
+
+RECENT_JS = r"""async ({query}) => {
+  const r = await fetch('/im/chain/recent_conv?' + query, {method: 'POST', credentials: 'include',
+    headers: {'Content-Type': 'application/json; encoding=utf-8', 'agw-js-conv': 'str', 'Accept': '*/*'},
+    body: JSON.stringify({cmd: 3200, uplink_body: {pull_recent_conv_chain_uplink_body: {conv_version: 0, limit: 12,
+      message_count_per_conv: 0, option: {not_need_message: true, need_complete_conversation: true, need_coco_bot: true,
+      need_pc_pin_chain: true, pc_pin_query_type: 0, exclude_archive: true, only_archive: false}, api_version: 1, direction: 3}},
+      sequence_id: crypto.randomUUID(), channel: 2, version: '1'})});
+  return {status: r.status, text: await r.text()};
 }"""
 
 CHAIN_JS = r"""async ({query, conversationId}) => {
@@ -106,6 +129,35 @@ def _work_slots() -> asyncio.Semaphore:
         # 面板改了并发：新任务用新的名额，已经在跑的单子各自归还旧名额
         _slots, _slots_size = asyncio.Semaphore(size), size
     return _slots
+
+
+def browser_error(exc: BaseException) -> bool:
+    return type(exc).__module__.split(".")[0] in ("playwright", "patchright")
+
+
+def short_error(exc: BaseException) -> str:
+    first = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+    return re.sub(r"https?://\S+", "<URL>", first)[:120]
+
+
+def translate_browser_error(exc: BaseException, account: str, went_out: bool) -> Exception:
+    """浏览器原始报错看不懂，也分不清能不能重试：以「请求发没发出去」为界。"""
+    if went_out:
+        return TimeoutError(f"{account} 工作模式发送后浏览器出错（{short_error(exc)}），可能已在生成，不换号重提")
+    return PreSubmissionParametersError(f"{account} 工作模式发送前浏览器出错：{short_error(exc)}")
+
+
+def failure_from_reply(account: str, reply: str, *, ran_tools: bool) -> Exception | None:
+    """助手回复里明说做不了时对应的错误；额度类换号，其余按原因分类。认不出返回 None。"""
+    if DAILY_LIMIT_PATTERN.search(reply) or LIMIT_RE.search(reply):
+        return AccountLimitedError(f"{account} 工作模式：{reply[-200:]}")
+    if QUOTA_RE.search(reply):
+        return CreditInsufficientError(f"{account} 工作模式：{reply[-200:]}")
+    label = failure_text.label_for(reply)
+    if not label:
+        return None
+    # 肖像保护按号而异，且没有片子在生成：标成未开始，调度器才会换号重提
+    return UpstreamReplyError(label, reply, generation_started=ran_tools and label != "肖像保护")
 
 
 @asynccontextmanager
@@ -140,6 +192,9 @@ class _WorkSession:
         self.sent: list[str] = []
         self.page_query = ""
         self.upload_actions: list[str] = []
+        self.send_error = ""
+        self.url_before = ""
+        self.conversation_id = ""
 
     def watch(self):
         def on_request(request):
@@ -153,12 +208,39 @@ class _WorkSession:
                 self.upload_actions.append(action)
         self.page.on("request", on_request)
 
+        def on_failed(request):
+            if urlsplit(request.url).path.endswith("/chat/completion"):
+                self.send_error = str(request.failure or "连接失败")[:120]
+        self.page.on("requestfailed", on_failed)
+
     def rejected(self) -> bool:
         return bool(self.logouts)
 
     def raise_if_rejected(self):
         if self.rejected():
             raise RiskControlError(THROTTLE_NOTE)
+
+    async def raise_if_blocked(self):
+        """找不到按钮、菜单时先看是不是掉线或地区受限，别报成页面元素的问题。"""
+        self.raise_if_rejected()
+        raise_if_region_restricted(self.page, self.account)
+        if await is_logged_out(self.page):
+            raise LoginExpiredError(f"{self.account} 登录态失效，工作模式未发送")
+
+    async def solve_captcha(self):
+        frame = find_captcha_frame(self.page)
+        if not frame:
+            return
+        emit_feedback(self.on_poll, progress="工作模式：出现滑块验证，正在处理")
+        for attempt in range(1, 4):
+            if await solve_slider(self.page, frame, attempt, self.account):
+                await self.page.wait_for_timeout(3000)
+                return
+            await self.page.wait_for_timeout(2000)
+            frame = find_captcha_frame(self.page)
+            if not frame:
+                return
+        raise RiskControlError(f"{self.account} 工作模式滑块 3 次未通过")
 
     async def open_chat(self):
         page = self.page
@@ -180,9 +262,11 @@ class _WorkSession:
     async def enter_work_mode(self):
         tab = self.page.get_by_text(WORK_TAB_RE)
         if not await tab.count():
+            await self.raise_if_blocked()
             raise PreSubmissionParametersError(f"{self.account} 页面上没有工作模式入口")
         await tab.first.click(timeout=6000)
         await self.page.wait_for_timeout(8000)
+        await self.raise_if_blocked()
 
     async def _pick_files(self, paths: list[str]) -> bool:
         """上传按钮 → 菜单 → 文件选择框。菜单有时没展开，等一等再重点。"""
@@ -245,6 +329,7 @@ class _WorkSession:
             await page.keyboard.press("Control+A")
             await page.keyboard.press("Backspace")
             await page.wait_for_timeout(2500)
+            await self.raise_if_blocked()
         raise PreSubmissionParametersError(f"{self.account} 技能列表里没有 Creative video")
 
     async def composer_text(self) -> str:
@@ -254,6 +339,8 @@ class _WorkSession:
         """切模式、选技能后输入框可能重绘，文字写进去要读回来确认。"""
         page, marker = self.page, text[:12]
         for _ in range(3):
+            if marker in await self.composer_text():
+                return
             await page.locator(COMPOSER).first.click(timeout=8000)
             await page.keyboard.insert_text(text)
             await page.wait_for_timeout(1500)
@@ -262,40 +349,87 @@ class _WorkSession:
             await page.wait_for_timeout(2000)
         raise PreSubmissionParametersError(f"{self.account} 工作模式提示词没有写进输入框")
 
+    def went_out(self) -> bool:
+        """看到请求，或页面跳到了新会话（local_ 开头是还没拿到真实 id）。"""
+        url = self.page.url
+        return bool(self.sent) or (url != self.url_before and bool(re.search(r"/chat/(local_|\d)", url)))
+
     async def wait_sent(self, seconds: int) -> bool:
         for _ in range(seconds):
-            await self.page.wait_for_timeout(1000)
-            if self.sent:
+            if self.went_out():
                 return True
+            await self.page.wait_for_timeout(1000)
+        return self.went_out()
+
+    async def press_send(self) -> bool:
+        """回车，没发出去再点发送按钮。按钮灰着说明输入框空了，点也没用，交给上层重来。"""
+        page = self.page
+        self.url_before = page.url
+        await page.keyboard.press("Enter")
+        if await self.wait_sent(8):
+            return True
+        button = page.locator('[data-testid="chat_input_send_button"]')
+        if await button.count() and await button.first.is_enabled():
+            await button.first.click(timeout=4000)
+            return await self.wait_sent(10)
         return False
 
-    async def press_send(self) -> None:
-        """回车没发出去就点发送按钮：参考图还在处理时回车可能不生效。"""
-        page = self.page
-        await page.keyboard.press("Enter")
-        if await self.wait_sent(6):
+    async def restore_composer(self) -> None:
+        """页面重绘把技能和文字清掉时重新选一遍。"""
+        if SKILL_CHIP_RE.search(await self.composer_text()):
             return
-        button = page.locator('[data-testid="chat_input_send_button"]')
-        for _ in range(3):
-            if await button.count():
-                await button.first.click(timeout=4000)
-            if await self.wait_sent(8):
-                return
-        left = (await self.composer_text())[:40]
-        raise PreSubmissionParametersError(f"{self.account} 工作模式请求没有发出去（输入框内容：{left or '空'}）")
+        await self.enter_work_mode()
+        await self.choose_skill()
 
     async def send(self, text: str) -> str:
         page = self.page
-        await self.fill_prompt(text)
-        await self.press_send()
-        for _ in range(60):
+        for _ in range(3):
+            await self.restore_composer()
+            await self.fill_prompt(text)
+            if await self.press_send():
+                break
+            await self.raise_if_blocked()
+            await page.wait_for_timeout(3000)
+        else:
+            left = (await self.composer_text()).strip()[:40]
+            raise PreSubmissionParametersError(f"{self.account} 工作模式请求没有发出去（输入框内容：{left or '空'}）")
+        sent_at = time.time()
+        for _ in range(CONVERSATION_WAIT_SECONDS):
             self.raise_if_rejected()
+            await self.solve_captcha()
             match = re.search(r"/chat/(\d+)", page.url)
-            if match:
+            if match and page.url != self.url_before:
                 return match.group(1)
+            if self.send_error:
+                # 请求没到 Dola（多半是代理断了）：没有会话，换号不会重复出片
+                raise PreSubmissionParametersError(f"{self.account} 工作模式请求没连上：{self.send_error}")
             await page.wait_for_timeout(1000)
         self.raise_if_rejected()
-        raise TimeoutError(f"{self.account} 工作模式 60 秒没有拿到会话，可能已在生成，不换号重提")
+        known, conversation = await self.find_conversation(sent_at)
+        if conversation:
+            return conversation
+        if known:
+            raise PreSubmissionParametersError(f"{self.account} 工作模式请求 {CONVERSATION_WAIT_SECONDS} 秒没有回应，账号上也没有新会话")
+        raise TimeoutError(f"{self.account} 工作模式 {CONVERSATION_WAIT_SECONDS} 秒没有拿到会话，可能已在生成，不换号重提")
+
+    async def find_conversation(self, since: float) -> tuple[bool, str | None]:
+        """查账号最近的会话：(查到了列表, 发送之后新建的会话 id)。查不到列表就说不准。"""
+        try:
+            result = await self.page.evaluate(RECENT_JS, {"query": await self.chain_query()})
+            if result["status"] != 200:
+                return False, None
+            conversations = recent_conversations(json.loads(result["text"]))
+        except Exception:  # noqa: BLE001 - 查询失败时按「说不准」处理，绝不当成没发出去
+            return False, None
+        fresh = [cid for cid, updated in conversations if updated >= since - 5]
+        return True, fresh[0] if fresh else None
+
+    async def chain_query(self) -> str:
+        cookies = await self.page.context.cookies("https://www.dola.com")
+        query = dict(parse_qsl(urlsplit(self.page_query or self.sent[0]).query, keep_blank_values=True))
+        query.pop("a_bogus", None)
+        query["msToken"] = cookie_value(cookies, "msToken") or query.get("msToken", "")
+        return urlencode(query)
 
     async def next_answer(self, question: str) -> tuple[str | None, str]:
         """这次该怎么回：要确认就确认；问别的走通用回复，用完再交给 AI 代答。"""
@@ -331,7 +465,7 @@ class _WorkSession:
         return await self.page.evaluate(QUESTION_JS, COMPOSER)
 
     async def paused(self) -> bool:
-        return bool(await self.page.get_by_text(PAUSED_RE).count())
+        return bool(await self.page.evaluate(PAUSED_JS, self.conversation_id))
 
     async def read_chain(self, query: str, conversation_id: str):
         result = await self.page.evaluate(CHAIN_JS, {"query": query, "conversationId": conversation_id})
@@ -343,16 +477,14 @@ class _WorkSession:
             return None
 
     async def wait_for_video(self, conversation_id: str, deadline: float) -> str:
-        cookies = await self.page.context.cookies("https://www.dola.com")
-        query = dict(parse_qsl(urlsplit(self.page_query or self.sent[0]).query, keep_blank_values=True))
-        query.pop("a_bogus", None)
-        query["msToken"] = cookie_value(cookies, "msToken") or query.get("msToken", "")
-        query_text = urlencode(query)
+        self.conversation_id = conversation_id
+        query_text = await self.chain_query()
         stable, last, since_answer = 0, "", ANSWER_GAP_POLLS
         answered = set()
         while time.time() < deadline:
             await self.page.wait_for_timeout(POLL_SECONDS * 1000)
             self.raise_if_rejected()
+            await self.solve_captcha()
             if await is_logged_out(self.page):
                 raise LoginExpiredError(f"{self.account} 工作模式生成中登录态失效")
             chain = await self.read_chain(query_text, conversation_id)
@@ -372,11 +504,16 @@ class _WorkSession:
             if finished and any(tools_ran(m) for m in bots):
                 if stable >= SETTLED_POLLS:
                     reply = reply_text(latest)[-300:]
-                    raise UpstreamReplyError(failure_text.label_for(reply) or "生成失败", reply,
-                                             generation_started=True)
+                    raise (failure_from_reply(self.account, reply, ran_tools=True)
+                           or UpstreamReplyError("生成失败", reply, generation_started=True))
                 continue
+            if finished and stable >= QUIET_POLLS and not asks_to_confirm(reply_text(latest)):
+                failure = failure_from_reply(self.account, reply_text(latest), ran_tools=False)
+                if failure:
+                    raise failure
             question = ""
-            if await self.paused():
+            paused = await self.paused()
+            if paused:
                 question = await self.question()
             elif finished and stable >= QUIET_POLLS and (
                     latest.get("index_in_conv") not in answered or stable >= SETTLED_POLLS):
@@ -384,6 +521,8 @@ class _WorkSession:
                 answered.add(latest.get("index_in_conv"))
             if question and since_answer >= ANSWER_GAP_POLLS:
                 reply, how = await self.next_answer(question)
+                if not reply and paused:
+                    continue        # 选择题没人答也会自己往下走，不算失败
                 if not reply:
                     raise UpstreamReplyError(
                         "上游在等待回复",
@@ -397,7 +536,12 @@ class _WorkSession:
 
 
 async def _deliver(account: str, vm_str: str, conversation_id: str, on_poll) -> dict:
-    url = await fetch_higher_bitrate_url(vm_str, account)
+    url = None
+    for attempt in range(3):
+        url = await fetch_higher_bitrate_url(vm_str, account)
+        if url:
+            break
+        await asyncio.sleep(3 * (attempt + 1))
     if not url:
         raise UpstreamReplyError("网络失败", "工作模式已出片，但没有拿到无水印地址；已保留原会话",
                                  generation_started=True)
@@ -448,7 +592,7 @@ async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
     text = build_prompt(prompt, ratio)
     async with _work_slot(on_poll):
         profile = tempfile.mkdtemp(prefix="dola-work-")
-        context = None
+        context = session = None
         try:
             emit_feedback(on_poll, progress="工作模式：准备浏览器")
             async with async_playwright() as p:
@@ -485,9 +629,15 @@ async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
                 on_conversation_id(account, conversation_id, deadline)
             vm_str = await session.wait_for_video(conversation_id, deadline)
             return await _deliver(account, vm_str, conversation_id, on_poll)
+        except Exception as exc:
+            if not browser_error(exc):
+                raise
+            raise translate_browser_error(exc, account, bool(session and session.went_out())) from exc
         finally:
             try:
                 if context is not None:
-                    await context.close()
+                    await asyncio.wait_for(context.close(), CLOSE_SECONDS)
+            except Exception as exc:  # noqa: BLE001 - 关不掉也要让出名额
+                print(f"[{account}] 工作模式关闭浏览器失败：{short_error(exc)}", flush=True)
             finally:
                 shutil.rmtree(Path(profile), ignore_errors=True)

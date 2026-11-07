@@ -129,5 +129,17 @@ def asks_to_confirm(text: str) -> bool:
     return bool(CONFIRM_RE.search(text or ""))
 
 
+def recent_conversations(data: dict) -> list[tuple[str, int]]:
+    """recent_conv 的返回 → [(会话 id, 最后更新的秒级时间)]。conv_version 是微秒时间戳。"""
+    out = []
+    body = (data.get("downlink_body") or {}).get("pull_recent_conv_chain_downlink_body") or {}
+    for cell in body.get("cells") or []:
+        conversation = cell.get("conversation") or {}
+        version = str(conversation.get("conv_version") or "")
+        if conversation.get("conversation_id") and version[:10].isdigit():
+            out.append((str(conversation["conversation_id"]), int(version[:10])))
+    return out
+
+
 def uploads_committed(actions: list[str]) -> int:
     return sum(1 for action in actions if action == "CommitImageUpload")
