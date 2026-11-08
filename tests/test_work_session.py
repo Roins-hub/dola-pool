@@ -576,6 +576,30 @@ def test_address_lookup_is_retried_after_the_video_exists(monkeypatch):
     assert len(calls) == 3
 
 
+def test_proxy_drop_during_send_reports_the_network_not_the_page(monkeypatch):
+    # acc57：代理在发送那一刻断了，旧逻辑去找工作模式入口，报「页面上没有工作模式入口」
+    agent, item, page = send_session(monkeypatch, enter_sends=False, disabled=True)
+    page.text = "Creative video "
+
+    async def press(key):
+        item.send_error = "net::ERR_TUNNEL_CONNECTION_FAILED"
+    page.press = press
+    with pytest.raises(agent.PreSubmissionParametersError, match="请求没连上：net::ERR_TUNNEL"):
+        _run(item.send(PROMPT))
+
+
+def test_restore_without_the_work_tab_just_picks_the_skill_again(monkeypatch):
+    agent, item, page = send_session(monkeypatch)
+    page.text = ""
+    entered = []
+
+    async def enter():
+        entered.append(1)
+    item.enter_work_mode = enter
+    _run(item.restore_composer())                  # 假页面的 get_by_text 找不到入口
+    assert entered == [] and page.restores == 1
+
+
 def test_giving_up_says_what_was_left_in_the_composer(monkeypatch):
     agent, item, page = send_session(monkeypatch, enter_sends=False, button_sends=False)
     page.text = "Creative video "

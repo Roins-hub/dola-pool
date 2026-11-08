@@ -1512,11 +1512,16 @@ LONG_VIDEO_REJECT_MESSAGE = (
     "如需 30 秒，请让管理员开启 DOLA_30S_MODE=pair（两段 15 秒拼接，消耗双倍额度）")
 
 
-def _reject_unsupported_long(duration) -> None:
-    """DOLA_30S_MODE=reject（默认）：30 秒及以上受理时就拒，不派号、不占额度。"""
+def _reject_unsupported_long(duration, model: str = "") -> None:
+    """DOLA_30S_MODE=reject（默认）：30 秒及以上受理时就拒，不派号、不占额度。
+
+    2.0 的 30 秒在开着工作模式时用两段 15 秒拼，不受这个设置影响。
+    """
     try:
         seconds = int(duration or 0)
     except (TypeError, ValueError):
+        return
+    if work_reply.uses_work_pair(model, seconds):
         return
     if seconds > 15 and config.LONG_VIDEO_MODE == "reject":
         raise HTTPException(422, LONG_VIDEO_REJECT_MESSAGE.format(d=seconds))
@@ -1561,7 +1566,7 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
     if sites.is_doubao_model(model):
         resolved = _check_doubao_model(model, duration)
     else:
-        _reject_unsupported_long(duration)
+        _reject_unsupported_long(duration, model)
         resolved = _resolve_model_for_duration(model, duration)
         if resolved is not None:
             _reject_unaffordable(resolved, duration)
@@ -3150,6 +3155,8 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         raise HTTPException(409, "该账号正在执行任务，稍后再试")
     # 和客户 API 同一道时长检查：2.0-fast 网页只给 4～10 秒，直接请求 15 秒会被 dola 拒绝（2026-10-30 实测）
     version = _model_version(body.model)
+    if work_reply.uses_work_pair(body.model, body.duration):
+        raise HTTPException(422, "测试生成只用一个号，跑不了 30 秒拼接（要两个号各出 15 秒）")
     if (version == "seedance-2.0" and not sites.is_doubao_model(body.model)
             and body.duration not in config.V20_DURATIONS):
         raise HTTPException(

@@ -378,11 +378,21 @@ class _WorkSession:
             return await self.wait_sent(10)
         return False
 
+    def raise_if_send_failed(self):
+        if self.send_error:
+            # 请求没到 Dola（多半是代理断了）：没有会话，换号不会重复出片
+            raise PreSubmissionParametersError(f"{self.account} 工作模式请求没连上：{self.send_error}")
+
     async def restore_composer(self) -> None:
-        """页面重绘把技能和文字清掉时重新选一遍。"""
+        """页面重绘把技能和文字清掉时重新选一遍。已经在工作模式（看不到入口、输入框还在）就只重选技能。"""
+        self.raise_if_send_failed()
         if SKILL_CHIP_RE.search(await self.composer_text()):
             return
-        await self.enter_work_mode()
+        if await self.page.get_by_text(WORK_TAB_RE).count():
+            await self.enter_work_mode()
+        elif not await self.page.locator(COMPOSER).count():
+            await self.raise_if_blocked()
+            raise PreSubmissionParametersError(f"{self.account} 工作模式输入框不见了")
         await self.choose_skill()
 
     async def send(self, text: str) -> str:
@@ -392,6 +402,7 @@ class _WorkSession:
             await self.fill_prompt(text)
             if await self.press_send():
                 break
+            self.raise_if_send_failed()
             await self.raise_if_blocked()
             await page.wait_for_timeout(3000)
         else:
@@ -404,9 +415,7 @@ class _WorkSession:
             match = re.search(r"/chat/(\d+)", page.url)
             if match and page.url != self.url_before:
                 return match.group(1)
-            if self.send_error:
-                # 请求没到 Dola（多半是代理断了）：没有会话，换号不会重复出片
-                raise PreSubmissionParametersError(f"{self.account} 工作模式请求没连上：{self.send_error}")
+            self.raise_if_send_failed()
             await page.wait_for_timeout(1000)
         self.raise_if_rejected()
         known, conversation = await self.find_conversation(sent_at)

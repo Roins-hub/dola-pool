@@ -53,6 +53,16 @@ def uses_work_mode(model: str, duration) -> bool:
     return ("2.0" in text or "2-0" in text) and "doubao" not in text
 
 
+def uses_work_pair(model: str, duration) -> bool:
+    """这一单是否是两段工作模式拼成的 30 秒：开关打开、Dola 的 2.0、30 秒。"""
+    try:
+        if int(duration or 0) != 2 * WORK_DURATION:
+            return False
+    except (TypeError, ValueError):
+        return False
+    return uses_work_mode(model, WORK_DURATION)
+
+
 def build_prompt(prompt: str, ratio: str | None) -> str:
     """助手只看文字，时长和比例都要写进去；换行会让输入框提前发送。"""
     text = re.sub(r"\s*[\r\n]+\s*", " ", prompt or "").strip().rstrip("，,。. ")

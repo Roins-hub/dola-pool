@@ -152,7 +152,7 @@ Fields, error codes and admin endpoints are in [`API.md`](API.md).
 | Model | Duration | Points per video (4 per account per day by default) |
 |---|---|---|
 | `seedance-2.5` | 5 / 10 / 30 s | 5 s = 2, 10 s = 4, 30 s = 2 (4 in total when the second half has to be generated separately) |
-| `seedance-2.0-fast` | 5 / 10 s, plus 15 s with Work mode on | 5 s = 2, 10 s = 4; 15 s cost unknown |
+| `seedance-2.0-fast` | 5 / 10 s, plus 15 s and 30 s (two stitched segments) with Work mode on | 5 s = 2, 10 s = 4; 15 s cost unknown |
 
 - **Output and references**: 1280×720, 24 fps, H.265. Up to 10 reference images; reference audio and video are not supported.
 - **15 s on 2.0 (optional)**: turn on "2.0 的 15 秒" in the panel settings menu to route it through Dola Work mode, with reference images. It takes effect at once. It needs CloakBrowser and the Docker image does not include it. The assistant may rewrite the prompt, one video takes about 6 minutes, and an account that made one is not used again that day.

@@ -291,11 +291,11 @@ WORK_15S_CONCURRENCY = int(os.getenv("DOLA_WORK_15S_CONCURRENCY", "2"))
 
 
 def set_work_15s(enabled: bool) -> None:
-    """运行中切换：2.0 能下发的时长跟着变，不用重启。"""
+    """运行中切换：2.0 能下发的时长跟着变，不用重启。开启后加 15 秒和两段拼成的 30 秒。"""
     global WORK_15S_ENABLED, V20_DURATIONS
     WORK_15S_ENABLED = bool(enabled)
-    keep = () if 15 in V20_BASE_DURATIONS or not enabled else (15,)
-    V20_DURATIONS = (*V20_BASE_DURATIONS, *keep)
+    extra = tuple(d for d in (15, 30) if enabled and d not in V20_BASE_DURATIONS)
+    V20_DURATIONS = (*V20_BASE_DURATIONS, *extra)
 
 
 set_work_15s(os.getenv("DOLA_WORK_15S", "0") == "1")

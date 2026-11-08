@@ -166,7 +166,7 @@ def test_pure_cookie_account_never_opens_work_mode(tmp_path, monkeypatch):
     assert fake.calls == []
 
 
-@pytest.mark.parametrize("flag,expected", [("1", (5, 10, 15)), ("0", (5, 10))])
+@pytest.mark.parametrize("flag,expected", [("1", (5, 10, 15, 30)), ("0", (5, 10))])
 def test_switch_decides_whether_20_offers_15_seconds(monkeypatch, flag, expected):
     monkeypatch.setenv("DOLA_WORK_15S", flag)
     monkeypatch.delenv("DOLA_V20_DURATIONS", raising=False)
@@ -183,9 +183,11 @@ def switch_state(monkeypatch):
 
 def test_panel_switch_takes_effect_without_restart(switch_state):
     config.set_work_15s(True)
-    assert config.V20_DURATIONS == (5, 10, 15) and wr.uses_work_mode("seedance-2.0", 15)
+    assert config.V20_DURATIONS == (5, 10, 15, 30) and wr.uses_work_mode("seedance-2.0", 15)
+    assert wr.uses_work_pair("seedance-2.0", 30)
     config.set_work_15s(False)
     assert config.V20_DURATIONS == (5, 10) and not wr.uses_work_mode("seedance-2.0", 15)
+    assert not wr.uses_work_pair("seedance-2.0", 30)
 
 
 @pytest.mark.parametrize("saved,env_default,expected", [
@@ -318,3 +320,104 @@ def test_used_accounts_are_restored_from_task_history(tmp_path, monkeypatch):
     assert marked == ["acc1"]                                        # 过期的、未知的、已有更晚锁的不动
     assert abs(_row(bp, "acc1")["work_blocked_until"] - (now - 86400 + 7 * 86400)) < 1   # 取最早一次
     assert _row(bp, "acc3")["work_blocked_until"] == now + 9 * 86400
+
+
+@pytest.mark.parametrize("model,duration,expected", [
+    ("seedance-2.0", 30, True), ("seedance-2.0-fast", "30", True), ("seedance-2.0", 15, False),
+    ("seedance-2.5", 30, False), ("doubao-seedance-2.0-fast", 30, False), ("seedance-2.0", None, False),
+])
+def test_only_20_at_30_seconds_is_a_work_pair(monkeypatch, model, duration, expected):
+    monkeypatch.setattr(config, "WORK_15S_ENABLED", True)
+    assert wr.uses_work_pair(model, duration) is expected
+
+
+def test_continue_prompt_points_at_the_reference_frame():
+    import work_pair
+    text = work_pair.continue_prompt("  橘猫在沙滩上走  ")
+    assert text.startswith("接着参考图这一刻继续：橘猫在沙滩上走") and "镜头运动" in text
+
+
+@pytest.mark.parametrize("audio", [True, False])
+def test_concat_fits_the_second_segment_into_the_first_size(audio):
+    import work_pair
+    args = work_pair.concat_args("a.mp4", "b.mp4", "o.mp4", 960, 960, audio)
+    graph = args[args.index("-filter_complex") + 1]
+    assert graph.count("scale=960:960") == 2 and "pad=960:960" in graph
+    assert ("concat=n=2:v=1:a=1" in graph) is audio and ("[au]" in args) is audio
+    assert args[-1] == "o.mp4" and "+faststart" in args
+
+
+def _make_clip(path, color, seconds, audio):
+    import subprocess
+    args = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c={color}:s=320x180:r=24:d={seconds}"]
+    if audio:
+        args += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", "-shortest", "-c:a", "aac"]
+    subprocess.run(args + ["-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)], check=True)
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="需要 ffmpeg")
+def test_real_frame_and_concat(tmp_path):
+    import work_pair
+    first, second = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    _make_clip(first, "red", 2, True)
+    _make_clip(second, "blue", 2, False)            # 第二段没声音、尺寸一样也能拼
+    frame = work_pair.last_frame(first, tmp_path / "f.png")
+    assert frame.stat().st_size > 0
+    out = work_pair.concat(first, second, tmp_path / "o.mp4")
+    info = work_pair.probe(out)
+    assert (info["width"], info["height"]) == (320, 180)
+    import subprocess
+    seconds = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
+                                   capture_output=True, text=True).stdout)
+    assert 3.8 < seconds < 4.3
+
+
+def test_pair_runs_two_segments_on_two_accounts_and_stitches(tmp_path, monkeypatch):
+    browser_pool, bp = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
+    import work_pair
+    calls, polls = [], []
+
+    async def fake(account, prompt, ratio, **kwargs):
+        calls.append((account, prompt, kwargs.get("reference_image_paths")))
+        clip = tmp_path / f"{account}.mp4"
+        clip.write_bytes(b"x")
+        return {"local_path": str(clip), "account": account, "conversation_id": account + "-conv"}
+    _agent(monkeypatch, fake)
+    monkeypatch.setattr(config, "DOWNLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(browser_pool, "ensure_web_playable", lambda path: path)
+    def made(name):
+        def write(*args):
+            (tmp_path / name).write_bytes(b"x")
+            return tmp_path / name
+        return write
+    monkeypatch.setattr(work_pair, "last_frame", made("frame.png"))
+    monkeypatch.setattr(work_pair, "concat", made("out.mp4"))
+    result = _run(bp.generate_video("橘猫", "16:9", 30, model="seedance-2.0", max_attempts=3,
+                                    on_poll=lambda now, **f: polls.append(f.get("progress"))))
+    assert len(calls) == 2 and calls[0][0] != calls[1][0]           # 两个号
+    assert calls[1][1].startswith("接着参考图这一刻继续：橘猫") and calls[1][2] == [str(tmp_path / "frame.png")]
+    assert result["merge_mode"] == "work_pair" and result["local_path"] == str(tmp_path / "out.mp4")
+    assert sorted(result["accounts"]) == ["acc1", "acc2"]
+    for name in result["accounts"]:
+        assert _row(bp, name)["work_blocked_until"] and _row(bp, name)["used_today"] == 0
+    assert any(str(p).startswith("30 秒") for p in polls if p)
+
+
+def test_second_segment_failure_says_the_first_quota_is_spent(tmp_path, monkeypatch):
+    browser_pool, bp = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
+    import work_pair
+    calls = []
+
+    async def fake(account, prompt, ratio, **kwargs):
+        calls.append(account)
+        if len(calls) > 1:
+            raise RuntimeError("boom")
+        clip = tmp_path / f"{account}.mp4"
+        clip.write_bytes(b"x")
+        return {"local_path": str(clip), "account": account}
+    _agent(monkeypatch, fake)
+    monkeypatch.setattr(config, "DOWNLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(browser_pool, "ensure_web_playable", lambda path: path)
+    monkeypatch.setattr(work_pair, "last_frame", lambda video, out: tmp_path / "frame.png")
+    with pytest.raises(RuntimeError, match="第 2 段失败（第 1 段已用掉 acc[12] 的 15 秒额度）"):
+        _run(bp.generate_video("橘猫", "16:9", 30, model="seedance-2.0", max_attempts=1))

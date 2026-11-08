@@ -1489,7 +1489,7 @@ async function openWork15Settings(){
     if(epoch!==dialogEpoch)return;
     const off=c.available?'':'disabled';
     showDlg(`<h2>2.0 的 15 秒</h2>
-      <p class="hint">开启后，seedance-2.0-fast 请求 15 秒时走 Dola 工作模式，支持参考图。一单约 6 分钟；助手可能改写提示词；实际扣点未知，出过一条的号当天不再派发。</p>
+      <p class="hint">开启后，seedance-2.0-fast 请求 15 秒时走 Dola 工作模式，支持参考图；请求 30 秒时用两个号各出 15 秒再拼接。一单约 6 分钟；助手可能改写提示词；实际扣点未知，出过一条的号当天不再派发。</p>
       ${c.reason?`<p class="hint" role="alert" style="color:var(--red)">${esc(c.reason)}</p>`:''}
       <label class="sw-row" style="margin-top:14px"><span class="sw"><input type="checkbox" id="w15Enabled" ${c.enabled?'checked':''} ${off}><i></i></span>开启</label>
       <label for="w15Conc">同时运行几单（1～${c.max_concurrency}）</label>
@@ -1508,7 +1508,7 @@ async function saveWork15Settings(){
   btn.disabled=true;fb.textContent='正在保存…';
   try{
     const c=await api('/api/admin/settings/work-15s',{method:'PATCH',body:{enabled:q('#w15Enabled').checked,concurrency:Number(q('#w15Conc').value)}});
-    TEST_GEN_DURATIONS['seedance-2.0-fast']=c.v20_durations;
+    TEST_GEN_DURATIONS['seedance-2.0-fast']=c.v20_durations.filter(d=>d!==30);
     fb.textContent=c.enabled?'已开启，立即生效。测试生成现在可以选 15 秒。':'已关闭，立即生效。';
   }catch(e){if(e.message!=='unauthorized')fb.textContent='保存失败：'+e.message;}
   finally{btn.disabled=false;}
@@ -2095,7 +2095,8 @@ function workReadyCount(accounts){
 function loadAccounts(){
   if(accountLoad)return accountLoad;
   accountLoad=Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]).then(([a,j])=>{
-    if(Array.isArray(a.v20_durations)&&a.v20_durations.length)TEST_GEN_DURATIONS['seedance-2.0-fast']=a.v20_durations;
+    // 30 秒要两个号各出 15 秒，测试生成只用一个号，不提供
+    if(Array.isArray(a.v20_durations)&&a.v20_durations.length)TEST_GEN_DURATIONS['seedance-2.0-fast']=a.v20_durations.filter(d=>d!==30);
     accountSnapshot={a,j};renderAccounts();
   }).finally(()=>{accountLoad=null;});
   return accountLoad;

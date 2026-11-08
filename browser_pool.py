@@ -27,7 +27,7 @@ from pure_api_gen import (
     AbnormalNoAckError, ShortClipError, UnsupportedDurationError, ensure_web_playable,
     generate_pure_video, hello_probe, probe_login,
 )
-from work_reply import QUOTA_NOTE as WORK_QUOTA_NOTE, WORK_QUOTA_SECONDS, uses_work_mode
+from work_reply import QUOTA_NOTE as WORK_QUOTA_NOTE, WORK_DURATION, WORK_QUOTA_SECONDS, uses_work_mode, uses_work_pair
 import config
 import cred_store
 import failure_text
@@ -1571,6 +1571,62 @@ class BrowserPool:
                 "session": new_session,
                 "proxy_url": proxy_store.proxy_url_for(name)}
 
+    async def generate_work_pair(self, prompt: str, ratio: str, model: str, *, on_poll=None, on_wait=None,
+                                 reference_image_paths: list[str] | None = None, **dispatch) -> dict:
+        """30 秒 = 两段 15 秒：第二段用第一段最后一帧做参考图「接着继续」，最后本地拼接。
+
+        两段各是一次完整的 15 秒派单（换号、额度锁、失败处理都一样），一个号 7 天只能出
+        一条，所以必然是两个号。第二段失败时整单失败，第一段的额度已经用掉了。
+        """
+        import uuid
+        import work_pair
+
+        def tagged(index):
+            prefix = f"30 秒第 {index}/2 段："
+
+            def poll(now, **fields):
+                if fields.get("progress"):
+                    fields["progress"] = prefix + fields["progress"]
+                if on_poll:
+                    on_poll(now, **fields)
+
+            def wait(note):
+                if on_wait:
+                    on_wait(prefix + note)
+            return poll, wait
+
+        poll, wait = tagged(1)
+        first = await self.generate_video(prompt, ratio, WORK_DURATION, model, on_poll=poll, on_wait=wait,
+                                          reference_image_paths=reference_image_paths, **dispatch)
+        first_path = await self._local_video(first)
+        stem = Path(config.DOWNLOAD_DIR) / f"pair_{uuid.uuid4().hex[:12]}"
+        frame = await asyncio.to_thread(work_pair.last_frame, first_path, f"{stem}_frame.png")
+        poll, wait = tagged(2)
+        try:
+            second = await self.generate_video(work_pair.continue_prompt(prompt), ratio, WORK_DURATION, model,
+                                               on_poll=poll, on_wait=wait, reference_image_paths=[str(frame)],
+                                               **dispatch)
+        except Exception as exc:
+            raise RuntimeError(f"30 秒第 2 段失败（第 1 段已用掉 {first.get('account')} 的 15 秒额度）：{exc}") from exc
+        second_path = await self._local_video(second)
+        if on_poll:
+            from browser_feedback import emit
+            emit(on_poll, progress="30 秒：两段都已出片，正在拼接")
+        merged = await asyncio.to_thread(work_pair.concat, first_path, second_path, f"{stem}.mp4")
+        for leftover in (frame, first_path, second_path):
+            Path(leftover).unlink(missing_ok=True)
+        return {"video_url": "", "local_path": str(merged), "account": second.get("account"),
+                "accounts": [first.get("account"), second.get("account")],
+                "conversation_id": second.get("conversation_id"), "merge_mode": "work_pair"}
+
+    async def _local_video(self, result: dict) -> str:
+        """直链交付的段落没有落地文件，拼接前先下载到本地。"""
+        local = result.get("local_path")
+        if local and Path(local).exists():
+            return str(local)
+        from video_worker import _download
+        return str(await _download(result["video_url"], result.get("account") or ""))
+
     def rotate_proxy_accounts(self, proxy_id: str) -> dict:
         """面板「换IP」：绑定在这条代理上的号全部换出口。
 
@@ -2142,6 +2198,8 @@ class BrowserPool:
                              on_attempt_end=None) -> dict:
         """挑一个可调度且空闲的号出片；失败自动换号重试（最多 max_attempts 次）。
 
+        2.0 的 30 秒（工作模式开着时）交给 generate_work_pair：两段 15 秒各走一遍这里。
+
         on_wait(note)：排队 / 换号时回传一句给人看的原因（含 dola 原话），面板「报错/备注」显示。
 
         - 按模型分流：seedance-2.0（3 点）只从【满额】组取号；seedance-2.5（2 点）
@@ -2154,6 +2212,13 @@ class BrowserPool:
         - max_attempts <= 0 表示不限次数：在 deadline（任务总时限）之前一轮轮换号重试，
           到点仍未出片才判失败。
         """
+        if uses_work_pair(model, duration):
+            return await self.generate_work_pair(
+                prompt, ratio, model, on_conversation_id=on_conversation_id, on_poll=on_poll,
+                on_balance=on_balance, reference_image_paths=reference_image_paths,
+                on_account_try=on_account_try, max_attempts=max_attempts, deadline=deadline,
+                on_wait=on_wait, attempt_timeout=attempt_timeout, on_dispatch=on_dispatch,
+                on_attempt_end=on_attempt_end)
         if on_wait:
             on_wait("排队中：等待全局并发名额")
         async with self.semaphore:
