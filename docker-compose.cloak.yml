@@ -1,0 +1,14 @@
+# 严格隔离镜像（CloakBrowser）的覆盖配置，和 docker-compose.yml 一起用：
+#   docker compose -f docker-compose.yml -f docker-compose.cloak.yml up -d --build
+# 镜像在本机构建，不在镜像仓库里，所以面板的一键更新不可用，更新方法见 ISOLATION.md。
+services:
+  dola-pool:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloak
+      args:
+        BASE: ghcr.io/roins-hub/dola-pool:${DOLA_IMAGE_TAG:-latest}
+    image: dola-pool-cloak:${DOLA_IMAGE_TAG:-latest}
+    pull_policy: build
+    # Chromium 默认的 64MB 共享内存不够，页面会崩
+    shm_size: "1gb"

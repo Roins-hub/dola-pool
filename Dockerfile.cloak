@@ -1,0 +1,30 @@
+# dola-pool 严格隔离镜像：在官方镜像上加 CloakBrowser、Xvfb 和浏览器运行库。
+# 用于 DOLA_COOKIE_RUNTIME=cloak（Cookie 账号严格隔离）和「2.0 的 15 秒」工作模式。
+# 构建方法见 ISOLATION.md：
+#   docker compose -f docker-compose.yml -f docker-compose.cloak.yml build
+ARG BASE=ghcr.io/roins-hub/dola-pool:latest
+FROM ${BASE}
+
+# Xvfb：CloakBrowser 有头运行需要的虚拟显示器；字体：日文页面和中文提示词不显示成方块；
+# 其余是 Chromium 的运行库。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        xvfb xauth fonts-noto-cjk fonts-noto-color-emoji \
+        libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
+        libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 \
+        libxshmfence1 libx11-xcb1 libxss1 libgtk-3-0 \
+        $(apt-cache show libasound2t64 >/dev/null 2>&1 && echo libasound2t64 || echo libasound2) \
+    && rm -rf /var/lib/apt/lists/*
+
+# 用本次构建带来的依赖文件（基础镜像里的旧文件可能没有固定版本）
+COPY deploy-cloak-requirements.txt /app/deploy-cloak-requirements.txt
+RUN pip install -r /app/deploy-cloak-requirements.txt
+
+# 新的启动脚本会先起 Xvfb；基础镜像是旧版本时也用这一份
+COPY docker/entrypoint.sh /app/docker/entrypoint.sh
+RUN chmod +x /app/docker/entrypoint.sh
+
+# 内核下载到数据卷，重建容器不用重新下载；DISPLAY 由 entrypoint 启动的 Xvfb 提供。
+ENV CLOAKBROWSER_CACHE_DIR=/data/.cloakbrowser \
+    DISPLAY=:99 \
+    DOLA_CLOAK_HEADLESS=0

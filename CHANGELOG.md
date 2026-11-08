@@ -1,5 +1,17 @@
 # 更新日志
 
+## 2.7.6 — 2026-11-08
+
+### 部署
+
+- 新增 Docker 严格隔离镜像：`Dockerfile.cloak` 在官方镜像上加入 CloakBrowser、Xvfb、中日文字体和浏览器运行库，用 `docker compose -f docker-compose.yml -f docker-compose.cloak.yml up -d --build` 在本机构建。Docker 部署也能使用 Cookie 账号严格隔离和「2.0 的 15 秒」。Release 的 Docker 压缩包同时附带这些文件。
+- 容器启动脚本检测到 Xvfb 时自动启动虚拟显示器。
+- CloakBrowser 固定为 0.6.3。0.7 起下载浏览器内核需要授权码，新装的服务器会装到 0.7 以上，导致工作模式全部失败。
+
+### 文档
+
+- 新增 [`ISOLATION.md`](ISOLATION.md)：Cookie 账号严格隔离的服务器部署与 Docker 部署步骤、导入顺序、配置项和常见问题。
+
 ## 2.7.5 — 2026-11-08
 
 ### 视频生成

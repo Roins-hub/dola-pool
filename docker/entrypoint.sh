@@ -9,4 +9,10 @@ ln -sfn /data/accounts /app/accounts
 ln -sfn /data/cred.key /app/cred.key
 ln -sfn /data/creds.json /app/creds.json
 cd /app
+# 严格隔离镜像（Dockerfile.cloak）里有 Xvfb：先起虚拟显示器，CloakBrowser 有头运行要用；官方镜像没有，跳过
+if command -v Xvfb >/dev/null 2>&1; then
+  export DISPLAY="${DISPLAY:-:99}"
+  Xvfb "$DISPLAY" -screen 0 1280x1024x24 -ac >/tmp/xvfb.log 2>&1 &
+  sleep 1
+fi
 exec python -m uvicorn server:app --host 0.0.0.0 --port "${PORT:-8000}"

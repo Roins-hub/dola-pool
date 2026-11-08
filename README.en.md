@@ -256,8 +256,8 @@ Set these in `dola.env` (one-command install), `.env`, or the environment. The f
 <summary><b>Strict cookie browser isolation (optional)</b></summary>
 
 By default cookie accounts use pure HTTP. To keep each Dola cookie account in its own browser environment:
-- deploy on Linux with Xvfb + systemd;
-- install `deploy-cloak-requirements.txt`;
+- server install: deploy with Xvfb + systemd and install `deploy-cloak-requirements.txt`;
+- Docker: run `docker compose -f docker-compose.yml -f docker-compose.cloak.yml up -d --build` to build a CloakBrowser image on top of the official one;
 - add this configuration:
 
 ```env
@@ -271,9 +271,9 @@ DOLA_MIN_SUBMIT_INTERVAL_SECONDS=15
 - **How it works**: each account uses `accounts/<account>/cloak-profile/` and is bound to its own fixed proxy. Verification, submission and polling all go through that profile.
 - **Import order**: for batch imports, tick "skip online verification" first, bind each account's proxy, then verify accounts one by one.
 - **What it isolates**: browser data only; this is not a virtual machine per account, and separate proxy records do not guarantee separate public IPs.
-- **Not supported**: the pure-API Docker image, and 30-second `pair` mode (pure-API accounts only). The CloakBrowser engine has its own license and concurrency limits.
+- **Limits**: the official Docker image does not include CloakBrowser, so build it as above; a self-built image cannot use the panel's one-click update. `DOLA_30S_MODE=pair` only uses pure-API accounts, so strictly isolated accounts are skipped (the 30-second stitching that comes with the 2.0 15-second option is not affected). CloakBrowser is pinned to 0.6.3, because 0.7 and later need a license key.
 
-See [`USAGE.md`](USAGE.md) for the full steps.
+See [`ISOLATION.md`](ISOLATION.md) (Chinese) for the full steps.
 
 </details>
 

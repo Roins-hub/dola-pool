@@ -109,8 +109,10 @@ dola.com **只允许日本 / 韩国 IP 访问**。服务器不在日韩的话，
 
 #### Cookie 账号严格隔离（可选）
 
-Cookie 账号默认走纯 HTTP 协议。需要让 Dola Cookie 账号固定绑定浏览器环境时，使用非 Docker 的
-Chromium/Xvfb 部署，并安装 CloakBrowser wrapper，然后在 `dola.env` 设置：
+完整的部署步骤（服务器脚本部署和 Docker 部署）、导入顺序和常见问题见 [`ISOLATION.md`](ISOLATION.md)。
+
+Cookie 账号默认走纯 HTTP 协议。需要让 Dola Cookie 账号固定绑定浏览器环境时，安装 CloakBrowser
+（服务器部署安装 `deploy-cloak-requirements.txt`，Docker 部署使用 `Dockerfile.cloak`），然后在 `dola.env` 设置：
 
 ```env
 DOLA_COOKIE_RUNTIME=cloak

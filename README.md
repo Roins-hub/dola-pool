@@ -244,8 +244,8 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 <summary><b>严格 Cookie 浏览器隔离（可选）</b></summary>
 
 默认 Cookie 号走纯 HTTP。要让每个 Dola Cookie 号固定在独立浏览器环境里，可以这样做：
-- 在 Linux 上用 Xvfb + systemd 部署；
-- 安装 `deploy-cloak-requirements.txt`；
+- 服务器部署：用 Xvfb + systemd 部署，安装 `deploy-cloak-requirements.txt`；
+- Docker 部署：`docker compose -f docker-compose.yml -f docker-compose.cloak.yml up -d --build`，在官方镜像上构建带 CloakBrowser 的镜像；
 - 在配置里加上：
 
 ```env
@@ -259,9 +259,9 @@ DOLA_MIN_SUBMIT_INTERVAL_SECONDS=15
 - **工作方式**：每个号使用 `accounts/<账号>/cloak-profile/`，并绑定自己的固定代理。验证、提交、轮询都走这个 profile。
 - **导入顺序**：批量导入时先勾选「跳过在线验证」，绑好专属代理后再逐个验证。
 - **隔离范围**：这是浏览器资料隔离，不是每号一台虚拟机；不同代理记录也不保证不同公网 IP。
-- **不支持的场景**：不适用于纯 API 的 Docker 镜像，30 秒 `pair` 也只适用于纯 API 号。CloakBrowser 内核另有许可证和并发限制。
+- **不支持的场景**：官方 Docker 镜像本身不含 CloakBrowser，需要按上面的方式自建；自建镜像不能使用面板一键更新。`DOLA_30S_MODE=pair` 只派给纯 API 号，严格隔离的号不参与（「2.0 的 15 秒」开启后的 30 秒拼接不受影响）。CloakBrowser 固定为 0.6.3，0.7 起需要授权码。
 
-完整步骤见 [`USAGE.md`](USAGE.md)。
+完整步骤见 [`ISOLATION.md`](ISOLATION.md)。
 
 </details>
 
