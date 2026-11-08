@@ -71,7 +71,7 @@ You need Python 3.10+ and Node.js 18+. Outside Japan / Korea you need a proxy, s
 <details>
 <summary><b>Manual install (source + systemd)</b></summary>
 
-dola.com requires a Japanese or Korean exit IP, so a server in mainland China must use a proxy.
+dola.com requires a Japanese or Korean exit IP, so a server in mainland China must use a proxy. For static and rotating proxies and how to avoid rate limits, see [`PROXY.md`](PROXY.md) (Chinese).
 
 ```bash
 git clone https://github.com/Roins-hub/dola-pool.git && cd dola-pool

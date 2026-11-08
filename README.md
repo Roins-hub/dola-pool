@@ -66,7 +66,7 @@ docker compose up -d
 <details>
 <summary><b>手动部署（源码 + systemd）</b></summary>
 
-dola.com 要求日本 / 韩国出口，服务器在大陆时必须配代理。
+dola.com 要求日本 / 韩国出口，服务器在大陆时必须配代理。静态 / 动态代理的配置与防风控建议见 [`PROXY.md`](PROXY.md)。
 
 ```bash
 git clone https://github.com/Roins-hub/dola-pool.git && cd dola-pool
