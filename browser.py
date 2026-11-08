@@ -182,6 +182,27 @@ def _with_upload_bypass(kwargs: dict | None) -> dict | None:
     return kwargs
 
 
+def cloak_proxy_settings(url: str | None):
+    """CloakBrowser 的 proxy 参数：和 patchright 一样让图片上传服务器直连。
+
+    慢代理上传一张几 MB 的参考图要一分多钟（2026-11-08 实测 142.249.204.x 约 50 KB/s），
+    上传域名直连后只有页面和提交走账号代理。CloakBrowser 收 Playwright 形式的 dict，
+    带 bypass 时会加 --proxy-bypass-list；SOCKS5 用户名密码由它自己拼回 URL。
+    """
+    if not url or not config.UPLOAD_PROXY_BYPASS:
+        return url or None
+    parts = urlsplit(url if "://" in url else "http://" + url)
+    if not parts.hostname:
+        return url
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    proxy = {"server": f"{parts.scheme}://{parts.hostname}:{port}"}
+    if parts.username:
+        proxy["username"] = unquote(parts.username)
+    if parts.password:
+        proxy["password"] = unquote(parts.password)
+    return _with_upload_bypass(proxy)
+
+
 def proxy_kwargs_for(account: str | None = None,
                      proxy_info: dict | None = None) -> dict | None:
     """解析某个账号（或 override）应使用的 Playwright proxy 参数。
@@ -249,7 +270,7 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
         context = await launch_persistent_context_async(
             str(profile_dir),
             headless=config.CLOAK_HEADLESS if headless is None else bool(headless),
-            proxy=cloak_proxy or None,
+            proxy=cloak_proxy_settings(cloak_proxy),
             locale="ja-JP",
             timezone="Asia/Tokyo",
             geoip=config.CLOAK_GEOIP,

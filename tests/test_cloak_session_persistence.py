@@ -176,5 +176,7 @@ def test_accounts_keep_distinct_profiles_and_bound_proxies(runtime, monkeypatch)
     run(scenario())
     assert launches[0] == launches[2]
     assert launches[0][0] != launches[1][0]
-    assert launches[0][1] == "http://example.invalid:8080"
-    assert launches[1][1] == "http://other.invalid:8080"
+    # 代理带上「上传域名直连」，账号各自的出口不变
+    assert launches[0][1]["server"] == "http://example.invalid:8080"
+    assert launches[1][1]["server"] == "http://other.invalid:8080"
+    assert launches[0][1]["bypass"] == mod.config.UPLOAD_PROXY_BYPASS

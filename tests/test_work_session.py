@@ -97,7 +97,8 @@ def load_agent(monkeypatch):
         return False
     noop = lambda *a, **k: None
     stubs = {
-        "browser": SimpleNamespace(cookie_value=lambda cookies, name: "t", launch_account_context=noop),
+        "browser": SimpleNamespace(cookie_value=lambda cookies, name: "t", launch_account_context=noop,
+                                   cloak_proxy_settings=lambda url: {"server": url, "bypass": "*.upload"}),
         "video_worker": SimpleNamespace(RiskControlError=RiskControlError, _download=noop),
         "video_worker_ui": SimpleNamespace(
             LoginExpiredError=LoginExpiredError, dismiss_popups=noop, fetch_higher_bitrate_url=noop,
@@ -618,7 +619,7 @@ def test_cloak_goes_through_the_local_relay_for_socks_auth(monkeypatch):
     monkeypatch.setitem(sys.modules, "cloakbrowser", SimpleNamespace(launch_persistent_context_async=launch))
     monkeypatch.setattr(agent, "http_proxy", lambda account: "http://127.0.0.1:9999")
     assert _run(agent._launch_cloak("acc1", "/tmp/x")) == "context"
-    assert seen["proxy"] == "http://127.0.0.1:9999"
+    assert seen["proxy"] == {"server": "http://127.0.0.1:9999", "bypass": "*.upload"}
 
 
 def test_failed_chain_read_still_reports_progress(monkeypatch):

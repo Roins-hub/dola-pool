@@ -90,7 +90,8 @@
 4. **避免登录态频繁换 IP**：Cookie 账号在短时间内更换设备或 IP 容易触发风控。严格 Cookie 模式默认 `DOLA_EGRESS_THROTTLE_ROTATE=0`，被限流时不自动换 IP。
 5. **先绑代理再验证**：批量导入时勾选「跳过在线验证」，绑定好各自的代理后再逐个验证，避免首次访问经过默认代理。
 6. **不要在浏览器中退出登录**：导出 Cookie 的浏览器点击退出，会让号池中同一份登录态立即失效，导出后直接关闭窗口即可。
-7. **关注流量**：住宅代理通常按流量计费。工作模式会打开完整浏览器，消耗明显高于纯 API，请定期查看供应商余额。
+7. **关注流量**：住宅代理通常按流量计费。工作模式会打开完整浏览器，消耗明显高于纯 API，请定期查看供应商余额。流量用完的代理通常仍接受连接、随即断开，页面报 `ERR_CONNECTION_CLOSED`。
+   参考图默认不走代理（`DOLA_UPLOAD_PROXY_BYPASS`），慢代理也不影响上传。
 8. **定期探测**：使用「一键探测出口 IP」检查所有账号的出口，失效的静态 IP 应及时更换或改用隧道网关。
 
 ## 6. 相关环境变量
@@ -109,7 +110,7 @@
 | `DOLA_EGRESS_AUTO_ROTATE_GAP` | `120` | 出口不通时自动换 IP 的最短间隔 |
 | `DOLA_DYNAMIC_ROTATE_MIN_INTERVAL` | `60` | 动态代理新建记录时的默认最小换 IP 间隔 |
 | `DOLA_DYNAMIC_STICKY_TTL` | `0` | 动态代理新建记录时的默认 session 有效期 |
-| `DOLA_UPLOAD_PROXY_BYPASS` | `*.bytevcloudapi.com,*.vodupload.com` | 上传参考图时直连的域名 |
+| `DOLA_UPLOAD_PROXY_BYPASS` | `*.bytevcloudapi.com,*.vodupload.com` | 上传参考图时直连的域名（纯 API、patchright 和 CloakBrowser 都适用）；留空 = 全部走代理 |
 
 ## 7. 常见问题
 
@@ -117,6 +118,8 @@
 | --- | --- | --- |
 | `ERR_SOCKS_CONNECTION_FAILED` | 带认证的 SOCKS5 未经中转（v2.7.2 之前的工作模式） | 升级到最新版本 |
 | `ERR_TUNNEL_CONNECTION_FAILED` | 代理节点或 session 当前不可用 | 换 IP；静态 IP 持续失败时更换代理 |
+| `ERR_CONNECTION_CLOSED` | 代理接受连接后立即断开，常见于流量用完或节点失效 | 查看供应商余额；换 IP 或更换代理 |
+| 「工作模式参考图 N 秒内没有传完」 | 上传域名被设为走代理，或服务器到上传服务器的网络慢 | 确认 `DOLA_UPLOAD_PROXY_BYPASS` 未被清空 |
 | 页面显示「この国または地域ではDolaは利用できません」 | 出口不在日韩，或该 IP 被 Dola 限制 | 检查模板中的地区；动态代理会自动换 IP |
 | `710022002`（请求集中，请稍后再试） | 出口或账号被限流 | 号池自动退避；长期频繁出现时减少每个出口的账号数 |
 | 代理「换IP」显示已换 0 个 | v2.7.2 之前的已知问题 | 升级到最新版本 |

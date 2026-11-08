@@ -28,7 +28,7 @@ from account_transport import http_proxy
 import config
 import dola_responder
 import failure_text
-from browser import cookie_value, launch_account_context
+from browser import cloak_proxy_settings, cookie_value, launch_account_context
 from browser_feedback import emit as emit_feedback
 from generation_errors import (
     PreSubmissionParametersError, PreSubmissionUploadError, UpstreamReplyError, WorkQuotaError,
@@ -42,7 +42,8 @@ from video_worker_ui import (
 )
 from work_reply import (
     WORK_DURATION, WORK_LIMIT_RE, asks_to_confirm, build_prompt, chain_messages, recent_conversations,
-    reply_finished, reply_text, session_cookies, tools_ran, uploads_committed, video_models, work_limit_until,
+    reply_finished, reply_text, session_cookies, tools_ran, upload_wait_seconds, uploads_committed, video_models,
+    work_limit_until,
 )
 
 SKILL_RE = re.compile(r"^(Creative video|创意视频|クリエイティブ動画|クリエイティブビデオ)$")
@@ -307,12 +308,15 @@ class _WorkSession:
         page = self.page
         if not await self._pick_files(paths):
             await self._paste_files(paths)
-        for _ in range(60):
+        total = sum(Path(path).stat().st_size for path in paths if Path(path).exists())
+        wait = upload_wait_seconds(total)
+        for _ in range(wait):
             if uploads_committed(self.upload_actions) >= len(paths):
                 break
             await page.wait_for_timeout(1000)
         else:
-            raise PreSubmissionUploadError(f"{self.account} 工作模式参考图 60 秒内没有传完")
+            raise PreSubmissionUploadError(
+                f"{self.account} 工作模式参考图 {wait} 秒内没有传完（{total / 1048576:.1f} MB）")
         await page.wait_for_timeout(2500)
 
     async def choose_skill(self):
@@ -598,7 +602,8 @@ async def _launch_cloak(account: str, profile: str, extension_paths: list[str] |
     if not proxy:
         raise PreSubmissionParametersError(f"{account} 没有绑定代理，工作模式不走直连")
     return await launch_persistent_context_async(
-        profile, headless=config.CLOAK_HEADLESS, proxy=proxy, locale="ja-JP", timezone="Asia/Tokyo",
+        profile, headless=config.CLOAK_HEADLESS, proxy=cloak_proxy_settings(proxy),
+        locale="ja-JP", timezone="Asia/Tokyo",
         geoip=config.CLOAK_GEOIP, humanize=config.CLOAK_HUMANIZE,
         extension_paths=extension_paths or None,
         license_key=config.CLOAK_LICENSE_KEY or None)

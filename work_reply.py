@@ -176,3 +176,17 @@ def recent_conversations(data: dict) -> list[tuple[str, int]]:
 
 def uploads_committed(actions: list[str]) -> int:
     return sum(1 for action in actions if action == "CommitImageUpload")
+
+
+UPLOAD_WAIT_MIN = 60
+UPLOAD_WAIT_MAX = 180
+UPLOAD_SECONDS_PER_MB = 30
+
+
+def upload_wait_seconds(total_bytes: int) -> int:
+    """等参考图传完的秒数：每 MB 30 秒，最少 60、最多 180。
+
+    上传域名已直连，正常几秒就传完；这是给直连也慢或被关掉直连时的兜底。
+    """
+    want = -(-max(0, int(total_bytes)) * UPLOAD_SECONDS_PER_MB // (1 << 20))
+    return max(UPLOAD_WAIT_MIN, min(UPLOAD_WAIT_MAX, want))
