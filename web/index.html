@@ -2001,7 +2001,9 @@ function renderGroupBar(d,container,jump){
     btn('异常','异常',n('异常'),'派发后 5 分钟无回执，到期自动恢复')+sep+
     '<span class="gbtn points" title="正常组（满额+半额+冷却+生成中）的剩余总额度；'
       +'seedance-2.5 每条 2 点、seedance-2.0-fast 每条 3 点">剩余额度 <b>'+pts+'</b> 点'
-      +'<span class="n">≈2.5 可出 '+Math.floor(pts/2)+' 条</span></span>';
+      +'<span class="n">≈2.5 可出 '+Math.floor(pts/2)+' 条</span></span>'
+    +(work15On()&&d.accounts?'<span class="gbtn points" title="2.0 的 15 秒（工作模式）：每号每 7 天 1 条，和每日点数分开">'
+      +'15 秒可用 <b>'+workReadyCount(d.accounts)+'</b> 条</span>':'');
   moveGroupInd(q(container||'#groupBar'));
 }
 /** 出口显示名（HTML）：直连 / 绑定的代理名 + host:port（egress 本身已去掉代理凭据）。 */
@@ -2075,7 +2077,20 @@ function quotaCell(x,unit){
     return '<span class="tiny">今日已出 </span><b>'+(x.used_today||0)+'</b><span class="tiny"> 条（豆包按上游额度）</span>';
   return `<b>${x.remaining}</b> / ${x.limit}`+(unit?'<span class="tiny">（点数/上限）</span>':'')+
     (x.credit_balance==null?'':`<div class="tiny">上游余额 ${x.credit_balance}${x.credit_balance<2?'（已用完）':''}</div>`)+
-    (x.work_blocked_until*1000>Date.now()?`<div class="tiny" title="${esc(x.work_block_reason||'')}">15 秒：${fmt(x.work_blocked_until)} 恢复</div>`:'');
+    workQuotaLine(x);
+}
+/** 2.0 的 15 秒（工作模式）额度：每号 7 天 1 条，和上面的每日点数分开。开关没开就不显示 */
+function work15On(){return (TEST_GEN_DURATIONS['seedance-2.0-fast']||[]).includes(15);}
+function workUsed(x){return (x.work_blocked_until||0)*1000>Date.now();}
+function workQuotaLine(x){
+  if(x.site==='doubao'||!work15On())return '';
+  return workUsed(x)
+    ?`<div class="tiny" title="${esc(x.work_block_reason||'')}">15 秒：已用，${fmt(x.work_blocked_until)} 恢复</div>`
+    :'<div class="tiny" title="每号每 7 天 1 条，从首次使用起算">15 秒：可用 1 条</div>';
+}
+function workReadyCount(accounts){
+  return (accounts||[]).filter(x=>x.site!=='doubao'&&x.scheduling&&x.login_ok!==0
+    &&!['风控','待激活','异常'].includes(x.group)&&!workUsed(x)).length;
 }
 function loadAccounts(){
   if(accountLoad)return accountLoad;

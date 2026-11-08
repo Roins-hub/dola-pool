@@ -670,6 +670,22 @@ class BrowserPool:
                            (until, (reason or WORK_QUOTA_NOTE)[:300], account))
         self._conn.commit()
 
+    def restore_work_quota(self, used: list[tuple[str, float]]) -> list[str]:
+        """按任务记录补上 15 秒额度锁：每个号取最早一次，锁到它 + 7 天；只延长、不缩短。"""
+        first: dict[str, float] = {}
+        for account, used_at in used:
+            if account in self.accounts and used_at and (account not in first or used_at < first[account]):
+                first[account] = used_at
+        now, marked = time.time(), []
+        for account, used_at in first.items():
+            until = used_at + WORK_QUOTA_SECONDS
+            row = self._meta(account)
+            current = float(row["work_blocked_until"] or 0) if row else 0
+            if until > now and until > current:
+                self._mark_work_blocked(account, until, WORK_QUOTA_NOTE + "（按任务记录恢复）")
+                marked.append(account)
+        return marked
+
     @staticmethod
     def _work_ready(a: dict) -> bool:
         """能接工作模式：开着调度、没在风控冷却、登录没坏、7 天额度没锁。不看每日额度。"""

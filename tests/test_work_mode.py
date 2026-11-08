@@ -306,3 +306,15 @@ def test_work_quota_error_switches_to_the_next_account(tmp_path, monkeypatch):
     assert len(calls) == 2 and result["account"] == calls[1]
     assert _row(bp, calls[0])["work_blocked_until"] == until
     assert _row(bp, calls[1])["used_today"] == 0          # 工作模式不扣每日额度
+
+
+def test_used_accounts_are_restored_from_task_history(tmp_path, monkeypatch):
+    import time
+    _, bp = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2", "acc3"])
+    now = time.time()
+    bp._mark_work_blocked("acc3", now + 9 * 86400, "Dola 给的时间")
+    marked = bp.restore_work_quota([("acc1", now - 3600), ("acc1", now - 86400), ("acc2", now - 8 * 86400),
+                                    ("acc3", now - 60), ("ghost", now)])
+    assert marked == ["acc1"]                                        # 过期的、未知的、已有更晚锁的不动
+    assert abs(_row(bp, "acc1")["work_blocked_until"] - (now - 86400 + 7 * 86400)) < 1   # 取最早一次
+    assert _row(bp, "acc3")["work_blocked_until"] == now + 9 * 86400

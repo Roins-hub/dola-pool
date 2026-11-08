@@ -443,6 +443,15 @@ class TaskStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def work_videos_since(self, since: float) -> list[tuple[str, float]]:
+        """since 之后成功出过 15 秒的 (账号, 开始时间)：工作模式额度按首次使用起算 7 天。"""
+        with _LOCK:
+            rows = self._conn.execute(
+                "SELECT account, COALESCE(started_at, created_at) AS used_at FROM tasks "
+                "WHERE duration=15 AND status='completed' AND account IS NOT NULL AND created_at>=?",
+                (since,)).fetchall()
+        return [(r["account"], float(r["used_at"] or 0)) for r in rows]
+
     def recoverable_tasks(self) -> list:
         """服务重启后恢复已拿到 conversation_id 的任务，不重复提交 prompt。"""
         with _LOCK:

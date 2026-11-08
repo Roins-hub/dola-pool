@@ -93,7 +93,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.7.4"
+APP_VERSION = "2.7.5"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -1186,6 +1186,10 @@ async def resume_incomplete_tasks():
     open_thread_pool()
     _load_responder()
     work_reply.apply_saved(store.get_setting(WORK_15S_KEY), store.get_setting(WORK_15S_CONCURRENCY_KEY))
+    # 15 秒额度锁在号池库里；按任务记录补齐，升级前用过的号不必各撞一次上限
+    restored = pool.restore_work_quota(store.work_videos_since(time.time() - work_reply.WORK_QUOTA_SECONDS))
+    if restored:
+        print(f"[startup] 按任务记录恢复 15 秒额度锁：{'、'.join(restored)}", flush=True)
     # 先处理崩溃时留下的 processing 孤儿任务（有 conversation 保留续轮询，
     # 无 conversation 清空账号重新派号），避免永久卡死。
     stale_refs = sweep_stale_references()
