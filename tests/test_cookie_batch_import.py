@@ -168,6 +168,7 @@ def test_import_cookie_account_forced_browser_still_falls_back(tmp_path, monkeyp
     async def driver_down(*_a, **_k):
         raise RuntimeError("Connection closed while reading from the driver")
     monkeypatch.setattr(cookie_login, "launch_account_context", driver_down)
+    monkeypatch.setattr(cookie_login, "_apply_browser_profile", driver_down)
     monkeypatch.setattr(cookie_login, "is_cloak_cookie_account", lambda name: False)
     monkeypatch.setattr(cookie_login.config, "COOKIE_RUNTIME", "pure")
 

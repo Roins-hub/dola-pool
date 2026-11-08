@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-import browser_pool
 import cloak_retry
 import config
 import video_worker_ui as ui
@@ -165,6 +164,9 @@ def test_rejected_again_in_cloakbrowser_raises_once(browsers):
 def test_rejection_counts_as_upstream_throttle():
     # 号池按 710022002 给账号和出口记限流、换号
     assert isinstance(ui.SubmitRejectedError(ui.REJECTED_NOTE), ui.RiskControlError)
+    # 在用到时才导入 browser_pool：收集阶段就导入会连带载入真实的 cookie_login，
+    # 让 test_cookie_batch_import 的桩模块失效
+    import browser_pool
     assert browser_pool.classify_upstream_failure(ui.REJECTED_NOTE) == "transient"
 
 
