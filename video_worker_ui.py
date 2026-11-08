@@ -29,6 +29,7 @@ import config
 import proxy_store
 from browser import cookie_value, launch_account_context
 from browser_feedback import BrowserReplies, emit as emit_feedback
+import cloak_retry
 from generation_errors import CreditError
 from upstream_reply import QUOTA_RE as CREDIT_FAIL_PATTERN
 from video_worker import POLL_JS, RiskControlError, _download, extract_unwatermarked_url
@@ -100,6 +101,13 @@ class AccountLimitedError(Exception):
 
 class CreditInsufficientError(Exception):
     """生成前已知积分不足，不提交视频，换下一个账号。"""
+
+
+REJECTED_NOTE = "710022002 提交被 dola 拒绝，页面随后要退出登录（已拦下）"
+
+
+class SubmitRejectedError(RiskControlError):
+    """发送后 dola 拒绝（710022002），页面随即调退出登录。会话没建成、没扣点，换浏览器重发不会重复出片。"""
 
 
 class LoginExpiredError(Exception):
@@ -1077,11 +1085,13 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                          duration: int = None, timeout: int = None,
                          model: str = "seedance_v2.0", use_extension: bool = True,
                          on_conversation_id=None, on_poll=None, on_balance=None,
-                         reference_image_paths: list[str] | None = None) -> dict:
+                         reference_image_paths: list[str] | None = None,
+                         on_retry=None) -> dict:
     """完整出片流程（UI 流）。返回 {"video_url","local_path","conversation_id","account"}。
 
     ratio/duration: None = 用 UI 默认（当前默认 10s）。
     异常：RiskControlError（滑块 3 次不过）、CreditError（额度不足）。出片轮询不限时。
+    发送后被 710022002 拒绝时，用 CloakBrowser 再发一次（cloak_retry），开始重发前调 on_retry()。
     """
     timeout = timeout or config.VIDEO_TIMEOUT
     model_key = model.lower().replace("-", "_")
@@ -1101,137 +1111,182 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         timeout = max(timeout, 1800)
     if reference_image_paths:
         timeout = max(timeout, config.REFERENCE_VIDEO_TIMEOUT)
-    async with async_playwright() as p:
-        context = await launch_account_context(
-            p, account, headless=False if use_extension else None,
-            use_extension=use_extension)
-        replies = None
-        try:
-            emit_feedback(on_poll, progress="正在打开账号浏览器并检查登录态")
-            page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
-            await page.wait_for_timeout(5000)
-            raise_if_region_restricted(page, account)
-            await dismiss_popups(page)
-            await ensure_login_stable(page, account)
-            cookies = await context.cookies("https://www.dola.com")
-            ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
-            emit_feedback(on_poll, progress="登录检查完成，正在检查额度")
-            await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
-
-            # ---- UI 发送 ----
-            await enter_video_mode(page, account)
-            if reference_image_paths:
-                await upload_with_retry(page, account, reference_image_paths, on_poll)
-            # 选择模型（尽力而为）：扩展/当前网页端文案 モデル 2.0高速/2.5；
-            # 部分账号 UI 变体没有该按钮，找不到就沿用 Dola 默认模型，不阻塞出片。
+    args = (account, prompt, ratio, duration, timeout, model_key,
+            on_conversation_id, on_poll, on_balance, reference_image_paths)
+    try:
+        async with async_playwright() as p:
+            context = await launch_account_context(
+                p, account, headless=False if use_extension else None,
+                use_extension=use_extension)
             try:
-                current_model = None
-                for label in ("モデル 2.0高速", "モデル 2.5"):
-                    loc = page.get_by_text(label, exact=True).first
-                    if await loc.count() and await loc.is_visible():
-                        current_model = loc
-                        break
-                if current_model is None:
-                    current_model = page.get_by_text(re.compile(r"^モデル "), exact=False).first
-                if not await current_model.count():
-                    raise RuntimeError("没有模型按钮")   # 不让 evaluate 再盲等 30 秒
-                try:
-                    await current_model.click(timeout=5000)
-                except Exception:
-                    # radix popper 子元素拦截点击时，用 JS 直接派发点击
-                    await current_model.evaluate("(el) => el.click()", timeout=3000)
-                await page.wait_for_timeout(500)
-                options = (("Dreamina Seedance 2.5",)
-                           if model_key == "seedance_v2.5"
-                           else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0", "Seedance2.0Fast"))
-                selected = False
-                for option_text in options:
-                    loc = page.get_by_text(option_text, exact=False).first
-                    if await loc.count() and await loc.is_visible():
-                        try:
-                            await loc.click(timeout=5000)
-                        except Exception:
-                            # radix popper 子元素拦截点击时，用 JS 直接派发点击
-                            await loc.evaluate("(el) => el.click()")
-                            await page.wait_for_timeout(300)
-                        selected = True
-                        break
-                if not selected:
-                    print(f"  (未找到模型选项，用 Dola 默认: {model_key})", flush=True)
-                await page.wait_for_timeout(500)
-            except Exception as e:
-                print(f"  (设置模型失败，用 Dola 默认: {str(e)[:100]})", flush=True)
-            # Confirm both settings in the current combined slider panel (or legacy UI).
-            from browser_video_params import select_video_parameters
-            emit_feedback(on_poll, progress="正在确认视频模型、时长和比例（尚未提交生成）")
-            await select_video_parameters(page, duration, ratio)
-            await dismiss_popups(page)
-            box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')
-            try:
-                await box.click()
-            except Exception:
-                await box.evaluate("(el) => el.focus()")
-            emit_feedback(on_poll, progress=f"正在输入提示词（{len(prompt)} 字，尚未提交生成）")
-            await type_prompt(page, prompt)
-            await page.wait_for_timeout(600)
-            replies = BrowserReplies(page, on_poll)
-            replies.start()
-            await page.keyboard.press("Enter")
-            emit_feedback(on_poll, progress="已发送生成请求，等待上游会话确认")
-            print(f"[{account}] UI 已发送: {prompt[:40]}", flush=True)
-
-            # ---- 滑块求解（最多 3 次）----
-            solved_or_absent = False
-            for attempt in range(1, 4):
-                frame = None
-                for _ in range(20):
-                    await page.wait_for_timeout(1000)
-                    frame = find_captcha_frame(page)
-                    if frame:
-                        break
-                if not frame:
-                    solved_or_absent = True
-                    break
-                print(f"[{account}] 滑块出现，第 {attempt} 次求解...", flush=True)
-                if await solve_slider(page, frame, attempt, account):
-                    print(f"[{account}] 滑块通过 ✓", flush=True)
-                    await page.wait_for_timeout(3000)  # 等前端自动重试提交
-                    solved_or_absent = True
-                    break
-                print(f"[{account}] 滑块未过，等刷新重试", flush=True)
-            if not solved_or_absent:
-                await page.screenshot(path="solve_fail.png")
-                raise RiskControlError("滑块 3 次未通过")
-
-            # ---- 等真实 conversation_id（URL 从 local_x 变成数字 id）----
-            conv_id = ""
-            for _ in range(30):
-                await page.wait_for_timeout(1000)
-                if await is_logged_out(page):
-                    raise LoginExpiredError(
-                        f"{account} 登录态失效（发送后页面出现登录入口），请重新登录该账号")
-                tail = page.url.rstrip("/").split("/")[-1]
-                if tail.isdigit():
-                    conv_id = tail
-                    break
-            if not conv_id:
-                await page.screenshot(path="no_conv.png")
-                raise TimeoutError("30s 未拿到 conversation_id")
-            print(f"[{account}] conversation_id={conv_id}，轮询出片...", flush=True)
-
-            deadline = time.time() + timeout
-            if on_conversation_id:
-                on_conversation_id(account, conv_id, deadline)
-            return await poll_conversation(
-                account, page, context, conv_id, timeout, on_poll, on_balance,
-                duration, ratio, prompt=prompt)
-        finally:
-            try:
-                if replies is not None:
-                    await replies.close()
+                return await _submit_and_poll(context, *args)
             finally:
                 await context.close()
+    except SubmitRejectedError as exc:
+        why_not = cloak_retry.unavailable_reason(account, duration)
+        if why_not:
+            print(f"[{account}] 提交被拒，不用 CloakBrowser 重试（{why_not}）", flush=True)
+            raise
+        print(f"[{account}] 提交被拒（{exc}），改用 CloakBrowser 重试一次", flush=True)
+        emit_feedback(on_poll, progress="提交被 dola 拒绝（710022002，未生成、未扣点），改用 CloakBrowser 重试一次")
+        if on_retry:
+            on_retry()
+    try:
+        async with cloak_retry.cloak_context(account, use_extension) as context:
+            result = await _submit_and_poll(context, *args)
+    except SubmitRejectedError:
+        raise SubmitRejectedError(f"{REJECTED_NOTE}；CloakBrowser 重试也被拒") from None
+    print(f"[{account}] CloakBrowser 重试成功", flush=True)
+    return result
+
+
+async def _submit_and_poll(context, account, prompt, ratio, duration, timeout, model_key,
+                           on_conversation_id, on_poll, on_balance, reference_image_paths) -> dict:
+    """在已打开的浏览器里发送并等出片；浏览器由调用方关闭。"""
+    replies = None
+    try:
+        emit_feedback(on_poll, progress="正在打开账号浏览器并检查登录态")
+        page = context.pages[0] if context.pages else await context.new_page()
+        await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
+        await page.wait_for_timeout(5000)
+        raise_if_region_restricted(page, account)
+        await dismiss_popups(page)
+        await ensure_login_stable(page, account)
+        cookies = await context.cookies("https://www.dola.com")
+        ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
+        emit_feedback(on_poll, progress="登录检查完成，正在检查额度")
+        await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
+
+        # ---- UI 发送 ----
+        await enter_video_mode(page, account)
+        if reference_image_paths:
+            await upload_with_retry(page, account, reference_image_paths, on_poll)
+        # 选择模型（尽力而为）：扩展/当前网页端文案 モデル 2.0高速/2.5；
+        # 部分账号 UI 变体没有该按钮，找不到就沿用 Dola 默认模型，不阻塞出片。
+        try:
+            current_model = None
+            for label in ("モデル 2.0高速", "モデル 2.5"):
+                loc = page.get_by_text(label, exact=True).first
+                if await loc.count() and await loc.is_visible():
+                    current_model = loc
+                    break
+            if current_model is None:
+                current_model = page.get_by_text(re.compile(r"^モデル "), exact=False).first
+            if not await current_model.count():
+                raise RuntimeError("没有模型按钮")   # 不让 evaluate 再盲等 30 秒
+            try:
+                await current_model.click(timeout=5000)
+            except Exception:
+                # radix popper 子元素拦截点击时，用 JS 直接派发点击
+                await current_model.evaluate("(el) => el.click()", timeout=3000)
+            await page.wait_for_timeout(500)
+            options = (("Dreamina Seedance 2.5",)
+                       if model_key == "seedance_v2.5"
+                       else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0", "Seedance2.0Fast"))
+            selected = False
+            for option_text in options:
+                loc = page.get_by_text(option_text, exact=False).first
+                if await loc.count() and await loc.is_visible():
+                    try:
+                        await loc.click(timeout=5000)
+                    except Exception:
+                        # radix popper 子元素拦截点击时，用 JS 直接派发点击
+                        await loc.evaluate("(el) => el.click()")
+                        await page.wait_for_timeout(300)
+                    selected = True
+                    break
+            if not selected:
+                print(f"  (未找到模型选项，用 Dola 默认: {model_key})", flush=True)
+            await page.wait_for_timeout(500)
+        except Exception as e:
+            print(f"  (设置模型失败，用 Dola 默认: {str(e)[:100]})", flush=True)
+        # Confirm both settings in the current combined slider panel (or legacy UI).
+        from browser_video_params import select_video_parameters
+        emit_feedback(on_poll, progress="正在确认视频模型、时长和比例（尚未提交生成）")
+        await select_video_parameters(page, duration, ratio)
+        await dismiss_popups(page)
+        box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')
+        try:
+            await box.click()
+        except Exception:
+            await box.evaluate("(el) => el.focus()")
+        emit_feedback(on_poll, progress=f"正在输入提示词（{len(prompt)} 字，尚未提交生成）")
+        await type_prompt(page, prompt)
+        await page.wait_for_timeout(600)
+        # 被 710022002 拒绝时页面会自己调退出登录，放行就真掉线（工作模式同样拦截）。
+        # 只在发送前才装：发送前的掉线仍按原逻辑由 ensure_login_stable 识别。
+        logouts: list[str] = []
+
+        async def stop_logout(route):
+            if route.request.resource_type in ("xhr", "fetch", "document"):
+                logouts.append(urlsplit(route.request.url).path)
+                await route.abort()
+            else:
+                await route.continue_()
+        await context.route(re.compile(r"logout", re.I), stop_logout)
+
+        def raise_if_rejected():
+            if logouts:
+                print(f"[{account}] 发送后页面要退出登录（{logouts[0]}，已拦下）→ 判为被拒", flush=True)
+                raise SubmitRejectedError(REJECTED_NOTE)
+
+        replies = BrowserReplies(page, on_poll)
+        replies.start()
+        await page.keyboard.press("Enter")
+        emit_feedback(on_poll, progress="已发送生成请求，等待上游会话确认")
+        print(f"[{account}] UI 已发送: {prompt[:40]}", flush=True)
+
+        # ---- 滑块求解（最多 3 次）----
+        solved_or_absent = False
+        for attempt in range(1, 4):
+            frame = None
+            for _ in range(20):
+                await page.wait_for_timeout(1000)
+                raise_if_rejected()
+                frame = find_captcha_frame(page)
+                if frame:
+                    break
+            if not frame:
+                solved_or_absent = True
+                break
+            print(f"[{account}] 滑块出现，第 {attempt} 次求解...", flush=True)
+            if await solve_slider(page, frame, attempt, account):
+                print(f"[{account}] 滑块通过 ✓", flush=True)
+                await page.wait_for_timeout(3000)  # 等前端自动重试提交
+                solved_or_absent = True
+                break
+            print(f"[{account}] 滑块未过，等刷新重试", flush=True)
+        if not solved_or_absent:
+            await page.screenshot(path="solve_fail.png")
+            raise RiskControlError("滑块 3 次未通过")
+
+        # ---- 等真实 conversation_id（URL 从 local_x 变成数字 id）----
+        conv_id = ""
+        for _ in range(30):
+            await page.wait_for_timeout(1000)
+            raise_if_rejected()
+            if await is_logged_out(page):
+                raise LoginExpiredError(
+                    f"{account} 登录态失效（发送后页面出现登录入口），请重新登录该账号")
+            tail = page.url.rstrip("/").split("/")[-1]
+            if tail.isdigit():
+                conv_id = tail
+                break
+        if not conv_id:
+            raise_if_rejected()
+            await page.screenshot(path="no_conv.png")
+            raise TimeoutError("30s 未拿到 conversation_id")
+        print(f"[{account}] conversation_id={conv_id}，轮询出片...", flush=True)
+
+        deadline = time.time() + timeout
+        if on_conversation_id:
+            on_conversation_id(account, conv_id, deadline)
+        return await poll_conversation(
+            account, page, context, conv_id, timeout, on_poll, on_balance,
+            duration, ratio, prompt=prompt)
+    finally:
+        if replies is not None:
+            await replies.close()
 
 
 async def _main():

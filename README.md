@@ -236,6 +236,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `DOLA_PORTRAIT_RETRIES` | `3` | dola 以「肖像保护」拒绝、且还没开始生成时，换号重提几次（审核结果因号而异；拒绝不扣点）；`0` = 关闭 |
 | `DOLA_PURE_API` / `DOLA_PURE_FALLBACK_BROWSER` | `1` / `1` | 优先纯 HTTP 出片；失败时回退浏览器 |
 | `DOLA_COOKIE_RUNTIME` | `pure` | `cloak` = Dola Cookie 号使用 CloakBrowser 独立浏览器环境（见下） |
+| `DOLA_CLOAK_RETRY` | `1` | 浏览器号的 5/10 秒提交被 710022002 拒绝时，用 CloakBrowser 重试一次（需安装 CloakBrowser）；`0` 关闭 |
 | `DOUBAO_ALLOW_PAID` | `1` | 豆包免费额度用完后自动走付费额度；`0` = 换号 |
 | `DOUBAO_AUTO_NO_WATERMARK` | `1` | 自动替豆包号关「AI 生成」明水印 |
 | `DOLA_IMAGE_TIMEOUT` | `240` | 生图一次请求最多等多久（秒） |

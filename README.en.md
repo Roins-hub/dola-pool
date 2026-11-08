@@ -248,6 +248,7 @@ Set these in `dola.env` (one-command install), `.env`, or the environment. The f
 | `DOLA_PORTRAIT_RETRIES` | `3` | When dola refuses for portrait protection before generating anything, retry on this many other accounts (the review varies by account; refusals are not charged); `0` = off |
 | `DOLA_PURE_API` / `DOLA_PURE_FALLBACK_BROWSER` | `1` / `1` | Prefer the pure HTTP path; fall back to the browser on failure |
 | `DOLA_COOKIE_RUNTIME` | `pure` | `cloak` = run each Dola cookie account in its own CloakBrowser profile (see below) |
+| `DOLA_CLOAK_RETRY` | `1` | When a 5/10-second browser submission is rejected with 710022002, retry it once in CloakBrowser (needs CloakBrowser); `0` turns it off |
 | `DOUBAO_ALLOW_PAID` | `1` | Use paid quota after the Doubao free quota runs out; `0` = switch accounts |
 | `DOUBAO_AUTO_NO_WATERMARK` | `1` | Turn off the visible "AI generated" watermark on Doubao accounts |
 | `DOLA_IMAGE_TIMEOUT` | `240` | Maximum seconds for one image request |

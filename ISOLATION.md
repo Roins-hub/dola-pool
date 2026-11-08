@@ -201,6 +201,8 @@ docker compose exec dola-pool sh -c 'pgrep -a Xvfb; pip show cloakbrowser | grep
 - **只想使用 15 秒和 30 秒**：安装 CloakBrowser 即可（服务器部署按 3.2 安装，Docker 部署使用 `Dockerfile.cloak`），`DOLA_COOKIE_RUNTIME` 可以保持 `pure`。
 - **同时启用严格隔离**：按本文完整配置。
 
+安装 CloakBrowser 后还有一个附带作用：Google 登录的号出 5 秒、10 秒时平时仍用自己的浏览器，提交被 `710022002` 拒绝时，会把登录态复制进临时 CloakBrowser 再提交一次（`DOLA_CLOAK_RETRY=1`，默认开启）。
+
 ## 8. 数据与安全
 
 - `accounts/<账号>/cloak-profile/` 中保存该账号的浏览器资料，其中 `.cloak-session-cookies.json` 包含登录凭据（Linux 下权限为 600）。不要分享，也不要提交到 Git。

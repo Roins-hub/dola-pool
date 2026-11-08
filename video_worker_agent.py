@@ -588,7 +588,7 @@ async def _copied_session(p, account: str) -> list[dict]:
     return cookies
 
 
-async def _launch_cloak(account: str, profile: str):
+async def _launch_cloak(account: str, profile: str, extension_paths: list[str] | None = None):
     try:
         from cloakbrowser import launch_persistent_context_async
     except ImportError as exc:
@@ -600,6 +600,7 @@ async def _launch_cloak(account: str, profile: str):
     return await launch_persistent_context_async(
         profile, headless=config.CLOAK_HEADLESS, proxy=proxy, locale="ja-JP", timezone="Asia/Tokyo",
         geoip=config.CLOAK_GEOIP, humanize=config.CLOAK_HUMANIZE,
+        extension_paths=extension_paths or None,
         license_key=config.CLOAK_LICENSE_KEY or None)
 
 

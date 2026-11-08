@@ -135,6 +135,9 @@ CLOAK_LICENSE_KEY = os.getenv("CLOAKBROWSER_LICENSE_KEY", "")
 CLOAK_CACHE_DIR = os.getenv("CLOAKBROWSER_CACHE_DIR", "")
 if CLOAK_CACHE_DIR:
     os.environ.setdefault("CLOAKBROWSER_CACHE_DIR", CLOAK_CACHE_DIR)
+# 5/10 秒浏览器提交被 dola 拒绝（710022002）时，把登录态复制进临时 CloakBrowser 再提交一次。
+# 装了 CloakBrowser 才生效；0 = 关闭，直接换号。
+CLOAK_RETRY = os.getenv("DOLA_CLOAK_RETRY", "1") == "1"
 
 # 「验证」按钮对 Google 登录账号追加的聊天探活（账号声誉/风控预检）：
 # 发送一句问候，看是否正常回复，还是发送后立刻被踢成未登录。

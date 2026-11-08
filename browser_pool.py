@@ -1729,7 +1729,7 @@ class BrowserPool:
 
     async def _generate_effective(self, account, prompt, ratio, duration, model, *,
                                   on_conversation_id, on_poll, on_balance,
-                                  reference_image_paths):
+                                  reference_image_paths, on_retry=None):
         """cookie 账号走纯 API；失败直接抛出真实原因（不再回退浏览器）。
 
         浏览器 profile 对 cookie 号不可靠（导入的浏览器会话常显示已登出），
@@ -1798,7 +1798,8 @@ class BrowserPool:
             result = await generate_video(
                 account, prompt, ratio, duration, model=model,
                 on_conversation_id=on_conversation_id, on_poll=on_poll,
-                on_balance=on_balance, reference_image_paths=reference_image_paths)
+                on_balance=on_balance, reference_image_paths=reference_image_paths,
+                on_retry=on_retry)
         return await self._web_playable(result)
 
     async def _web_playable(self, result: dict) -> dict:
@@ -2423,13 +2424,20 @@ class BrowserPool:
                                     preparation.reschedule(None)
                                 if on_conversation_id:
                                     on_conversation_id(*args)
+
+                            def restarted():
+                                # 被拒后改用 CloakBrowser 重发：重开浏览器要时间，提交准备时限重新计
+                                if browser_preparation and not preparation.expired():
+                                    preparation.reschedule(
+                                        asyncio.get_running_loop().time() + config.PREPARE_TIMEOUT)
                             try:
                                 async with preparation:
                                     result = await self._generate_effective(
                                         account, prompt, ratio, duration, model=model,
                                         on_conversation_id=acknowledged, on_poll=on_poll,
                                         on_balance=on_balance,
-                                        reference_image_paths=reference_image_paths)
+                                        reference_image_paths=reference_image_paths,
+                                        on_retry=restarted)
                             except TimeoutError:
                                 if preparation.expired():
                                     raise TimeoutError(
