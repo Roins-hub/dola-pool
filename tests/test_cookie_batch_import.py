@@ -163,6 +163,13 @@ def test_import_cookie_account_forced_browser_still_falls_back(tmp_path, monkeyp
 
     monkeypatch.chdir(tmp_path)
     probe_calls = _pure_probe_stub(monkeypatch, result=(False, "not logged in"))
+    # 显式模拟驱动起不来：cookie_login 可能已被前面的测试以真实 browser 模块导入，
+    # 不能指望桩模块里没有 launch_account_context。
+    async def driver_down(*_a, **_k):
+        raise RuntimeError("Connection closed while reading from the driver")
+    monkeypatch.setattr(cookie_login, "launch_account_context", driver_down)
+    monkeypatch.setattr(cookie_login, "is_cloak_cookie_account", lambda name: False)
+    monkeypatch.setattr(cookie_login.config, "COOKIE_RUNTIME", "pure")
 
     bundle = {"cookies": [
         {"name": "sessionid", "value": "sid-x", "domain": ".dola.com", "path": "/"},
