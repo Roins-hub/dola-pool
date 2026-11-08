@@ -16,7 +16,7 @@ from pathlib import Path
 
 from generation_errors import (
     CreditError, PreSubmissionUploadError, PreSubmissionParametersError, RegionRestrictedError,
-    UploadRouteError, UpstreamGenerationFailed, UpstreamReplyError, portrait_refusal,
+    UploadRouteError, UpstreamGenerationFailed, UpstreamReplyError, WorkQuotaError, portrait_refusal,
 )
 from account_transport import diagnose_upload_route, egress_alive, redact_error
 from video_worker_ui import (
@@ -27,7 +27,7 @@ from pure_api_gen import (
     AbnormalNoAckError, ShortClipError, UnsupportedDurationError, ensure_web_playable,
     generate_pure_video, hello_probe, probe_login,
 )
-from work_reply import QUOTA_NOTE as WORK_QUOTA_NOTE, uses_work_mode
+from work_reply import QUOTA_NOTE as WORK_QUOTA_NOTE, WORK_QUOTA_SECONDS, uses_work_mode
 import config
 import cred_store
 import failure_text
@@ -427,6 +427,9 @@ class BrowserPool:
             ("tier", "TEXT DEFAULT ''"),
             # 豆包号「AI 生成水印」设置：1 = 已关（无水印），0 = 没关，NULL = 还没读过
             ("no_watermark", "INTEGER"),
+            # ---- 2.7.4：工作模式（2.0 的 15 秒）单独的额度：每号 7 天 1 条 ----
+            ("work_blocked_until", "REAL DEFAULT 0"),
+            ("work_block_reason", "TEXT DEFAULT ''"),
         ):
             try:
                 self._conn.execute(f"ALTER TABLE accounts_meta ADD COLUMN {column} {definition}")
@@ -659,6 +662,32 @@ class BrowserPool:
         )
         self._conn.commit()
 
+    def _mark_work_blocked(self, account: str, until: float | None, reason: str = "") -> None:
+        """工作模式额度用完：只锁这个号的 15 秒，每日聊天额度照常可用。"""
+        self._ensure_meta(account)
+        until = until or time.time() + WORK_QUOTA_SECONDS
+        self._conn.execute("UPDATE accounts_meta SET work_blocked_until=?, work_block_reason=? WHERE name=?",
+                           (until, (reason or WORK_QUOTA_NOTE)[:300], account))
+        self._conn.commit()
+
+    @staticmethod
+    def _work_ready(a: dict) -> bool:
+        """能接工作模式：开着调度、没在风控冷却、登录没坏、7 天额度没锁。不看每日额度。"""
+        return (bool(a.get("scheduling")) and not a.get("cooling") and a.get("login_ok") != 0
+                and float(a.get("work_blocked_until") or 0) <= time.time())
+
+    def _work_all_blocked(self, site: str) -> str:
+        """能用的号全被工作模式额度锁住时，返回给客户看的原因（含最早恢复时间）。"""
+        rows = [a for a in self.list_accounts() if a.get("site", sites.DOLA) == site and a.get("scheduling")
+                and a.get("login_ok") != 0 and a.get("group") not in (GROUP_RISK, GROUP_PENDING)]
+        if not rows or any(self._work_ready(a) for a in rows):
+            return ""
+        locked = [float(a.get("work_blocked_until") or 0) for a in rows if float(a.get("work_blocked_until") or 0) > time.time()]
+        if len(locked) < len(rows):
+            return ""
+        return (f"所有号的 15 秒（工作模式）免费额度都用完了（每号 7 天 1 条），"
+                f"最早 {_beijing_clock(min(locked))} 恢复")
+
     def _mark_daily_limit(self, account: str, reason: str = "", until: float | None = None):
         """Dola 明确返回每日上限：未成功不扣本地点数（2026-09-02 规则），
         只把账号限流标记到次日零点，期间跳过该号。
@@ -798,6 +827,8 @@ class BrowserPool:
                 "quota_blocked_until": m["quota_blocked_until"] if m and m["quota_blocked_until"] else 0,
                 "quota_blocked": bool(m and m["quota_blocked_until"] > now),
                 "quota_reason": m["quota_reason"] if m else "",
+                "work_blocked_until": m["work_blocked_until"] if m and m["work_blocked_until"] else 0,
+                "work_block_reason": m["work_block_reason"] if m else "",
                 "credit_balance": m["credit_balance"] if m else None,
                 "credit_checked_at": m["credit_checked_at"] if m else 0,
                 "failed_at": m["failed_at"] if m else 0,
@@ -1677,7 +1708,7 @@ class BrowserPool:
             result = await generate_work_video(
                 account, prompt, ratio, on_conversation_id=on_conversation_id, on_poll=on_poll,
                 reference_image_paths=reference_image_paths)
-            self._set_credit_balance(account, 0, WORK_QUOTA_NOTE)
+            self._mark_work_blocked(account, None, WORK_QUOTA_NOTE)
             return await self._web_playable(result)
         if pure_cookie:
             # cookie 号：纯 API 出片；失败抛真实错误，不再回退浏览器
@@ -1778,7 +1809,8 @@ class BrowserPool:
                 linked = result.get("delivery") == "link" and result.get("video_url")
                 if not linked and (not local or not Path(local).exists()):
                     raise RuntimeError("出片未产出本地视频文件")
-                self._claim_for(account, cost, result)
+                if not uses_work_mode(model, duration):
+                    self._claim_for(account, cost, result)
                 self._conn.execute(
                     "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
                     (time.time(), account))
@@ -2116,6 +2148,10 @@ class BrowserPool:
             cost = self._duration_cost(model, duration)
             need = start_need(model, duration)      # 派号门槛（2.0 只要还有额度）；记账仍按 cost
             allowed_groups = self._allowed_quota_groups(model, duration)
+            # 工作模式有自己的 7 天额度：不看、也不扣每日聊天额度
+            work_job = uses_work_mode(model, duration)
+            if work_job:
+                need, allowed_groups = 0, (GROUP_FULL, GROUP_HALF, GROUP_COOLING)
             want_site = sites.site_for_model(model)
             member_only = sites.doubao_member_only(model)
             # 豆包 2.5 原生 30 秒：不走 dola 的两段拼接
@@ -2166,6 +2202,10 @@ class BrowserPool:
                 return deadline is None or time.time() < deadline
 
             while attempts_left() and time_left():
+                if work_job:
+                    exhausted = self._work_all_blocked(want_site)
+                    if exhausted:
+                        raise RuntimeError(exhausted)
                 if want_site == sites.DOUBAO:
                     locked = doubao_all_locked(self.list_accounts(), model, member_only,
                                                deadline if deadline is not None else time.time())
@@ -2191,21 +2231,28 @@ class BrowserPool:
                     # 会员模型（豆包 2.0 标准版 / 2.5）不派给已知的免费号
                     if member_only and a.get("tier") == "free":
                         continue
-                    # 冷却/风控/待激活/异常一律不派发
-                    if a.get("group") in self.BLOCKED_GROUPS:
-                        continue
-                    # 额度组门槛：2.0 只吃满额；2.5 半额优先、满额兜底
-                    if self._quota_group(a) not in allowed_groups:
+                    if work_job:
+                        # 每日额度用完（冷却组）的号照样能接 15 秒；风控/待激活/异常不派
+                        if a.get("group") in self.BLOCKED_GROUPS and a.get("group") != GROUP_COOLING:
+                            continue
+                        if not self._work_ready(a):
+                            continue
+                    else:
+                        # 冷却/风控/待激活/异常一律不派发
+                        if a.get("group") in self.BLOCKED_GROUPS:
+                            continue
+                        # 额度组门槛：2.0 只吃满额；2.5 半额优先、满额兜底
+                        if self._quota_group(a) not in allowed_groups:
+                            if a["remaining"] < need:
+                                short_seen += 1     # 余额本来就不够这一单：等也等不来（要到明天重置）
+                            else:
+                                group_wait = True
+                            continue
+                        if not self._schedulable(a):
+                            continue
                         if a["remaining"] < need:
-                            short_seen += 1     # 余额本来就不够这一单：等也等不来（要到明天重置）
-                        else:
-                            group_wait = True
-                        continue
-                    if not self._schedulable(a):
-                        continue
-                    if a["remaining"] < need:
-                        short_seen += 1
-                        continue
+                            short_seen += 1
+                            continue
                     # 两段拼接只在纯 API 路径实现（浏览器号会按 30 秒原样提交，拿不到片）
                     if pair_job and not self.is_pure_account(a["name"]):
                         non_pure.append(a["name"])
@@ -2308,7 +2355,8 @@ class BrowserPool:
                                         f"提交准备超时：{config.PREPARE_TIMEOUT}s 内未确认上游会话；"
                                         "提交结果不确定，未自动换号重提")
                                 raise
-                            self._claim_for(account, cost, result)
+                            if not work_job:
+                                self._claim_for(account, cost, result)
                             self._conn.execute(
                                 "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
                                 (time.time(), account))
@@ -2356,6 +2404,12 @@ class BrowserPool:
                             # 派发后 5 分钟一句回执都没有：这是账号侧异常 → 进【异常】组，换号重试
                             print(f"[pool] {account} 派发后无任何回执 → 进【异常】组，换号: {e}", flush=True)
                             self._mark_abnormal(account, str(e))
+                            last_err = e
+                        except WorkQuotaError as e:
+                            print(f"[pool] {account} 工作模式额度用完，锁到"
+                                  f"{_beijing_clock(e.until) if e.until else '7 天后'}，换号: {e}", flush=True)
+                            self._mark_work_blocked(account, e.until, str(e))
+                            say(f"{account} 的 15 秒免费额度已用完（每号 7 天 1 条）→ 换号")
                             last_err = e
                         except AccountLimitedError as e:
                             print(f"[pool] {account} 达到每日上限，立即换号: {e}", flush=True)

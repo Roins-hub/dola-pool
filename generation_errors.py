@@ -5,6 +5,16 @@ class CreditError(Exception):
     """Account has too little quota for this request: switch accounts, do not retry on it."""
 
 
+class WorkQuotaError(Exception):
+    """Dola 工作模式的免费额度用完了（每号 7 天 1 条，按首次使用起算）。
+
+    和每日聊天额度无关：只锁这个号的工作模式，until 是 Dola 给的恢复时间（取不到时为 None）。
+    """
+    def __init__(self, message, until=None):
+        self.until = until
+        super().__init__(message)
+
+
 class PreSubmissionUploadError(TimeoutError):
     """Reference upload failed before a video generation request was submitted.
 

@@ -2074,7 +2074,8 @@ function quotaCell(x,unit){
   if(x.site==='doubao')
     return '<span class="tiny">今日已出 </span><b>'+(x.used_today||0)+'</b><span class="tiny"> 条（豆包按上游额度）</span>';
   return `<b>${x.remaining}</b> / ${x.limit}`+(unit?'<span class="tiny">（点数/上限）</span>':'')+
-    (x.credit_balance==null?'':`<div class="tiny">上游余额 ${x.credit_balance}${x.credit_balance<2?'（已用完）':''}</div>`);
+    (x.credit_balance==null?'':`<div class="tiny">上游余额 ${x.credit_balance}${x.credit_balance<2?'（已用完）':''}</div>`)+
+    (x.work_blocked_until*1000>Date.now()?`<div class="tiny" title="${esc(x.work_block_reason||'')}">15 秒：${fmt(x.work_blocked_until)} 恢复</div>`:'');
 }
 function loadAccounts(){
   if(accountLoad)return accountLoad;

@@ -8,7 +8,12 @@ import config
 WORK_DURATION = 15
 MAX_CONCURRENCY = 5
 CONFIRM_RE = re.compile(r"确认|確認")
-QUOTA_NOTE = "工作模式出过 15 秒：实际扣点未知，按今日额度用完处理，次日恢复"
+QUOTA_NOTE = "工作模式免费额度已用：每号 7 天 1 条"
+WORK_QUOTA_SECONDS = 7 * 86400
+# 2026-11-07：「7日間の無料利用分の上限に到達しました。2026年11月14日 10:57（GMT+08:00）に再開するか…」
+WORK_LIMIT_RE = re.compile(r"7\s*日間.{0,16}上限|無料利用分.{0,8}上限|上限に到達|7\s*天.{0,16}(上限|用完|额度)|免费(使用|额度).{0,10}(上限|用完)", re.S)
+RESUME_RE = re.compile(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2}):(\d{2})"
+                       r"(?:\s*[（(]\s*GMT\s*([+-])(\d{1,2}):?(\d{2})?\s*[)）])?")
 
 
 def unavailable_reason() -> str:
@@ -127,6 +132,24 @@ def tools_ran(message: dict) -> bool:
 
 def asks_to_confirm(text: str) -> bool:
     return bool(CONFIRM_RE.search(text or ""))
+
+
+def work_limit_until(text: str) -> float | None:
+    """「7 天上限」提示里的恢复时间（epoch 秒）。没写时区按北京时间；读不到返回 None。"""
+    import datetime
+    m = RESUME_RE.search(text or "")
+    if not m:
+        return None
+    year, month, day, hour, minute = (int(x) for x in m.groups()[:5])
+    offset = 8 * 60
+    if m.group(6):
+        offset = int(m.group(7)) * 60 + int(m.group(8) or 0)
+        offset = offset if m.group(6) == "+" else -offset
+    try:
+        tz = datetime.timezone(datetime.timedelta(minutes=offset))
+        return datetime.datetime(year, month, day, hour, minute, tzinfo=tz).timestamp()
+    except ValueError:
+        return None
 
 
 def recent_conversations(data: dict) -> list[tuple[str, int]]:

@@ -109,7 +109,9 @@ def _agent(monkeypatch, fake):
     monkeypatch.setitem(sys.modules, "video_worker_agent", types.SimpleNamespace(generate_work_video=fake))
 
 
-def test_work_video_uses_up_the_account_for_the_day(tmp_path, monkeypatch):
+def test_work_video_locks_only_the_work_quota_for_seven_days(tmp_path, monkeypatch):
+    # 工作模式额度和每日额度分开：acc13 每日额度用完还出了 15 秒
+    import time
     _, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
     monkeypatch.setattr(config, "WORK_15S_ENABLED", True)
     fake = FakeAgent(result={"local_path": "", "account": "acc1"})
@@ -119,10 +121,11 @@ def test_work_video_uses_up_the_account_for_the_day(tmp_path, monkeypatch):
     assert _dispatch(bp, "acc1")["account"] == "acc1"
     assert fake.calls == [("acc1", "猫", "9:16", ["ref.png"])]
     row = _row(bp, "acc1")
-    assert row["quota_blocked"] and row["credit_balance"] == 0
+    assert not row["quota_blocked"] and row["credit_balance"] is None
+    assert 6.9 * 86400 < row["work_blocked_until"] - time.time() <= 7 * 86400
 
 
-def test_failed_work_video_keeps_the_day_quota(tmp_path, monkeypatch):
+def test_failed_work_video_keeps_both_quotas(tmp_path, monkeypatch):
     _, bp, _ = _pool(tmp_path, monkeypatch, {"acc1": "a"})
     monkeypatch.setattr(config, "WORK_15S_ENABLED", True)
     _agent(monkeypatch, FakeAgent(error=RuntimeError("boom")))
@@ -130,7 +133,7 @@ def test_failed_work_video_keeps_the_day_quota(tmp_path, monkeypatch):
     bp._conn.commit()
     with pytest.raises(RuntimeError, match="boom"):
         _dispatch(bp, "acc1")
-    assert not _row(bp, "acc1")["quota_blocked"]
+    assert not _row(bp, "acc1")["quota_blocked"] and not _row(bp, "acc1")["work_blocked_until"]
 
 
 def test_switch_off_leaves_the_normal_route_alone(tmp_path, monkeypatch):
@@ -227,3 +230,79 @@ def test_recent_conversation_list_is_parsed():
         {"conversation": {"conversation_id": "39"}}, {"other": 1}]}}}
     assert wr.recent_conversations(data) == [("38", 1794018361)]
     assert wr.recent_conversations({}) == []
+
+
+LIMIT_JA = ("7日間の無料利用分の上限に到達しました。2026年11月14日 10:57（GMT+08:00）に再開するか、"
+            "チャットモードで私とチャットしてください。 続けるには、プランをアップグレードしてください。")
+
+
+@pytest.mark.parametrize("text,hit", [
+    (LIMIT_JA, True), ("7天免费使用额度已用完", True), ("免费额度已用完，请升级", True),
+    ("视频已生成完成，15 秒", False), ("请确认参数", False),
+])
+def test_work_limit_wording_is_recognised(text, hit):
+    assert bool(wr.WORK_LIMIT_RE.search(text)) is hit
+
+
+def test_resume_time_follows_the_stated_offset():
+    import datetime
+    want = datetime.datetime(2026, 11, 14, 2, 57, tzinfo=datetime.timezone.utc).timestamp()
+    assert wr.work_limit_until(LIMIT_JA) == want
+    assert wr.work_limit_until("2026年11月14日 10:57 に再開") == want      # 没写时区按北京时间
+    assert wr.work_limit_until("2026年11月14日 10:57 (GMT+09:00)") == want - 3600
+    assert wr.work_limit_until("没有时间") is None
+    assert wr.work_limit_until("2026年13月40日 10:57") is None
+
+
+def _work_pool(tmp_path, monkeypatch, names):
+    browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {n: n for n in names})
+    monkeypatch.setattr(config, "WORK_15S_ENABLED", True)
+    for n in names:
+        bp._conn.execute("UPDATE accounts_meta SET source='login' WHERE name=?", (n,))
+    bp._conn.commit()
+    return browser_pool, bp
+
+
+def test_daily_quota_cooling_does_not_block_work_mode(tmp_path, monkeypatch):
+    _, bp = _work_pool(tmp_path, monkeypatch, ["acc1"])
+    row = _row(bp, "acc1")
+    assert bp._work_ready({**row, "group": "冷却", "remaining": 0})
+
+
+def test_work_lock_blocks_only_work_mode(tmp_path, monkeypatch):
+    import time
+    _, bp = _work_pool(tmp_path, monkeypatch, ["acc1"])
+    bp._mark_work_blocked("acc1", time.time() + 3600, "7 天上限")
+    row = _row(bp, "acc1")
+    assert not bp._work_ready(row)
+    assert bp._schedulable(row)          # 5/10 秒照常能派
+
+
+def test_all_accounts_locked_reports_the_earliest_resume(tmp_path, monkeypatch):
+    import time
+    browser_pool, bp = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
+    assert bp._work_all_blocked(browser_pool.sites.DOLA) == ""
+    soon = time.time() + 3600
+    bp._mark_work_blocked("acc1", soon, "")
+    assert bp._work_all_blocked(browser_pool.sites.DOLA) == ""      # acc2 还能用
+    bp._mark_work_blocked("acc2", soon + 7200, "")
+    note = bp._work_all_blocked(browser_pool.sites.DOLA)
+    assert "都用完了" in note and browser_pool._beijing_clock(soon) in note
+
+
+def test_work_quota_error_switches_to_the_next_account(tmp_path, monkeypatch):
+    import time
+    browser_pool, bp = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
+    until = time.time() + 5 * 86400
+    calls = []
+
+    async def fake(account, prompt, ratio, **kwargs):
+        calls.append(account)
+        if len(calls) == 1:
+            raise browser_pool.WorkQuotaError(f"{account} 工作模式免费额度已用完", until=until)
+        return {"local_path": "", "account": account}
+    _agent(monkeypatch, fake)
+    result = _run(bp.generate_video("猫", "16:9", 15, model="seedance-2.0", max_attempts=3))
+    assert len(calls) == 2 and result["account"] == calls[1]
+    assert _row(bp, calls[0])["work_blocked_until"] == until
+    assert _row(bp, calls[1])["used_today"] == 0          # 工作模式不扣每日额度

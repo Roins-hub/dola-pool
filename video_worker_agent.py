@@ -31,7 +31,7 @@ import failure_text
 from browser import cookie_value, launch_account_context
 from browser_feedback import emit as emit_feedback
 from generation_errors import (
-    PreSubmissionParametersError, PreSubmissionUploadError, UpstreamReplyError,
+    PreSubmissionParametersError, PreSubmissionUploadError, UpstreamReplyError, WorkQuotaError,
 )
 from upstream_reply import QUOTA_RE
 from video_worker import RiskControlError, _download
@@ -41,8 +41,8 @@ from video_worker_ui import (
     raise_if_region_restricted, solve_slider,
 )
 from work_reply import (
-    WORK_DURATION, asks_to_confirm, build_prompt, chain_messages, recent_conversations,
-    reply_finished, reply_text, session_cookies, tools_ran, uploads_committed, video_models,
+    WORK_DURATION, WORK_LIMIT_RE, asks_to_confirm, build_prompt, chain_messages, recent_conversations,
+    reply_finished, reply_text, session_cookies, tools_ran, uploads_committed, video_models, work_limit_until,
 )
 
 SKILL_RE = re.compile(r"^(Creative video|创意视频|クリエイティブ動画|クリエイティブビデオ)$")
@@ -64,7 +64,7 @@ SLOT_NOTE_SECONDS = 30
 CONVERSATION_WAIT_SECONDS = 120
 # 关浏览器最多等这么久：卡住时不能一直占着名额
 CLOSE_SECONDS = 30
-LIMIT_RE = re.compile(r"(今日|本日|今天).{0,12}(额度|額度|次数|回数|上限).{0,12}(用完|用尽|已满|達し|到达|上限)|上限に達")
+LIMIT_RE = re.compile(r"(今日|本日|今天).{0,12}(额度|額度|次数|回数|上限).{0,12}(用完|用尽|已满|達し|到达|上限)|1日あたりの上限")
 THROTTLE_NOTE = "710022002 工作模式请求被 dola 拒绝，页面随后要退出登录（已拦下）"
 
 COMPOSER_TEXT_JS = r"""(selector) => {
@@ -149,6 +149,9 @@ def translate_browser_error(exc: BaseException, account: str, went_out: bool) ->
 
 def failure_from_reply(account: str, reply: str, *, ran_tools: bool) -> Exception | None:
     """助手回复里明说做不了时对应的错误；额度类换号，其余按原因分类。认不出返回 None。"""
+    if WORK_LIMIT_RE.search(reply):
+        # 工作模式自己的 7 天额度：只锁这个号的 15 秒，不动它的每日额度
+        return WorkQuotaError(f"{account} 工作模式免费额度已用完：{reply[-160:]}", until=work_limit_until(reply))
     if DAILY_LIMIT_PATTERN.search(reply) or LIMIT_RE.search(reply):
         return AccountLimitedError(f"{account} 工作模式：{reply[-200:]}")
     if QUOTA_RE.search(reply):
@@ -187,6 +190,7 @@ class _WorkSession:
         self.confirmed = False
         self.nudges = 0
         self.ai_tried = False
+        self.ai_note = ""
         self.tried: list[str] = []
         self.logouts: list[str] = []
         self.sent: list[str] = []
@@ -444,8 +448,12 @@ class _WorkSession:
         if not self.ai_tried and dola_responder.enabled():
             self.ai_tried = True
             emit_feedback(self.on_poll, progress="工作模式：助手仍在追问，正在请 AI 代答")
-            return await dola_responder.ai_reply(question, self.ratio, WORK_DURATION,
-                                                 self.attachments), "AI 代答"
+            reply, why = await dola_responder.ai_reply_detail(question, self.ratio, WORK_DURATION,
+                                                              self.attachments)
+            if not reply:
+                self.ai_note = why
+                emit_feedback(self.on_poll, progress=f"工作模式：AI 代答没有回复（{why[:80]}）")
+            return reply, "AI 代答"
         return None, ""
 
     async def answer(self, reply: str):
@@ -526,7 +534,8 @@ class _WorkSession:
                 if not reply:
                     raise UpstreamReplyError(
                         "上游在等待回复",
-                        f"工作模式助手在追问，已尝试 {len(self.tried)} 次回复仍未开始生成：{question[-800:]}",
+                        f"工作模式助手在追问，已尝试 {len(self.tried)} 次回复仍未开始生成"
+                        + (f"（AI 代答：{self.ai_note[:80]}）" if self.ai_note else "") + f"：{question[-800:]}",
                         generation_started=False)
                 self.tried.append(how)
                 emit_feedback(self.on_poll, progress=f"工作模式：已{how}：{reply[:60]}")

@@ -92,6 +92,7 @@ def load_agent(monkeypatch):
     class CreditInsufficientError(Exception):
         pass
 
+
     async def logged_in(_page):
         return False
     noop = lambda *a, **k: None
@@ -169,9 +170,9 @@ def test_unknown_question_gets_generic_replies_then_ai(monkeypatch):
 
     async def ai(question, ratio, duration, attachments):
         asked.append((question, ratio, duration, attachments))
-        return "按提示词直接生成"
+        return "按提示词直接生成", ""
     monkeypatch.setattr(agent.dola_responder, "enabled", lambda: True)
-    monkeypatch.setattr(agent.dola_responder, "ai_reply", ai)
+    monkeypatch.setattr(agent.dola_responder, "ai_reply_detail", ai)
     with pytest.raises(agent.UpstreamReplyError) as caught:
         wait(item)
     assert len(page.typed) == 3
@@ -186,9 +187,9 @@ def test_unknown_picker_also_reaches_ai(monkeypatch):
     agent, item = session(monkeypatch, page)
 
     async def ai(question, ratio, duration, attachments):
-        return "选第一个"
+        return "选第一个", ""
     monkeypatch.setattr(agent.dola_responder, "enabled", lambda: True)
-    monkeypatch.setattr(agent.dola_responder, "ai_reply", ai)
+    monkeypatch.setattr(agent.dola_responder, "ai_reply_detail", ai)
     with pytest.raises(TimeoutError):      # 答完还在暂停：不判失败，等到时限
         _run(item.wait_for_video("123", time.time() + 0.3))
     assert page.typed[-1] == "选第一个"
@@ -199,12 +200,24 @@ def test_ai_refusal_ends_the_task_instead_of_guessing(monkeypatch):
     agent, item = session(monkeypatch, page)
 
     async def ai(*args):
-        return None
+        return None, "模型的回复不符合规则（放弃）"
     monkeypatch.setattr(agent.dola_responder, "enabled", lambda: True)
-    monkeypatch.setattr(agent.dola_responder, "ai_reply", ai)
-    with pytest.raises(agent.UpstreamReplyError, match="上游在等待回复"):
+    monkeypatch.setattr(agent.dola_responder, "ai_reply_detail", ai)
+    with pytest.raises(agent.UpstreamReplyError, match="AI 代答：模型的回复不符合规则") as caught:
         wait(item)
+    assert "上游在等待回复" in str(caught.value)
     assert len(page.typed) == 2
+
+
+def test_seven_day_limit_switches_accounts_without_nudging(monkeypatch):
+    # acc147：这句被当成追问，回了两次通用回复、又请 AI 代答，最后没换号
+    limit = ("7日間の無料利用分の上限に到達しました。2026年11月14日 10:57（GMT+08:00）に再開するか、"
+             "チャットモードで私とチャットしてください。")
+    page = Page([bot(limit)] * 8)
+    agent, item = session(monkeypatch, page)
+    with pytest.raises(agent.WorkQuotaError) as caught:
+        wait(item)
+    assert caught.value.until and page.typed == []
 
 
 def test_blocked_logout_counts_as_rejection_and_keeps_710022002(monkeypatch):
