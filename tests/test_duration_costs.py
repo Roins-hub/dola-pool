@@ -95,6 +95,45 @@ def test_unaffordable_rejected_at_submit():
     server._reject_unaffordable("seedance-2.0", 15)            # 4 点，满额号付得起
 
 
+@pytest.mark.parametrize("model", ["seedance-2.0", "seedance-2.0-fast", "seedance_v2.0"])
+def test_work_mode_30s_is_not_priced_against_daily_quota(monkeypatch, model):
+    """2.0 的 30 秒走两段工作模式（每号 7 天 1 条），不扣每日点数，不能按 8 点的报价拒掉。"""
+    import server
+    monkeypatch.setattr(config, "WORK_15S_ENABLED", True)
+    server._reject_unaffordable(model, 30)
+    server._reject_unaffordable(model, "30")
+    server._reject_unaffordable(model, 15)
+
+
+@pytest.mark.parametrize("model", ["seedance-2.0", "seedance-2.0-fast"])
+def test_work_mode_30s_passes_every_submit_check(monkeypatch, model):
+    """受理时依次走的三道检查（_submit_task 里的顺序），开着工作模式都要放行 2.0 的 30 秒。"""
+    import server
+    monkeypatch.setattr(config, "V20_DURATIONS", config.V20_DURATIONS)
+    monkeypatch.setattr(config, "WORK_15S_ENABLED", config.WORK_15S_ENABLED)
+    monkeypatch.setattr(config, "LONG_VIDEO_MODE", "reject")
+    config.set_work_15s(True)
+    server._reject_unsupported_long(30, model)
+    resolved = server._resolve_model_for_duration(model, 30)
+    assert resolved is not None
+    server._reject_unaffordable(resolved, 30)
+
+
+def test_30s_without_work_mode_is_still_rejected(monkeypatch):
+    import browser_pool
+    import server
+    from fastapi import HTTPException
+    monkeypatch.setattr(config, "WORK_15S_ENABLED", False)
+    monkeypatch.setattr(config, "LONG_VIDEO_MODE", "reject")
+    assert browser_pool.duration_cost("seedance-2.0", 30) > config.DAILY_LIMIT
+    with pytest.raises(HTTPException):
+        server._reject_unaffordable("seedance-2.0", 30)
+    # 2.5 不走工作模式，开着开关也照拒
+    monkeypatch.setattr(config, "WORK_15S_ENABLED", True)
+    with pytest.raises(HTTPException):
+        server._reject_unaffordable("seedance-2.5", 15)
+
+
 # ---------------------------------------------------------------- 号池
 
 def _pool(tmp_path, monkeypatch, names=("acc1", "acc2")):

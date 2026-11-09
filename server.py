@@ -93,7 +93,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.7.8"
+APP_VERSION = "2.7.9"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -1528,7 +1528,17 @@ def _reject_unsupported_long(duration, model: str = "") -> None:
 
 
 def _reject_unaffordable(model: str, duration) -> None:
-    """上游报价超过一个号一整天的额度：号池里没有任何号付得起，受理时直接拒（2.1.9）。"""
+    """上游报价超过一个号一整天的额度：号池里没有任何号付得起，受理时直接拒（2.1.9）。
+
+    工作模式（2.0 的 15 秒、两段 15 秒拼的 30 秒）用每号 7 天 1 条的单独额度，不扣每日点数，
+    不按这里的报价拦（2.0 的 30 秒按报价是 8 点，曾被误拒）。
+    """
+    try:
+        seconds = int(duration or 0)
+    except (TypeError, ValueError):
+        seconds = 0
+    if work_reply.uses_work_mode(model, seconds) or work_reply.uses_work_pair(model, seconds):
+        return
     from browser_pool import duration_cost
     cost = duration_cost(model, duration)
     if cost > config.DAILY_LIMIT:
