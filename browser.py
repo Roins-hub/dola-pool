@@ -322,11 +322,48 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     # 能避免“换浏览器环境”触发登出。
     if use_edge:
         kwargs["channel"] = "msedge"
-    proxy_kwargs = proxy_kwargs_for(account)
+    snapshot = profile_dir / ".apple-session-cookies.json"
+    if snapshot.exists():
+        from account_transport import http_proxy
+        if not proxy_store.get_account_proxy(account):
+            raise RuntimeError("Apple 账号没有启用的绑定代理，禁止直连")
+        url = http_proxy(account)
+        if not url:
+            raise RuntimeError("Apple 账号代理不可用，禁止直连")
+        proxy_kwargs = _with_upload_bypass(_kwargs_from_url(url))
+    else:
+        proxy_kwargs = proxy_kwargs_for(account)
     if proxy_kwargs:
         kwargs["proxy"] = proxy_kwargs
     context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+    if snapshot.exists():
+        try:
+            await _materialize_apple_session(context, snapshot)
+        except BaseException:
+            await context.close()
+            raise
     return context
+
+
+async def _materialize_apple_session(context, snapshot: Path):
+    """Apple 登录只恢复缺失的 Dola 会话 Cookie；退出后的空快照保持为空。"""
+    saved = json.loads(snapshot.read_text(encoding="utf-8"))
+    if not isinstance(saved, list):
+        raise RuntimeError("Apple 登录态快照格式错误")
+    live = await context.cookies("https://www.dola.com")
+    existing = {(c["name"], c["domain"], c["path"]) for c in live}
+    restore = [c for c in saved if _dola_cookie(c) and c.get("expires", -1) == -1
+               and (c["name"], c["domain"], c["path"]) not in existing]
+    if restore:
+        await context.add_cookies(restore)
+    close = context.close
+
+    async def close_with_save(*args, **kwargs):
+        try:
+            _save_cloak_cookies(snapshot, [c for c in await context.cookies() if _dola_cookie(c)])
+        finally:
+            await close(*args, **kwargs)
+    context.close = close_with_save
 
 
 def cookie_value(cookies: list, name: str) -> str:

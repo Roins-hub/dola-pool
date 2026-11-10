@@ -812,3 +812,11 @@ vi /www/wwwroot/stable-dola-pool/cookies.txt   # 一行一个
 `POST /api/admin/accounts/export-cookies`，请求头 `X-Admin-Key` 使用管理面板登录 token；客户 API Key 不可代替。请求体 `{"names":["acc1","acc2"]}`（1～500 项，去重后导出）。单账号返回 JSON 附件，多账号返回 ZIP，每账号一个 `<name>.json`，另含 `_export/manifest.json` 成功/失败清单。响应带 `Cache-Control: no-store, private`、`X-Exported-Accounts`、`X-Failed-Accounts`。账号不存在返回 404，全部不可导出返回 409；超过 32 MB 返回 409。Cookie 仅来自已保存快照，不是实时有效性检测，不含完整浏览器存储。
 
 `POST /api/admin/accounts` 新增可选 `proxy_id`，选择已有启用代理，在 Google 登录或 Cookie 验证前绑定。`POST /api/admin/accounts/import-cookies` 和 `/api/admin/accounts/import-accounts` 新增可选 `proxy_ids` 数组，去重后轮流分配给非重复的新账号。无选择时保持原行为；不存在/停用的代理在受理时拒绝，执行前也会复核。
+
+### Apple 登录
+
+`POST /api/admin/accounts` 可传 `login_method: "apple"`，同时提供 `name`、`email`（Apple 账号，可为电话号码）、`password` 和 `proxy_id`。账号来源记为 `apple`；密码和验证码不保存，登录期间不会发送生成请求。成功后才将独立资料目录加入号池。
+
+通过 `GET /api/admin/jobs` 读取进度。需要操作时，任务的 `challenge` 包含 `id`、`kind`（`code` 或 `continue`）、`expires_at`。调用 `POST /api/admin/jobs/{name}/apple-answer`，传 `challenge_id`；`code` 类型同时传六位数字 `code`，`continue` 类型确认 Apple 当前的邮箱共享设置。过期、重复或不匹配的回答返回 409。
+
+`POST /api/admin/jobs/{name}/apple-cancel` 取消登录并等待浏览器关闭、临时目录清理。上述接口均要求 `X-Admin-Key` 管理员会话。总等待时间为 10 分钟；失败后重新填写密码登录，现有 Google 凭据重试接口不适用于 Apple 账号。

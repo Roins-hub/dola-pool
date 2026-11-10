@@ -506,7 +506,7 @@ class BrowserPool:
         self._conn.commit()
 
     def set_source(self, name: str, source: str) -> None:
-        """记录账号来源：login（Google OAuth 登录） / cookie（cookie 载入）。"""
+        """记录账号来源：login（Google） / apple（Apple 授权） / cookie（Cookie 载入）。"""
         self._conn.execute(
             "UPDATE accounts_meta SET source=? WHERE name=?", (source or "", name)
         )

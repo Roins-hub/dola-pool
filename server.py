@@ -44,6 +44,7 @@ import work_reply
 import video_link
 from prompt_context import dispatch_prompt, reference_supplement
 from add_account import add_account_flow
+from apple_login import AppleLoginControl, apple_login_flow
 from cookie_login import import_cookie_account, import_cookie_accounts_from_text
 from cookie_export import CookieExportError, build_export
 from account_proxy_selection import bind_selected_proxy, validate_proxy_ids
@@ -124,6 +125,8 @@ app.mount("/thumbs", StaticFiles(directory=config.THUMB_DIR), name="thumbs")
 
 # 后台 jobs（加号/验证），内存态
 JOBS: dict[str, dict] = {}
+APPLE_LOGINS: dict[str, AppleLoginControl] = {}
+APPLE_ADD_TASKS: dict[str, asyncio.Task] = {}
 # 账号级「测试生成」任务（内存态）：指定某个账号出片，观察是否成功
 TEST_JOBS: dict[str, dict] = {}
 # 账号登录态自动刷新（防抖：同一账号刷新间隔）
@@ -2578,6 +2581,12 @@ class AccountAdd(BaseModel):
     cookies: str = ""
     cookie_skip_verify: bool = False
     proxy_id: str | None = None
+    login_method: Literal["google", "apple"] = "google"
+
+
+class AppleLoginAnswer(BaseModel):
+    challenge_id: str = Field(..., min_length=1, max_length=64)
+    code: str = Field("", max_length=16)
 
 
 class KeyCreate(BaseModel):
@@ -2830,7 +2839,8 @@ async def _verify_account_once(name: str) -> dict:
     ok, reason = await pool.verify_account_detail(name)
     refreshed = False
     if not ok:
-        creds = cred_store.load(name)
+        acct = next((a for a in pool.list_accounts() if a["name"] == name), {})
+        creds = None if acct.get("source") == "apple" else cred_store.load(name)
         if creds and creds.get("password"):
             try:
                 async with ADD_ACCOUNT_SEM, pool._use_account(name, "verifying"):
@@ -3704,9 +3714,9 @@ def _add_job_stage(name: str, stage: str) -> None:
 
 async def _run_add_job(name: str, email: str, password: str, totp: str,
                        cookies: str = "", cookie_skip_verify: bool = False,
-                       proxy_id: str | None = None) -> None:
+                       proxy_id: str | None = None, login_method: str = "google") -> None:
     JOBS[name] = {"kind": "add", "status": "running", "email": email,
-                  "source": "cookie" if cookies else "login",
+                  "source": "cookie" if cookies else ("apple" if login_method == "apple" else "login"),
                   "error": "", "started_at": time.time(), "stage": "排队中"}
     try:
         if ADD_ACCOUNT_SEM.locked():
@@ -3727,17 +3737,32 @@ async def _run_add_job(name: str, email: str, password: str, totp: str,
             else:
                 if proxy_id:
                     await asyncio.to_thread(bind_selected_proxy, name, proxy_id)
-                _add_job_stage(name, "Google 登录中（打开浏览器走 OAuth，通常 1~3 分钟）")
-                await add_account_flow(name, email, password, totp)
+                if login_method == "apple":
+                    def update(**fields):
+                        JOBS[name] = {**JOBS[name], **fields}
+                    control = AppleLoginControl(update)
+                    APPLE_LOGINS[name] = control
+                    await apple_login_flow(name, email, password, control)
+                    password = ""
+                else:
+                    _add_job_stage(name, "Google 登录中（打开浏览器走 OAuth，通常 1~3 分钟）")
+                    await add_account_flow(name, email, password, totp)
                 pool.ensure_account(name)
                 pool.set_email(name, email)
-                pool.set_source(name, "login")
+                pool.set_source(name, "apple" if login_method == "apple" else "login")
                 pool.set_login_status(name, True)
         JOBS[name] = {**JOBS[name], "status": "success", "stage": "", "finished_at": time.time()}
+    except asyncio.CancelledError:
+        JOBS[name] = {**JOBS[name], "status": "failed", "stage": "", "error": "已取消 Apple 登录",
+                      "finished_at": time.time()}
+        raise
     except Exception as e:
-        JOBS[name] = {**JOBS[name], "status": "failed", "stage": "", "error": str(e)[:300],
+        JOBS[name] = {**JOBS[name], "status": "failed", "stage": "", "error": redact_error(e)[:300],
                       "finished_at": time.time()}
     finally:
+        if control := APPLE_LOGINS.pop(name, None):
+            control.clear()
+        APPLE_ADD_TASKS.pop(name, None)
         if ADD_SEM_HOLDER["what"] == f"{name} 加号":
             ADD_SEM_HOLDER["what"] = ""
 
@@ -3753,7 +3778,7 @@ async def _cred_try_refresh_once() -> None:
             continue
         # cookie 来源账号靠重新导入 cookie 管理，不用 Google 凭据自动重登，
         # 否则会卡 Google OAuth 并占用浏览器 profile（导致验证 profile 锁）。
-        if acct.get("source") == "cookie":
+        if acct.get("source") in ("cookie", "apple"):
             continue
         if acct.get("login_ok") in (1, None):
             continue
@@ -3811,10 +3836,16 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
         raise HTTPException(409, "add job running")
     email = (body.email or "").strip()
     cookies = (body.cookies or "").strip()
+    if body.login_method == "apple":
+        if cookies:
+            raise HTTPException(400, "Apple 登录不能同时导入 Cookie")
+        if not email or not body.password:
+            raise HTTPException(400, "请填写 Apple 账号和密码")
+        if not body.proxy_id and not get_account_proxy(body.name):
+            raise HTTPException(400, "Apple 登录需要选择一个已启用的账号代理")
     if not email and not cookies:
         raise HTTPException(400, "邮箱不能为空")
     if email:
-        cred_store.store(body.name, email, body.password, body.totp)
         dups = pool.find_accounts_by_email(email)
         if dups:
             raise HTTPException(409, "该邮箱已存在于账号 " + "、".join(dups) + "，请勿重复添加")
@@ -3828,14 +3859,20 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
             json.loads(cookies)
         except Exception:
             raise HTTPException(422, "cookie JSON 格式错误")
+    if email and body.login_method != "apple":
+        cred_store.store(body.name, email, body.password, body.totp)
     JOBS[body.name] = {"kind": "add", "status": "running", "email": email,
-                       "source": "cookie" if cookies else "login",
+                       "source": "cookie" if cookies else ("apple" if body.login_method == "apple" else "login"),
                        "error": "", "started_at": time.time(), "stage": "排队中"}
-    asyncio.create_task(_run_add_job(
+    kwargs = {"login_method": "apple"} if body.login_method == "apple" else {}
+    task = asyncio.create_task(_run_add_job(
         body.name, email, body.password, body.totp,
         cookies=cookies, cookie_skip_verify=body.cookie_skip_verify,
         proxy_id=body.proxy_id,
+        **kwargs,
     ))
+    if body.login_method == "apple":
+        APPLE_ADD_TASKS[body.name] = task
     return {"ok": True, "job": "running"}
 
 
@@ -3843,6 +3880,39 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
 async def admin_jobs(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     return {"jobs": JOBS}
+
+
+@app.post("/api/admin/jobs/{name}/apple-answer")
+async def admin_apple_answer(name: str, body: AppleLoginAnswer,
+                             x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    control = APPLE_LOGINS.get(name)
+    if not control or JOBS.get(name, {}).get("status") != "running":
+        raise HTTPException(409, "Apple 登录已结束，请刷新账号列表")
+    try:
+        control.submit(body.challenge_id, body.code)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    return Response(content='{"ok":true}', media_type="application/json",
+                    headers={"Cache-Control": "no-store, private"})
+
+
+@app.post("/api/admin/jobs/{name}/apple-cancel")
+async def admin_apple_cancel(name: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    task = APPLE_ADD_TASKS.get(name)
+    if not task or task.done():
+        raise HTTPException(409, "Apple 登录已结束，请刷新账号列表")
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    # 排队中的协程可能尚未开始执行，补齐取消状态。
+    JOBS[name] = {**JOBS[name], "status": "failed", "stage": "", "challenge": None,
+                  "error": "已取消 Apple 登录", "finished_at": time.time()}
+    APPLE_ADD_TASKS.pop(name, None)
+    return {"ok": True}
 
 
 def _failed_add_job(name: str) -> dict:
