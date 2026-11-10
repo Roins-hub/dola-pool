@@ -443,14 +443,43 @@ class TaskStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def work_videos_since(self, since: float) -> list[tuple[str, float]]:
-        """since 之后成功出过 15 秒的 (账号, 开始时间)：工作模式额度按首次使用起算 7 天。"""
+    def _work_attempts(self, since: float) -> list[dict]:
+        """since 之后工作模式（Dola 2.0 的 15 秒、两段拼的 30 秒）的每次尝试：账号、是否出片、报错、时间。
+
+        一条任务可能换过几个号，30 秒还会用两个号，所以按尝试记录逐条看；老任务没有尝试记录时看任务本身。
+        """
         with _LOCK:
             rows = self._conn.execute(
-                "SELECT account, COALESCE(started_at, created_at) AS used_at FROM tasks "
-                "WHERE duration=15 AND status='completed' AND account IS NOT NULL AND created_at>=?",
-                (since,)).fetchall()
-        return [(r["account"], float(r["used_at"] or 0)) for r in rows]
+                "SELECT model, account, status, error, started_at, created_at, attempt_history FROM tasks "
+                "WHERE duration IN (15, 30) AND created_at>=?", (since,)).fetchall()
+        out = []
+        for r in rows:
+            model = str(r["model"] or "").lower().replace("_", "-")
+            if "doubao" in model or not ("2.0" in model or "2-0" in model):
+                continue
+            try:
+                history = json.loads(r["attempt_history"] or "[]")
+            except (ValueError, TypeError):
+                history = []
+            fallback = float(r["started_at"] or r["created_at"] or 0)
+            if isinstance(history, list) and history:
+                for item in history:
+                    if isinstance(item, dict) and item.get("account"):
+                        out.append({"account": item["account"], "done": item.get("outcome") == "completed",
+                                    "error": str(item.get("error") or ""),
+                                    "at": float(item.get("started_at") or fallback)})
+            elif r["account"]:
+                out.append({"account": r["account"], "done": r["status"] == "completed",
+                            "error": str(r["error"] or ""), "at": fallback})
+        return out
+
+    def work_videos_since(self, since: float) -> list[tuple[str, float]]:
+        """since 之后用工作模式出过片的 (账号, 开始时间)：工作模式额度按首次使用起算 7 天。"""
+        return [(a["account"], a["at"]) for a in self._work_attempts(since) if a["done"]]
+
+    def work_failures_since(self, since: float) -> list[tuple[str, str]]:
+        """since 之后工作模式失败的 (账号, 报错原话)：里面可能有 Dola 写明的额度恢复时间。"""
+        return [(a["account"], a["error"]) for a in self._work_attempts(since) if not a["done"] and a["error"]]
 
     def recoverable_tasks(self) -> list:
         """服务重启后恢复已拿到 conversation_id 的任务，不重复提交 prompt。"""

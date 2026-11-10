@@ -25,14 +25,19 @@ class Keyboard:
 
 
 class Target:
-    def __init__(self, count=1):
+    def __init__(self, count=1, page=None, label=None):
         self._count, self.first, self.last = count, self, self
+        self.page, self.label = page, label
 
     async def count(self):
         return self._count
 
     async def click(self, **kwargs):
-        pass
+        if self.page is not None:
+            self.page.clicked.append(self.label)
+
+    async def is_enabled(self):
+        return True
 
 
 class Context:
@@ -43,16 +48,28 @@ class Context:
 class Page:
     url = "https://www.dola.com/chat/123"
 
-    def __init__(self, chains, paused=False, question="请选择", picker_rounds=1):
+    def __init__(self, chains, paused=False, question="请选择", picker_rounds=1, options=()):
         self.chains, self.paused, self.typed = list(chains), paused, []
         self.question, self.picker_rounds = question, picker_rounds
         self.keyboard, self.context = Keyboard(self), Context()
+        self.options, self.clicked, self.fail_reads = list(options), [], 0
 
     async def wait_for_timeout(self, ms):
         pass
 
-    def get_by_text(self, pattern):
+    def is_closed(self):
+        return False
+
+    def get_by_text(self, pattern, exact=False):
+        if isinstance(pattern, str):       # 选择题：按选项文字找
+            return Target(1 if pattern in self.options else 0, self, pattern)
         return Target(1 if self.paused and len(self.typed) < self.picker_rounds else 0)
+
+    def get_by_placeholder(self, pattern):
+        return Target(0)
+
+    def get_by_role(self, role, name=None):
+        return Target(0)
 
     def locator(self, selector):
         return Target()
@@ -62,8 +79,36 @@ class Page:
             return self.paused and len(self.typed) < self.picker_rounds
         if not isinstance(args, dict):
             return self.question
+        if self.fail_reads:
+            self.fail_reads -= 1
+            raise BrowserFetchError("Page.evaluate: TypeError: Failed to fetch")
         chain = self.chains.pop(0) if len(self.chains) > 1 else self.chains[0]
         return {"status": 200, "text": json.dumps(chain)}
+
+
+class BrowserFetchError(Exception):
+    """和 patchright 抛出来的一样：按模块名认。"""
+
+
+BrowserFetchError.__module__ = "patchright._impl._errors"
+
+PLAN = {"title": "续接15秒，采用哪种方案？", "options": [
+    {"label": "两条共约15秒"}, {"label": "单条15秒连续镜头（推荐）"}, {"label": "多批生成"}]}
+
+
+def asking(questions=(PLAN,), after=(), finished=False, index=2, answered=()):
+    """助手挂着一道选择题（interaction_ask_block），和 2026-11-09 acc27 / acc23 会话里的结构一致。"""
+    ask = {"clarify_id": "c1", "status": 2, "questions": [
+        {"question_id": f"q{i}", "title": q["title"], "options": q["options"],
+         "question_capability": {"allow_text": True},
+         "answer": {"status": 1, "selected_option_ids": list(answered), "question_id": f"q{i}"}}
+        for i, q in enumerate(questions)]}
+    blocks = [{"parent_id": "", "content": {"text_block": {"text": "我先整理参数请你确认"}}},
+              {"parent_id": "t1", "content": {"interaction_ask_block": ask}},
+              {"parent_id": "t1", "content": {"text_block": {"text": "等待用户确认"}}}]
+    blocks += [{"parent_id": "", "content": {"text_block": {"text": text}}} for text in after]
+    return {"messages": [{"index_in_conv": index, "message_id": str(index), "user_type": 2,
+                          "ext": {"is_finish": "1"} if finished else {}, "content_block": blocks}]}
 
 
 def bot(text, finished=True, index=2, tool=False):
@@ -76,6 +121,10 @@ def bot(text, finished=True, index=2, tool=False):
 
 def video():
     return {"video_model": json.dumps({"video_duration": 15.1})}
+
+
+# 答完之后助手开始出片：工具在跑、消息没写完
+MAKING = bot("好的，开始生成", False, index=2, tool=True)
 
 
 def load_agent(monkeypatch):
@@ -643,3 +692,93 @@ def test_deadline_reports_a_timeout_without_resubmitting(monkeypatch):
     _, item = session(monkeypatch, page)
     with pytest.raises(TimeoutError, match="不换号"):
         _run(item.wait_for_video("123", time.time() - 1))
+
+
+# ---------- 2026-11-09：选择题在会话内容里，页面侧栏没标「一時停止中」 ----------
+
+def test_pending_choice_question_gets_the_recommended_option(monkeypatch):
+    # acc27：助手让选续接方案，没人答 → 等到时限失败（一小时后它才自己往下走）
+    page = Page([asking()] * 3 + [MAKING] * 2 + [video()],
+                options=["两条共约15秒", "单条15秒连续镜头（推荐）", "多批生成"])
+    _, item = session(monkeypatch, page)
+    assert json.loads(wait(item))["video_duration"] == 15.1
+    assert page.clicked == ["单条15秒连续镜头（推荐）"]
+    assert page.typed == []
+
+
+def test_choice_question_is_typed_when_options_cannot_be_clicked(monkeypatch):
+    page = Page([asking()] * 3 + [MAKING] * 2 + [video()])          # 页面上找不到选项
+    _, item = session(monkeypatch, page)
+    wait(item)
+    assert page.clicked == []
+    assert len(page.typed) == 1 and "单条15秒连续镜头（推荐）" in page.typed[0]
+
+
+def test_every_question_in_the_card_gets_an_answer(monkeypatch):
+    # acc23：一张卡片两道题，第一题有「确认」选项，第二题选第一个
+    batch = {"title": "确认后如何开始？", "options": [{"label": "先出第1批"}, {"label": "全部一起出"}]}
+    model = {"title": "请确认模型", "options": [{"label": "我是高级会员"}, {"label": "确认：2.0_fast"}]}
+    page = Page([asking((model, batch))] * 3 + [MAKING] * 2 + [video()],
+                options=["我是高级会员", "确认：2.0_fast", "先出第1批", "全部一起出"])
+    _, item = session(monkeypatch, page)
+    wait(item)
+    assert page.clicked == ["确认：2.0_fast", "先出第1批"]
+
+
+def test_choice_still_pending_falls_back_to_typing_then_stops(monkeypatch):
+    page = Page([asking()] * 60, options=["单条15秒连续镜头（推荐）"])
+    agent, item = session(monkeypatch, page)
+    with pytest.raises(TimeoutError):
+        _run(item.wait_for_video("123", time.time() + 0.5))
+    assert page.clicked == ["单条15秒连续镜头（推荐）"]          # 只点一次
+    assert len(page.typed) == agent.ASK_ROUNDS - 1               # 之后改打字，到次数为止
+
+
+def test_question_the_assistant_already_moved_past_is_left_alone(monkeypatch):
+    # 过期后助手写了「用户暂未响应，我按推荐方案继续生成」：不再去答
+    page = Page([asking(after=["用户暂未响应，我按推荐方案继续生成"])] * 5 + [video()],
+                options=["单条15秒连续镜头（推荐）"])
+    _, item = session(monkeypatch, page)
+    wait(item)
+    assert page.clicked == [] and page.typed == []
+
+
+def test_answered_question_is_not_answered_again(monkeypatch):
+    page = Page([asking(answered=["single"])] * 5 + [video()], options=["单条15秒连续镜头（推荐）"])
+    _, item = session(monkeypatch, page)
+    wait(item)
+    assert page.clicked == [] and page.typed == []
+
+
+def test_unfinished_confirmation_sheet_is_confirmed_after_it_stalls(monkeypatch):
+    # acc23：确认单发出来了，消息一直不标完成，等了 9 分钟没人回
+    page = Page([bot("生成参数确认单，请您确认", False)] * 5 + [MAKING] * 2 + [video()])
+    agent, item = session(monkeypatch, page)
+    monkeypatch.setattr(agent, "STALLED_POLLS", 3)
+    wait(item)
+    assert page.typed == ["确认"]
+
+
+def test_unfinished_reply_that_keeps_growing_is_not_answered(monkeypatch):
+    page = Page([bot("思考" * n, False) for n in range(1, 12)] + [video()])
+    agent, item = session(monkeypatch, page)
+    monkeypatch.setattr(agent, "STALLED_POLLS", 3)
+    wait(item)
+    assert page.typed == []
+
+
+def test_failed_fetch_while_polling_does_not_lose_the_job(monkeypatch):
+    # acc23：快出片时页面内请求 TypeError: Failed to fetch，整单被判失败
+    page = Page([bot("", False), video()])
+    page.fail_reads = 4
+    _, item = session(monkeypatch, page)
+    seen = []
+    item.on_poll = lambda now, progress=None, **kw: seen.append(progress)
+    assert json.loads(wait(item))["video_duration"] == 15.1
+    assert any("读取会话失败" in (p or "") for p in seen)
+
+
+def test_page_fetch_scripts_report_failures_instead_of_throwing(monkeypatch):
+    agent = load_agent(monkeypatch)
+    for script in (agent.CHAIN_JS, agent.RECENT_JS):
+        assert "catch (e)" in script and "status: 0" in script

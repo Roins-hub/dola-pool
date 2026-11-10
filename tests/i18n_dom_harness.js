@@ -176,8 +176,8 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 (async () => {
   // 面板真实的渲染函数
   const OPEN_NOTES = new Set();
-  const fns = ['esc', 'noTr', 'dialogText', 'egressLabel', 'noteCell', 'foldText', 'delAccount', 'delProxy', 'delUser', 'recoverAccount', 'rotateProxy'].map(panelFn).join('\n');
-  const P = new Function('OPEN_NOTES', 'proxyCache', fns + '\nreturn {esc, noTr, dialogText, egressLabel, noteCell, foldText, delAccount, delProxy, delUser, recoverAccount, rotateProxy};')(OPEN_NOTES, [{id:'p1',name:'代理(默认)'}]);
+  const fns = ['esc', 'noTr', 'dialogText', 'egressLabel', 'noteCell', 'foldText', 'delAccount', 'delProxy', 'recoverAccount', 'rotateProxy'].map(panelFn).join('\n');
+  const P = new Function('OPEN_NOTES', 'proxyCache', fns + '\nreturn {esc, noTr, dialogText, egressLabel, noteCell, foldText, delAccount, delProxy, recoverAccount, rotateProxy};')(OPEN_NOTES, [{id:'p1',name:'代理(默认)'}]);
 
   new Function(I18N_JS)();
   await tick(); await tick();
@@ -233,8 +233,6 @@ const tick = () => new Promise(r => setTimeout(r, 0));
   out.delete_account_confirm = dialogs.at(-1);
   await P.delProxy('p1');
   out.delete_proxy_confirm = dialogs.at(-1);
-  await P.delUser('风控账号');
-  out.delete_user_confirm = dialogs.at(-1);
   await P.recoverAccount('风控账号','risk');
   out.recover_confirm = dialogs.at(-1);
   await P.rotateProxy('p1');

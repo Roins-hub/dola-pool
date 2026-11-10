@@ -291,6 +291,9 @@ WORK_15S_ENABLED = False
 V20_BASE_DURATIONS = V20_DURATIONS
 WORK_15S_TIMEOUT = int(os.getenv("DOLA_WORK_15S_TIMEOUT", "1500"))
 WORK_15S_CONCURRENCY = int(os.getenv("DOLA_WORK_15S_CONCURRENCY", "2"))
+# 工作模式换号重试的时间窗口（秒，从第一次派号起算）。发送前失败一次就要 2～4 分钟
+# （开浏览器、传参考图、等「7 天上限」的回复），沿用 DOLA_TASK_DEADLINE 的 10 分钟只够试三四个号。
+WORK_RETRY_SECONDS = int(os.getenv("DOLA_WORK_RETRY_SECONDS", "1800"))
 
 
 def set_work_15s(enabled: bool) -> None:

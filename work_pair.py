@@ -11,10 +11,17 @@ from pathlib import Path
 PAIR_DURATION = 30
 CONTINUE_PREFIX = "接着参考图这一刻继续："
 CONTINUE_SUFFIX = "，保持同样的人物、场景、光线、色调和镜头运动，动作自然衔接"
+# 两段拿到的是同一份提示词：说明各做哪一半，助手就不用停下来问「从哪儿接、做到哪儿」
+FIRST_HALF = "（这一条只做全片的前半段：从开头做到一半为止）"
+SECOND_HALF = "（这一条只做全片的后半段：从参考图这一帧做到结尾）"
+
+
+def first_prompt(prompt: str) -> str:
+    return f"{(prompt or '').strip()}{FIRST_HALF}"
 
 
 def continue_prompt(prompt: str) -> str:
-    return f"{CONTINUE_PREFIX}{(prompt or '').strip()}{CONTINUE_SUFFIX}"
+    return f"{CONTINUE_PREFIX}{(prompt or '').strip()}{CONTINUE_SUFFIX}{SECOND_HALF}"
 
 
 def _run(args: list[str], what: str) -> None:

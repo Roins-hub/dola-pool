@@ -27,7 +27,10 @@ from pure_api_gen import (
     AbnormalNoAckError, ShortClipError, UnsupportedDurationError, ensure_web_playable,
     generate_pure_video, hello_probe, probe_login,
 )
-from work_reply import QUOTA_NOTE as WORK_QUOTA_NOTE, WORK_DURATION, WORK_QUOTA_SECONDS, uses_work_mode, uses_work_pair
+from work_reply import (
+    QUOTA_NOTE as WORK_QUOTA_NOTE, WORK_DURATION, WORK_LIMIT_RE, WORK_QUOTA_SECONDS, uses_work_mode, uses_work_pair,
+    work_limit_until,
+)
 import config
 import cred_store
 import failure_text
@@ -343,6 +346,7 @@ class BrowserPool:
         self._activities = {}
         self._phases = {}
         self._upload_routes = {}
+        self._work_suspect: dict[str, float] = {}   # 工作模式发出后结果不明的号 → 时间
         self._browser_probe_lock = asyncio.Lock()
         self._fail_until: dict[str, float] = {}
         self._egress_auto_rotated: dict[str, float] = {}   # 账号 -> 上次因出口不通自动换 IP 的时间
@@ -443,6 +447,24 @@ class BrowserPool:
         )
         self._conn.commit()
         self._engine: _PoolEngine | None = None
+        self.backfill_sources()
+
+    def backfill_sources(self) -> list[str]:
+        """来源一栏为空的老账号补成「账号登录」：有浏览器资料、没有 cookie_state.json 的就是登录加的号。
+
+        来源这一列是后来才有的，之前用 Google 登录加的号一直空着，面板上显示成「—」。
+        Cookie 载入的号不猜：来源决定走不走纯 API，只补认得出来的这一种。
+        """
+        if not self.accounts_dir.exists():
+            return []
+        filled = []
+        for row in self._conn.execute("SELECT name FROM accounts_meta WHERE COALESCE(source, '')=''").fetchall():
+            root = self.accounts_dir / row["name"]
+            if (root / "Default").is_dir() and not (root / "cookie_state.json").exists():
+                self._conn.execute("UPDATE accounts_meta SET source='login' WHERE name=?", (row["name"],))
+                filled.append(row["name"])
+        self._conn.commit()
+        return filled
 
     # ===== 账号发现/元数据 =====
 
@@ -662,13 +684,86 @@ class BrowserPool:
         )
         self._conn.commit()
 
+    def same_login(self, account: str) -> list[str]:
+        """和这个号同一个邮箱的其它号：登录的是同一个 Dola 用户，额度是共用的。
+
+        2026-11-09：acc21 和 acc24 是同一个 Google 账号加了两遍，acc24 出过 15 秒后 acc21 照样被派出去，
+        白等一轮「7 天上限」才换号。
+        """
+        row = self._meta(account)
+        email = (row["email"] or "").strip().lower() if row else ""
+        return [name for name in self.find_accounts_by_email(email) if name != account] if email else []
+
     def _mark_work_blocked(self, account: str, until: float | None, reason: str = "") -> None:
-        """工作模式额度用完：只锁这个号的 15 秒，每日聊天额度照常可用。"""
+        """工作模式额度用完：只锁这个号的 15 秒，每日聊天额度照常可用。同邮箱的号一起锁。"""
         self._ensure_meta(account)
         until = until or time.time() + WORK_QUOTA_SECONDS
         self._conn.execute("UPDATE accounts_meta SET work_blocked_until=?, work_block_reason=? WHERE name=?",
                            (until, (reason or WORK_QUOTA_NOTE)[:300], account))
+        for twin in self.same_login(account):
+            self._conn.execute(
+                "UPDATE accounts_meta SET work_blocked_until=?, work_block_reason=? "
+                "WHERE name=? AND COALESCE(work_blocked_until, 0) < ?",
+                (until, f"和 {account} 是同一个 Dola 账号（同邮箱），15 秒额度共用"[:300], twin, until))
+        self._work_suspect.pop(account, None)
         self._conn.commit()
+
+    def restore_work_limits(self, notes: list[tuple[str, str]]) -> list[str]:
+        """按失败记录里 Dola 的原话补锁：「7 天上限…X月X日 HH:MM に再開」写明了恢复时间。
+
+        出片成功的号由 restore_work_quota 补；这里补的是在别处用掉额度、号池只见过一次「上限」提示的号
+        （旧版本没把这种提示记成锁）。
+        """
+        now, latest = time.time(), {}
+        for account, text in notes:
+            if account not in self.accounts or not WORK_LIMIT_RE.search(text or ""):
+                continue
+            until = work_limit_until(text)
+            if until and until > now and until > latest.get(account, 0):
+                latest[account] = until
+        marked = []
+        for account, until in latest.items():
+            row = self._meta(account)
+            if until > (float(row["work_blocked_until"] or 0) if row else 0):
+                self._mark_work_blocked(account, until, WORK_QUOTA_NOTE + "（按失败记录里的恢复时间）")
+                marked.append(account)
+        return marked
+
+    def share_work_locks(self) -> list[str]:
+        """同邮箱的号把 15 秒额度锁对齐到最晚的那个（旧版本只锁了出片的那一个）。"""
+        now, synced = time.time(), []
+        for account in self.accounts:
+            row = self._meta(account)
+            until = float(row["work_blocked_until"] or 0) if row else 0
+            if until <= now:
+                continue
+            for twin in self.same_login(account):
+                other = self._meta(twin)
+                if twin in self.accounts and float(other["work_blocked_until"] or 0 if other else 0) < until:
+                    self._conn.execute(
+                        "UPDATE accounts_meta SET work_blocked_until=?, work_block_reason=? WHERE name=?",
+                        (until, f"和 {account} 是同一个 Dola 账号（同邮箱），15 秒额度共用"[:300], twin))
+                    synced.append(twin)
+        self._conn.commit()
+        return synced
+
+    def note_work_suspect(self, account: str) -> None:
+        """工作模式发出去后没等到结果：片子可能还在做，额度可能已经用掉。不锁，派号时排到最后。"""
+        self._work_suspect[account] = time.time()
+
+    def restore_work_suspects(self, notes: list[tuple[str, str]]) -> list[str]:
+        """重启后把「发出去后没等到结果」的号重新排到最后（这个标记只在内存里）。"""
+        marked = []
+        for account, text in notes:
+            if account in self.accounts and "不换号重提" in (text or "") and account not in self._work_suspect:
+                self.note_work_suspect(account)
+                marked.append(account)
+        return marked
+
+    def _work_order(self, rows: list) -> list:
+        """工作模式派号顺序：结果不明的号排最后（真用掉了也只是晚一点撞到「上限」提示）。"""
+        fresh = time.time() - WORK_QUOTA_SECONDS
+        return sorted(rows, key=lambda a: 1 if self._work_suspect.get(a["name"], 0) > fresh else 0)
 
     def restore_work_quota(self, used: list[tuple[str, float]]) -> list[str]:
         """按任务记录补上 15 秒额度锁：每个号取最早一次，锁到它 + 7 天；只延长、不缩短。"""
@@ -817,6 +912,10 @@ class BrowserPool:
         self._clear_expired_rate_limits()
         now = time.time()
         out = []
+        by_email: dict[str, list[str]] = {}
+        for row in self._conn.execute("SELECT name, email FROM accounts_meta WHERE trim(COALESCE(email, ''))<>''"):
+            by_email.setdefault(row["email"].strip().lower(), []).append(row["name"])
+        known = set(self.accounts)
         for a in self.accounts:
             m = self._meta(a)
             used = self.used_today(a)
@@ -845,6 +944,9 @@ class BrowserPool:
                 "quota_reason": m["quota_reason"] if m else "",
                 "work_blocked_until": m["work_blocked_until"] if m and m["work_blocked_until"] else 0,
                 "work_block_reason": m["work_block_reason"] if m else "",
+                # 同一个邮箱加了两遍：同一个 Dola 用户，额度共用
+                "same_login": [n for n in by_email.get((m["email"] or "").strip().lower(), [])
+                               if n != a and n in known] if m and m["email"] else [],
                 "credit_balance": m["credit_balance"] if m else None,
                 "credit_checked_at": m["credit_checked_at"] if m else 0,
                 "failed_at": m["failed_at"] if m else 0,
@@ -1596,7 +1698,8 @@ class BrowserPool:
             return poll, wait
 
         poll, wait = tagged(1)
-        first = await self.generate_video(prompt, ratio, WORK_DURATION, model, on_poll=poll, on_wait=wait,
+        first = await self.generate_video(work_pair.first_prompt(prompt), ratio, WORK_DURATION, model,
+                                          on_poll=poll, on_wait=wait,
                                           reference_image_paths=reference_image_paths, **dispatch)
         first_path = await self._local_video(first)
         stem = Path(config.DOWNLOAD_DIR) / f"pair_{uuid.uuid4().hex[:12]}"
@@ -2304,7 +2407,8 @@ class BrowserPool:
                 short_seen = 0
                 non_pure: list[str] = []   # pair 单跳过的浏览器登录号（拼接只走纯 API）
                 busy_names: list[str] = []  # 能接单、但正被别的任务占着出片的号
-                for a in self._ordered_candidates(allowed_groups):
+                candidates = self._ordered_candidates(allowed_groups)
+                for a in (self._work_order(candidates) if work_job else candidates):
                     if a["name"] in tried:
                         continue
                     # 站点要对上：dola 模型只派 dola 号，豆包模型只派豆包号
@@ -2370,7 +2474,8 @@ class BrowserPool:
                         if not dispatched:
                             dispatched = True
                             if attempt_timeout is not None:
-                                deadline = time.time() + attempt_timeout
+                                window = max(attempt_timeout, config.WORK_RETRY_SECONDS) if work_job else attempt_timeout
+                                deadline = time.time() + window
                             if on_dispatch:
                                 on_dispatch()
                         # 先确认代理出口连得上（粘性住宅 IP 会掉线）：不通就自动换 IP，仍不通本轮跳过，
@@ -2574,6 +2679,8 @@ class BrowserPool:
                                 "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
                                 (time.time(), account))
                             self._conn.commit()
+                            if work_job:
+                                self.note_work_suspect(account)
                             raise
                         except RegionRestrictedError as e:
                             # 出口地区问题，不是账号掉登录：不标风控/不改登录态；动态代理换个出口。

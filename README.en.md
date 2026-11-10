@@ -236,6 +236,7 @@ Set these in `dola.env` (one-command install), `.env`, or the environment. The f
 | `DOLA_DAILY_LIMIT` | `4` | Daily quota points per dola account |
 | `DOLA_LIMIT_RESET_TZ` / `_HOUR` | `UTC` / `0` | When the daily quota resets |
 | `DOLA_TASK_DEADLINE` | `600` | Seconds a task may try after getting an account |
+| `DOLA_WORK_RETRY_SECONDS` | `1800` | Retry window in seconds for Work-mode jobs (15 s and 30 s on 2.0); each failed attempt costs 2 to 4 minutes, so it is longer than the task deadline |
 | `DOLA_MAX_QUEUE_WAIT_SECONDS` | `1800` | Maximum seconds to wait in the queue |
 | `DOLA_MAX_CONCURRENCY` | `0` | Initial global concurrency, `0` = unlimited; the value saved in the panel wins |
 | `DOLA_MAX_PENDING_TASKS` | `100` | Pending task limit; beyond it requests get 429 |

@@ -63,12 +63,26 @@ def uses_work_pair(model: str, duration) -> bool:
     return uses_work_mode(model, WORK_DURATION)
 
 
+LONGER_RE = re.compile(r"(?<![\d.:])(\d{2,3})\s*(?:s\b|秒|sec)", re.I)
+# 提示词自己写了更长的时长（比如 30 秒 9 个分镜的脚本）时，助手会停下来让人选方案（2026-11-09 实测，
+# 没人答要等一小时）；先把话说死，它就只走「确认」这一步。
+SINGLE_CLIP_NOTE = ("，只生成一条 15 秒的连续视频：提示词里其它的总时长、分段和批次只作内容参考，"
+                    "按推荐方案直接生成，不用让我选方案")
+
+
+def asks_for_longer(text: str) -> bool:
+    """提示词里写了比 15 秒更长的时长。"""
+    return any(int(m.group(1)) > WORK_DURATION for m in LONGER_RE.finditer(text or ""))
+
+
 def build_prompt(prompt: str, ratio: str | None) -> str:
     """助手只看文字，时长和比例都要写进去；换行会让输入框提前发送。"""
     text = re.sub(r"\s*[\r\n]+\s*", " ", prompt or "").strip().rstrip("，,。. ")
     if ratio:
         text += f"，画面比例 {ratio}"
-    if not re.search(r"(?<!\d)15\s*(?:s\b|秒)", text, re.I):
+    if asks_for_longer(text):
+        text += SINGLE_CLIP_NOTE
+    elif not re.search(r"(?<!\d)15\s*(?:s\b|秒)", text, re.I):
         text += "，15s"
     return text
 
@@ -142,6 +156,60 @@ def tools_ran(message: dict) -> bool:
 
 def asks_to_confirm(text: str) -> bool:
     return bool(CONFIRM_RE.search(text or ""))
+
+
+VIDEO_TOOL_RE = re.compile(r"video", re.I)
+ASK_PREFER_RE = re.compile(r"推荐|推薦|おすすめ|recommend|确认|確認|开始|開始", re.I)
+
+
+def generation_started(message: dict) -> bool:
+    """助手已经调了出片工具（text_to_video / image_to_video）：片子在做了，不能再插话。"""
+    for block in message.get("content_block") or []:
+        tool = (block.get("content") or {}).get("generic_tool_block") or {}
+        if VIDEO_TOOL_RE.search(str(tool.get("tool_name") or "")):
+            return True
+    return False
+
+
+def pending_ask(message: dict) -> list[dict] | None:
+    """助手挂着一道还没人答的选择题时，返回 [{"title": 题目, "options": [选项文字…]}]，否则 None。
+
+    选择题在 interaction_ask_block 里（2026-11-09 实测）：页面侧栏不一定显示「一時停止中」，
+    只看页面会漏掉，助手就干等到一小时后过期。答过的题 answer 里有选项；过期或答完后，
+    助手会在这块后面接着写顶层内容。
+    """
+    blocks = message.get("content_block") or []
+    for index in range(len(blocks) - 1, -1, -1):
+        ask = (blocks[index].get("content") or {}).get("interaction_ask_block")
+        if not ask:
+            continue
+        moved_on = any(not later.get("parent_id") and any((later.get("content") or {}).values())
+                       for later in blocks[index + 1:])
+        if moved_on:
+            return None
+        questions = []
+        for question in ask.get("questions") or []:
+            answer = question.get("answer") or {}
+            if answer.get("selected_option_ids") or answer.get("text"):
+                continue
+            options = [str(o.get("label")) for o in question.get("options") or [] if o.get("label")]
+            questions.append({"title": str(question.get("title") or ""), "options": options})
+        return questions or None
+    return None
+
+
+def choose_options(questions: list[dict]) -> list[str]:
+    """每道题选一个：优先带「推荐 / 确认」的选项，没有就选第一个。没有选项的题跳过。"""
+    chosen = []
+    for question in questions:
+        options = question.get("options") or []
+        if options:
+            chosen.append(next((o for o in options if ASK_PREFER_RE.search(o)), options[0]))
+    return chosen
+
+
+def ask_summary(questions: list[dict]) -> str:
+    return "；".join(q.get("title") or "" for q in questions)[:200]
 
 
 def work_limit_until(text: str) -> float | None:

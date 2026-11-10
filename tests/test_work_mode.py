@@ -38,7 +38,7 @@ def test_only_dola_20_15s_uses_work_mode(monkeypatch, model, duration, enabled, 
     ("一只猫，15秒", None, "一只猫，15秒"),
     ("一只猫 15s 慢镜头", None, "一只猫 15s 慢镜头"),
     ("第一行\n第二行", None, "第一行 第二行，15s"),
-    ("115s 的片子", None, "115s 的片子，15s"),
+    ("115 帧的片子", None, "115 帧的片子，15s"),
 ])
 def test_prompt_carries_duration_and_ratio_on_one_line(prompt, ratio, expected):
     assert wr.build_prompt(prompt, ratio) == expected

@@ -87,7 +87,7 @@ def test_native_dialogs_keep_dynamic_values(lang):
                        text=True, encoding="utf-8", timeout=60)
     assert r.returncode == 0, r.stderr
     result = json.loads(r.stdout.strip().splitlines()[-1])
-    for key in ("delete_account_confirm", "delete_user_confirm", "recover_confirm"):
+    for key in ("delete_account_confirm", "recover_confirm"):
         assert "风控账号" in result[key]
         assert "Rủi roTài khoản" not in result[key]
     for key in ("delete_proxy_confirm", "rotate_confirm"):

@@ -41,9 +41,9 @@ from video_worker_ui import (
     raise_if_region_restricted, solve_slider,
 )
 from work_reply import (
-    WORK_DURATION, WORK_LIMIT_RE, asks_to_confirm, build_prompt, chain_messages, recent_conversations,
-    reply_finished, reply_text, session_cookies, tools_ran, upload_wait_seconds, uploads_committed, video_models,
-    work_limit_until,
+    WORK_DURATION, WORK_LIMIT_RE, ask_summary, asks_to_confirm, build_prompt, chain_messages, choose_options,
+    generation_started, pending_ask, recent_conversations, reply_finished, reply_text, session_cookies, tools_ran,
+    upload_wait_seconds, uploads_committed, video_models, work_limit_until,
 )
 
 SKILL_RE = re.compile(r"^(Creative video|创意视频|クリエイティブ動画|クリエイティブビデオ)$")
@@ -57,6 +57,14 @@ POLL_SECONDS = 10
 QUIET_POLLS = 2
 # 回答之后至少等这么多轮，再判断它有没有理会
 ANSWER_GAP_POLLS = 3
+# 回复没写完、也没在出片，却这么多轮一个字没动 → 它在等人回答（2026-11-09：确认单发出来后一直挂着不结束）
+STALLED_POLLS = 9
+# 同一道选择题最多答这么多次：先点选项，不行再打字
+ASK_ROUNDS = 3
+# 连续这么多轮读不到会话就在进度里说一声（代理不稳时页面内请求会失败，照样接着等）
+CHAIN_FAIL_NOTE_POLLS = 3
+ASK_SUBMIT_RE = re.compile(r"^(送信|提交|确定|確定|確認|确认|Submit|Send|OK)$", re.I)
+ASK_INPUT_RE = re.compile(r"回答を入力|输入.{0,6}回答|輸入.{0,6}回答|your own answer", re.I)
 # 工具跑完、回复写完后这么多轮还没有视频 → 这条会话不会再出片
 SETTLED_POLLS = 6
 # 排队等名额时隔这么久报一次进度：看门狗 10 分钟没进度就把任务判成卡死
@@ -99,6 +107,7 @@ PASTE_JS = r"""async ({selector, files}) => {
 }"""
 
 RECENT_JS = r"""async ({query}) => {
+  try {
   const r = await fetch('/im/chain/recent_conv?' + query, {method: 'POST', credentials: 'include',
     headers: {'Content-Type': 'application/json; encoding=utf-8', 'agw-js-conv': 'str', 'Accept': '*/*'},
     body: JSON.stringify({cmd: 3200, uplink_body: {pull_recent_conv_chain_uplink_body: {conv_version: 0, limit: 12,
@@ -106,9 +115,11 @@ RECENT_JS = r"""async ({query}) => {
       need_pc_pin_chain: true, pc_pin_query_type: 0, exclude_archive: true, only_archive: false}, api_version: 1, direction: 3}},
       sequence_id: crypto.randomUUID(), channel: 2, version: '1'})});
   return {status: r.status, text: await r.text()};
+  } catch (e) { return {status: 0, text: String(e)}; }
 }"""
 
 CHAIN_JS = r"""async ({query, conversationId}) => {
+  try {
   const r = await fetch('/im/chain/single?' + query, {method: 'POST', credentials: 'include',
     headers: {'Content-Type': 'application/json; encoding=utf-8', 'agw-js-conv': 'str', 'Accept': '*/*'},
     body: JSON.stringify({cmd: 3100, uplink_body: {pull_singe_chain_uplink_body: {
@@ -116,6 +127,7 @@ CHAIN_JS = r"""async ({query, conversationId}) => {
       direction: 1, limit: 20, ext: {}, filter: {index_list: []}}},
       sequence_id: crypto.randomUUID(), channel: 2, version: '1'})});
   return {status: r.status, text: await r.text()};
+  } catch (e) { return {status: 0, text: String(e)}; }
 }"""
 
 # 同一时间只开这么多 CloakBrowser：有头运行，一单要占约 6 分钟
@@ -200,6 +212,7 @@ class _WorkSession:
         self.send_error = ""
         self.url_before = ""
         self.conversation_id = ""
+        self.ask_rounds = 0
 
     def watch(self):
         def on_request(request):
@@ -469,12 +482,51 @@ class _WorkSession:
             return reply, "AI 代答"
         return None, ""
 
-    async def answer(self, reply: str):
+    async def type_reply(self, reply: str):
+        """打字回复。选择题卡片有自己的输入框（「または、自分の回答を入力してください」）时填那里。"""
         page = self.page
-        await page.locator(COMPOSER).first.click(timeout=8000)
+        box = page.get_by_placeholder(ASK_INPUT_RE)
+        target = box.last if await box.count() else page.locator(COMPOSER).first
+        await target.click(timeout=8000)
         await page.keyboard.insert_text(reply)
         await page.wait_for_timeout(1000)
         await page.keyboard.press("Enter")
+
+    async def answer_ask(self, questions: list[dict]) -> str:
+        """回答选择题，返回给人看的说明。第一次点选项，还挂着就改成打字（题目允许自己输入）。"""
+        page, labels = self.page, choose_options(questions)
+        self.ask_rounds += 1
+        clicked = 0
+        if self.ask_rounds == 1:
+            for label in labels:
+                try:
+                    option = page.get_by_text(label, exact=True)
+                    if await option.count():
+                        await option.last.click(timeout=4000)
+                        clicked += 1
+                        await page.wait_for_timeout(1200)
+                except Exception as exc:  # noqa: BLE001 - 点不到就改打字，不能让整单因此失败
+                    print(f"[{self.account}] 工作模式选择题点选失败：{short_error(exc)}", flush=True)
+            if clicked:
+                try:
+                    submit = page.get_by_role("button", name=ASK_SUBMIT_RE)
+                    if await submit.count() and await submit.last.is_enabled():
+                        await submit.last.click(timeout=3000)
+                except Exception:  # noqa: BLE001 - 有的题点了选项就算提交
+                    pass
+        picked = "、".join(labels) or "推荐方案"
+        if clicked < max(1, len(labels)):
+            await self.type_reply(f"确认，按推荐方案直接生成：{picked}" if labels else "确认，按推荐方案直接生成")
+            how = "已打字回答选择题"
+        else:
+            how = "已选"
+        await page.wait_for_timeout(6000)
+        print(f"[{self.account}] 工作模式选择题（{ask_summary(questions)}）{how}：{picked}", flush=True)
+        return f"{how}：{picked}"
+
+    async def answer(self, reply: str):
+        page = self.page
+        await self.type_reply(reply)
         await page.wait_for_timeout(6000)
         if await self.paused():
             # 选择题没收下打字回复：点带「确认」的选项
@@ -489,7 +541,15 @@ class _WorkSession:
         return bool(await self.page.evaluate(PAUSED_JS, self.conversation_id))
 
     async def read_chain(self, query: str, conversation_id: str):
-        result = await self.page.evaluate(CHAIN_JS, {"query": query, "conversationId": conversation_id})
+        """读会话内容；读不到返回 None。代理抖一下、页面重绘都会让这次读取失败，不能因此丢掉整单
+        （2026-11-09：acc23 两次都是等到快出片时 TypeError: Failed to fetch，任务直接判失败）。"""
+        try:
+            result = await self.page.evaluate(CHAIN_JS, {"query": query, "conversationId": conversation_id})
+        except Exception as exc:  # noqa: BLE001
+            if not browser_error(exc) or self.page.is_closed():
+                raise
+            print(f"[{self.account}] 工作模式读会话失败，下一轮再读：{short_error(exc)}", flush=True)
+            return None
         if result["status"] != 200:
             return None
         try:
@@ -500,7 +560,7 @@ class _WorkSession:
     async def wait_for_video(self, conversation_id: str, deadline: float) -> str:
         self.conversation_id = conversation_id
         query_text = await self.chain_query()
-        stable, last, since_answer = 0, "", ANSWER_GAP_POLLS
+        stable, last, since_answer, unread = 0, "", ANSWER_GAP_POLLS, 0
         answered = set()
         while time.time() < deadline:
             await self.page.wait_for_timeout(POLL_SECONDS * 1000)
@@ -509,9 +569,13 @@ class _WorkSession:
             if await is_logged_out(self.page):
                 raise LoginExpiredError(f"{self.account} 工作模式生成中登录态失效")
             chain = await self.read_chain(query_text, conversation_id)
-            emit_feedback(self.on_poll, progress="工作模式：助手处理中")
             if chain is None:
+                unread += 1
+                emit_feedback(self.on_poll, progress="工作模式：读取会话失败（网络不稳），继续等待"
+                              if unread >= CHAIN_FAIL_NOTE_POLLS else "工作模式：助手处理中")
                 continue
+            unread = 0
+            emit_feedback(self.on_poll, progress="工作模式：助手处理中")
             found = video_models(chain)
             if found:
                 return found[0]
@@ -532,14 +596,30 @@ class _WorkSession:
                 failure = failure_from_reply(self.account, reply_text(latest), ran_tools=False)
                 if failure:
                     raise failure
+            making = any(generation_started(m) for m in bots)
+            # 选择题：以会话内容为准（页面侧栏不一定标「一時停止中」）。已经在出片就不插话。
+            ask = pending_ask(latest) if latest and not finished and not making else None
+            if ask and since_answer >= ANSWER_GAP_POLLS and self.ask_rounds < ASK_ROUNDS:
+                emit_feedback(self.on_poll, progress=f"工作模式：助手让选方案（{ask_summary(ask)[:60]}）")
+                how = await self.answer_ask(ask)
+                self.tried.append("选择题")
+                emit_feedback(self.on_poll, progress=f"工作模式：{how[:80]}")
+                stable, since_answer = 0, 0
+                continue
             question = ""
             paused = await self.paused()
-            if paused:
+            if ask:
+                pass                # 刚答过，或答了几次还挂着：等它自己往下走
+            elif paused:
                 question = await self.question()
             elif finished and stable >= QUIET_POLLS and (
                     latest.get("index_in_conv") not in answered or stable >= SETTLED_POLLS):
                 question = reply_text(latest)
                 answered.add(latest.get("index_in_conv"))
+            elif (latest and not finished and not making and stable >= STALLED_POLLS
+                  and reply_text(latest).strip()):
+                # 回复没标完成，却一分多钟一个字没动，也没在出片：它在等人确认
+                question = reply_text(latest)
             if question and since_answer >= ANSWER_GAP_POLLS:
                 reply, how = await self.next_answer(question)
                 if not reply and paused:

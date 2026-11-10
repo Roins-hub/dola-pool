@@ -292,27 +292,26 @@ input[type=file]::file-selector-button{height:28px;margin-right:10px;padding:0 1
 input[type=file]::file-selector-button:hover{border-color:var(--control-hi);background:var(--hover)}
 /* 滚动条：细、浅灰，与边框同色系（Firefox 与 Chromium 121+ 的标准属性） */
 *{scrollbar-width:thin;scrollbar-color:var(--control) transparent}
-#accountsTable,#proxiesTable,#tasksTable,#videosTable,#keysTable,#usersTable,#perAccount{overflow-x:auto}
+#accountsTable,#proxiesTable,#tasksTable,#videosTable,#keysTable,#perAccount{overflow-x:auto}
 .task-attempt-history{min-width:280px;max-width:420px;overflow-wrap:anywhere}
-#tasksTable table{min-width:1484px;table-layout:fixed}
+#tasksTable table{min-width:1384px;table-layout:fixed}
 #tasksTable th:nth-child(1){width:34px}
 #tasksTable th:nth-child(2){width:100px}
 #tasksTable th:nth-child(3){width:20%}
 #tasksTable th:nth-child(4){width:60px}
 #tasksTable th:nth-child(5){width:85px}
-#tasksTable th:nth-child(6){width:100px}
-#tasksTable th:nth-child(7){width:52px}
-#tasksTable th:nth-child(8){width:74px}
-#tasksTable th:nth-child(9){width:160px}
-#tasksTable th:nth-child(10){width:144px}
-#tasksTable th:nth-child(11){width:150px}
+#tasksTable th:nth-child(6){width:52px}
+#tasksTable th:nth-child(7){width:74px}
+#tasksTable th:nth-child(8){width:160px}
+#tasksTable th:nth-child(9){width:144px}
+#tasksTable th:nth-child(10){width:150px}
 #tasksTable td{overflow-wrap:anywhere;white-space:normal;vertical-align:top;padding-top:13px;padding-bottom:13px}
-#tasksTable td:nth-child(7),#tasksTable td:nth-child(8),#tasksTable td:nth-child(10){white-space:nowrap}
+#tasksTable td:nth-child(6),#tasksTable td:nth-child(7),#tasksTable td:nth-child(9){white-space:nowrap}
 /* 耗时列：「已 X」下面还有「预计 · 还剩约」一行，必须能折行，否则会压到创建时间上 */
-#tasksTable td:nth-child(9){white-space:normal;overflow-wrap:normal;word-break:keep-all}
-#tasksTable td:nth-child(9) .live{display:inline-block}
+#tasksTable td:nth-child(8){white-space:normal;overflow-wrap:normal;word-break:keep-all}
+#tasksTable td:nth-child(8) .live{display:inline-block}
 #tasksTable td:nth-child(2){font-family:var(--mono);font-size:12.5px;color:var(--muted)}
-#tasksTable td:nth-child(12){min-width:280px}
+#tasksTable td:nth-child(11){min-width:280px}
 #tasksTable .prompt{max-width:100%}
 #tasksTable .err,#tasksTable .note,#tasksTable .task-attempt-history{max-width:none;min-width:0}
 /* 视频列窄：「打开 / 预览」「4K / 预览 / 复制链接」放不下就折行，不能溢出压到报错/备注列 */
@@ -724,7 +723,6 @@ input[type=checkbox]:active{transform:scale(.88)}
     <button class="nav-item" data-tab="tasks" onclick="switchTab('tasks')"><svg viewBox="0 0 24 24"><path d="M9.5 6h10.5M9.5 12h10.5M9.5 18h10.5"/><circle cx="4.8" cy="6" r="1.4"/><circle cx="4.8" cy="12" r="1.4"/><circle cx="4.8" cy="18" r="1.4"/></svg><span>任务列表</span></button>
     <button class="nav-item" data-tab="videos" onclick="switchTab('videos')"><svg viewBox="0 0 24 24"><rect x="2.8" y="5" width="18.4" height="14" rx="2.6"/><path d="M10.2 9.3l5.2 2.7-5.2 2.7z" fill="currentColor" stroke="none"/></svg><span>视频管理</span></button>
     <button class="nav-item" data-tab="keys" onclick="switchTab('keys')"><svg viewBox="0 0 24 24"><circle cx="8" cy="14.4" r="4.3"/><path d="M11.2 11.2l8-8M17 5.4l2.4 2.4M14.4 8l2.4 2.4"/></svg><span>API 密钥</span></button>
-    <button class="nav-item" data-tab="users" onclick="switchTab('users')"><svg viewBox="0 0 24 24"><circle cx="9.4" cy="8" r="3.4"/><path d="M2.9 20c0-3.4 2.9-5.6 6.5-5.6s6.5 2.2 6.5 5.6"/><path d="M17.2 5.3a3.4 3.4 0 010 6.5M18.6 20c0-2.4-.8-4.2-2.2-5.2"/></svg><span>用户管理</span></button>
   </nav>
 
   <div class="side-foot">
@@ -740,6 +738,7 @@ input[type=checkbox]:active{transform:scale(.88)}
           <button role="menuitem" onclick="closeTopMenu();openResponderSettings()">AI 代答</button>
           <button role="menuitem" onclick="closeTopMenu();openWork15Settings()">2.0 的 15 秒</button>
           <button role="menuitem" onclick="closeTopMenu();openStress()">压力测试</button>
+          <button role="menuitem" onclick="closeTopMenu();openPassword()">修改密码</button>
         </div>
       </div>
       <span class="top-sep" aria-hidden="true"></span>
@@ -821,7 +820,7 @@ input[type=checkbox]:active{transform:scale(.88)}
       <div class="toolbar">
         <h1 class="page-title" id="tasksTitle">任务列表（最近 50 条）</h1>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <input type="search" id="search_tasks" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索提示词 / 账号 / ID / 客户 / 报错" oninput="setSearch('tasks',this.value)">
+          <input type="search" id="search_tasks" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索提示词 / 账号 / ID / 报错" oninput="setSearch('tasks',this.value)">
           <button class="btn" onclick="selAllToggle('tasks')">全选 / 取消</button>
           <button class="btn btn-danger" id="delSel_tasks" disabled onclick="delSelected('tasks')">删除选中</button>
         </div>
@@ -858,22 +857,6 @@ input[type=checkbox]:active{transform:scale(.88)}
       </div>
       <div class="hint" style="margin-bottom:12px">每个 Key 可独立设置每日额度、并发数和允许时长；0 表示不限。环境变量里的 key 始终有效、不在此列表。</div>
       <div id="keysTable"></div>
-    </div>
-  </section>
-
-  <section id="tab-users" style="display:none">
-    <div class="card">
-      <div class="toolbar">
-        <h1 class="page-title">用户管理</h1>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <input type="search" id="search_users" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);width:220px" placeholder="搜索用户名" oninput="setSearch('users',this.value)">
-          <button class="btn" onclick="selAllToggle('users')">全选 / 取消</button>
-          <button class="btn btn-danger" id="delSel_users" disabled onclick="delSelected('users')">删除选中</button>
-          <button class="btn btn-p" onclick="openAddUser()">＋ 新增管理员</button>
-        </div>
-      </div>
-      <div class="hint" style="margin-bottom:12px">可增加/删除/修改子管理账号与密码；主账号 admin 不能删除或禁用。</div>
-      <div id="usersTable"></div>
     </div>
   </section>
 </main>
@@ -951,7 +934,7 @@ function api(path,opts={}){
     if(write)requestStatus(1);
     try{
       const r=await fetch(path,{method,headers:{'Content-Type':'application/json','X-Admin-Key':adminKey,...(opts.headers||{})},body:opts.body?JSON.stringify(opts.body):undefined});
-      if(r.status===401){showLogin();throw new Error('unauthorized');}
+      if(r.status===401){if(!opts.quiet401)showLogin();throw new Error('unauthorized');}
       const text=await r.text();
       let data={};try{data=text?JSON.parse(text):{};}catch(e){}
       if(!r.ok)throw new Error(data.detail||(`${r.status} ${text.slice(0,120)}`));
@@ -1082,6 +1065,7 @@ async function submitLogin(){
   adminKey=r.token;localStorage.setItem(LS_KEY,r.token);
   ENTER_PENDING.add(curTab);
   leaveLogin();refresh();setTimeout(shellEnter,700);
+  checkUpdateBadge();        // 登录页开着时服务器换了版本：这里发现后自动刷新
 }
 function logout(){adminKey='';localStorage.removeItem(LS_KEY);showLogin();}
 
@@ -1089,7 +1073,7 @@ function switchTab(t){
   curTab=t;
   q('main').classList.toggle('wide-tasks',t==='tasks');
   document.querySelectorAll('.side-nav .nav-item').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
-  ['dash','accounts','proxies','tasks','videos','keys','users'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
+  ['dash','accounts','proxies','tasks','videos','keys'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
   tabLoadingNote(t,!LOADED_TABS.has(t));
   // 已有数据（预取过 / 来过）的页：只淡入一次；数据刷新回来后不再把表格行清空重播，
   // 否则同一批行先显示、又变透明逐行出现，看起来像「弹一下」
@@ -1214,7 +1198,6 @@ async function refreshTab(tab){
     else if(tab==='tasks')await loadTasks();
     else if(tab==='videos')await loadVideos();
     else if(tab==='keys')await loadKeys();
-    else if(tab==='users')await loadUsers();
     LOADED_TABS.add(tab);tabLoadingNote(tab,false);rowsEnter(tab);
     q('#lastUpdate').textContent='更新于 '+new Date().toLocaleTimeString();
     if(!tabsPrefetched)setTimeout(prefetchTabs,800);
@@ -1306,6 +1289,26 @@ function reloadIfNewVersion(info){
   if(!info||!info.current)return;
   if(!PAGE_VERSION){PAGE_VERSION=info.current;return;}
   if(info.current!==PAGE_VERSION)goNewVersion(info.current);
+}
+/** /health 不用登录：返回服务器现在的版本号，连不上返回空串 */
+async function serverVersion(){
+  try{
+    const r=await fetch('/health',{cache:'no-store'});
+    if(!r.ok)return '';
+    const h=await r.json();
+    return (h&&h.version)||'';
+  }catch(e){return '';}
+}
+/** 本页是哪个版本时打开的：一打开就记下（不用登录），之后服务器版本变了就刷新 */
+async function rememberPageVersion(){
+  if(!PAGE_VERSION){const v=await serverVersion();if(v&&!PAGE_VERSION)PAGE_VERSION=v;}
+}
+/** 每分钟看一眼：在别处更新过、或登录页开着时更新完成，也能自动换到新页面 */
+async function checkPageVersion(){
+  if(!PAGE_VERSION||updateReloadAt||updatePollTimer)return;
+  if(typeof document!=='undefined'&&document.hidden)return;
+  const v=await serverVersion();
+  if(v&&v!==PAGE_VERSION)goNewVersion(v);
 }
 /** 服务器已经是新版本：给一句提示，马上刷新到新页面 */
 function goNewVersion(v){
@@ -1459,15 +1462,15 @@ function watchUpdate(){
   if(!PAGE_VERSION)PAGE_VERSION=UPDATE_INFO.current;
   updRunShow(UPDATE_INFO);
   const tick=async()=>{
-    let info=null;
-    try{info=await api('/api/admin/update');}
-    catch(e){if(e.message==='unauthorized'){updRunHide();return;}}
+    let info=null,denied=false;
+    // 重启后旧版本的登录会失效（2.7.9 及以前会话只在内存里）：这里不弹登录页，先看版本变没变
+    try{info=await api('/api/admin/update',{quiet401:true});}
+    catch(e){denied=e.message==='unauthorized';}
     if(!info){
       updRunShow(UPDATE_INFO,{down:true});
-      try{
-        const r=await fetch('/health',{cache:'no-store'});
-        if(r.ok){const h=await r.json();if(h&&h.version&&h.version!==PAGE_VERSION){goNewVersion(h.version);return;}}
-      }catch(e){}
+      const v=await serverVersion();
+      if(v&&v!==PAGE_VERSION){goNewVersion(v);return;}
+      if(v&&denied){updRunHide();updatePollTimer=null;showLogin();return;}   // 服务在、版本没变、登录失效
       updatePollTimer=setTimeout(tick,1000);return;
     }
     UPDATE_INFO=info;updateBadge(info);
@@ -1489,7 +1492,7 @@ async function openWork15Settings(){
     if(epoch!==dialogEpoch)return;
     const off=c.available?'':'disabled';
     showDlg(`<h2>2.0 的 15 秒</h2>
-      <p class="hint">开启后，seedance-2.0-fast 请求 15 秒时走 Dola 工作模式，支持参考图；请求 30 秒时用两个号各出 15 秒再拼接。一单约 6 分钟；助手可能改写提示词；实际扣点未知，出过一条的号当天不再派发。</p>
+      <p class="hint">开启后，seedance-2.0-fast 请求 15 秒时走 Dola 工作模式，支持参考图；请求 30 秒时用两个号各出 15 秒再拼接。一单约 6 分钟；助手可能改写提示词；每个号 7 天只能出 1 条 15 秒，和每日额度分开。</p>
       ${c.reason?`<p class="hint" role="alert" style="color:var(--red)">${esc(c.reason)}</p>`:''}
       <label class="sw-row" style="margin-top:14px"><span class="sw"><input type="checkbox" id="w15Enabled" ${c.enabled?'checked':''} ${off}><i></i></span>开启</label>
       <label for="w15Conc">同时运行几单（1～${c.max_concurrency}）</label>
@@ -1950,10 +1953,10 @@ let proxyCache=[];
 function pubModel(m){return m==='seedance-2.0'?'seedance-2.0-fast':(m||'-');}
 let srcFilterVal='all';
 /* ---- 各页搜索：空格分隔的每个词都要命中（不区分大小写）。自动刷新时保留搜索词。
-   账号 / 代理 / 密钥 / 用户在前端过滤（列表本来就是全量）；任务 / 视频交给服务端查整个历史。 */
-const SEARCH={accounts:'',proxies:'',tasks:'',videos:'',keys:'',users:''};
+   账号 / 代理 / 密钥在前端过滤（列表本来就是全量）；任务 / 视频交给服务端查整个历史。 */
+const SEARCH={accounts:'',proxies:'',tasks:'',videos:'',keys:''};
 const SEARCH_RELOAD={accounts:()=>{accPage=1;renderAccounts();return Promise.resolve();},proxies:()=>loadProxies(),
-  tasks:()=>loadTasks(),videos:()=>loadVideos(),keys:()=>loadKeys(),users:()=>loadUsers()};
+  tasks:()=>loadTasks(),videos:()=>loadVideos(),keys:()=>loadKeys()};
 const searchTimers={};
 function setSearch(kind,v){
   SEARCH[kind]=String(v||'').trim();
@@ -2071,6 +2074,13 @@ function srcBadge(x){
   if(x.source==='cookie')return '<span class="badge b-orange" title="Cookie 载入">Cookie 载入</span>';
   return '<span class="tiny">—</span>';
 }
+/** 同一个邮箱加了两遍：是同一个 Dola 用户，额度共用，留一个就够 */
+function sameLoginNote(x){
+  const twins=x.same_login||[];
+  if(!twins.length)return '';
+  return '<div class="tiny" style="color:var(--orange)" title="同一个邮箱登录了两遍，是同一个 Dola 账号：每日额度和 15 秒额度都是共用的，建议删掉其中一个">'
+    +'同一账号：<span translate="no">'+esc(twins.join('、'))+'</span></div>';
+}
 /** 剩余额度列：dola 号按点数；豆包号不报剩余，只显示今天出了几条 */
 function quotaCell(x,unit){
   if(x.site==='doubao')
@@ -2160,7 +2170,7 @@ function renderAccounts(){
     return [
       `<input type="checkbox" data-name="${esc(x.name)}" ${selAccounts.has(x.name)?'checked':''} onchange="toggleSel('${x.name}',this.checked)">`,
       `<span class="account-id" translate="no">${esc(x.name)}</span>`,
-      accLabel(x)+warn,
+      accLabel(x)+warn+sameLoginNote(x),
       groupBadge(x),
       badge+ipInfo,
       srcBadge(x),
@@ -3557,7 +3567,7 @@ async function delProxy(id){
 /* ---- 通用多选（代理 / 任务 / 用户）：勾选单个或多个、全选，然后「删除选中」 ----
    选中状态存在 SEL 里，自动刷新重画表格时保持勾选；已经不在列表里（或变成不可删）的自动去掉。 */
 const SEL={proxies:new Set(),tasks:new Set(),users:new Set(),keys:new Set()};
-const SEL_LABEL={proxies:'个代理',tasks:'条任务',users:'个管理员',keys:'个 API 密钥'};
+const SEL_LABEL={proxies:'个代理',tasks:'条任务',keys:'个 API 密钥'};
 function selBox(kind,id,disabled,why){
   return `<input type="checkbox" data-sel="${kind}" value="${esc(id)}" ${SEL[kind].has(id)?'checked':''}`
     +` ${disabled?'disabled':''} title="${esc(why||'')}" onchange="selToggle('${kind}',this.value,this.checked)">`;
@@ -3597,80 +3607,34 @@ async function delSelected(kind){
   if(kind==='keys')tip+='\n用这些密钥的调用方会立即失效。';
   if(!await confirm(tip))return;
   const url={proxies:'/api/admin/proxies/delete-batch',tasks:'/api/admin/tasks/delete-batch',
-             users:'/api/admin/users/delete-batch',keys:'/api/admin/keys/delete-batch'}[kind];
-  const body=kind==='users'?{usernames:ids}:{ids};
+             keys:'/api/admin/keys/delete-batch'}[kind];
+  const body={ids};
   let r;
   try{r=await api(url,{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
   (r.deleted||[]).forEach(id=>SEL[kind].delete(id));
   if(r.skipped&&r.skipped.length)alert('已删除 '+(r.deleted||[]).length+' '+SEL_LABEL[kind]+'；跳过：\n'+r.skipped.join('\n'));
-  ({proxies:loadProxies,tasks:loadTasks,users:loadUsers,keys:loadKeys})[kind]();
+  ({proxies:loadProxies,tasks:loadTasks,keys:loadKeys})[kind]();
 }
 
-/* ---- 用户管理 ---- */
-async function loadUsers(){
-  const r=await api('/api/admin/users');
-  const me=r.current_username||'';
-  const users=r.users.filter(u=>searchHit('users',u.username,u.role==='owner'?'主管理员':'管理员',u.enabled?'启用':'停用'));
-  selPrune('users',users.filter(u=>u.role!=='owner'&&u.username!==me).map(u=>u.username));
-  q('#usersTable').innerHTML=table(
-    [selAllBox('users'),'用户名','角色','状态','创建时间','操作'],
-    users.map(u=>[
-      selBox('users',u.username,u.role==='owner'||u.username===me,
-             u.role==='owner'?'主管理员不能删除':(u.username===me?'不能删除当前登录的账号':'')),
-      noTr(u.username)+(u.username===me?' <span class="badge b-blue">当前</span>':''),
-      u.role==='owner'?'<span class="badge b-green">主管理员</span>':'<span class="badge b-blue">管理员</span>',
-      u.enabled?'<span class="badge b-green">启用</span>':'<span class="badge b-red">停用</span>',
-      fmt(u.created_at),
-      `<button class="btn" style="margin-right:6px" onclick="openEditUser('${esc(u.username)}')">修改</button>`+
-      `<button class="btn ${u.username===me?'btn':''}" ${u.username===me?'disabled':''} style="margin-right:6px" onclick="delUser('${esc(u.username)}')">删除</button>`
-    ])
-  )+searchEmpty('users',users.length);
-  selUpdate('users');
-}
-function openAddUser(){
-  showDlg(`<h2>新增管理员</h2>
-    <label>用户名</label><input id="f_uname" placeholder="仅字母/数字/_/-，最多32位">
-    <label>密码</label><input id="f_upass" type="password" placeholder="初始密码">
+/* ---- 登录密码：用户管理页已去掉（只有一个管理员在用），改密码放在「设置」里 ---- */
+async function openPassword(){
+  let me='';
+  try{me=(await api('/api/admin/users')).current_username||'';}
+  catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);return;}
+  showDlg(`<h2>修改登录密码</h2>
+    <p class="hint">当前账号：<span translate="no">${esc(me)}</span>。保存后本浏览器保持登录，其它地方的登录会失效。</p>
+    <label for="f_pw1">新密码</label><input id="f_pw1" type="password" autocomplete="new-password" placeholder="至少 6 位">
+    <label for="f_pw2">再输一遍</label><input id="f_pw2" type="password" autocomplete="new-password">
     <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
-      <button class="btn btn-p" onclick="submitUser('')">新增</button></div>`);
+      <button class="btn btn-p" onclick="submitPassword('${esc(me)}')">保存</button></div>`);
 }
-function openEditUser(username){
-  (async()=>{
-    const r=await api('/api/admin/users');
-    const u=r.users.find(x=>x.username===username);
-    if(!u)return alert('用户不存在');
-    const owner=u.role==='owner';
-    showDlg(`<h2>修改账号：${noTr(u.username)}</h2>
-      <label>用户名</label><input id="f_uname" value="${esc(u.username)}" ${owner?'disabled':''} ${owner?'title="主管理员不允许改名"':''}>
-      <label>新密码（留空保持不变）</label><input id="f_upass" type="password" placeholder="留空则不修改">
-      ${owner?'':'<label style="margin-top:8px;display:flex;align-items:center;gap:6px;color:var(--sub)"><input type="checkbox" id="f_uenabled" style="width:auto" '+(u.enabled?'checked':'')+'>启用该账号</label>'}
-      <div class="row"><button class="btn" onclick="hide('dlg')">取消</button>
-        <button class="btn btn-p" onclick="submitUser('${esc(u.username)}')">保存</button></div>`);
-  })();
-}
-async function submitUser(orig){
-  const name=q('#f_uname').value.trim();
-  const pw=q('#f_upass').value;
-  const body={};
-  if(!orig){
-    if(!name||!pw)return alert('请填写用户名和密码');
-    if(!/^[A-Za-z0-9_-]{1,32}$/.test(name))return alert('用户名只能包含字母/数字/_/-，且不超过32位');
-    body.username=name;body.password=pw;
-    try{await api('/api/admin/users',{method:'POST',body});}catch(e){return alert(dialogText`${e.message}`);}
-  }else{
-    if(!name)return alert('用户名不能为空');
-    if(name!==orig)body.username=name;
-    if(pw)body.password=pw;
-    const eb=q('#f_uenabled');
-    if(eb)body.enabled=eb.checked;
-    try{await api('/api/admin/users/'+encodeURIComponent(orig),{method:'PATCH',body});}catch(e){return alert(dialogText`${e.message}`);}
-  }
-  hide('dlg');loadUsers();
-}
-async function delUser(username){
-  if(!await confirm(dialogText`确定删除管理员 ${username}？`))return;
-  try{await api('/api/admin/users/'+encodeURIComponent(username),{method:'DELETE'});}catch(e){return alert(dialogText`${e.message}`);}
-  loadUsers();
+async function submitPassword(me){
+  const a=q('#f_pw1').value,b=q('#f_pw2').value;
+  if(a.length<6)return alert('密码至少 6 位');
+  if(a!==b)return alert('两次输入的密码不一样');
+  try{await api('/api/admin/users/'+encodeURIComponent(me),{method:'PATCH',body:{password:a}});}
+  catch(e){if(e.message!=='unauthorized')alert(dialogText`${e.message}`);return;}
+  hide('dlg');alert('密码已修改');
 }
 
 /* ---- 任务列表 ---- */
@@ -3812,7 +3776,6 @@ async function loadTasks(){
       +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">查看</button>',
     refCell(t)+(t.reference_source==='ai_generated'?'<div class="tiny task-source" title="调用方已声明参考图人物完全由 AI 生成；提交时附加来源说明">AI 素材</div>':''),
     accChain(t),
-    t.api_key_name?noTr(t.api_key_name):'—',
     (t.duration||10)+'秒',
     sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
     costCell(t),
@@ -3827,7 +3790,7 @@ async function loadTasks(){
       :((t.recover_state||t.upstream_note||queueNote(t))?'':'<span class="tiny">—</span>'))
   ]);
   q('#tasksTable').innerHTML=table(
-    [selAllBox('tasks'),'ID','提示词','参考图','账号','客户','时长','状态','耗时','创建时间','视频','报错/备注'],rows);
+    [selAllBox('tasks'),'ID','提示词','参考图','账号','时长','状态','耗时','创建时间','视频','报错/备注'],rows);
   selUpdate('tasks');
 }
 
@@ -4103,11 +4066,13 @@ async function startStress(){
 
 /* 启动：探测鉴权，401 才弹登录遮罩（ADMIN_KEY 留空时免登录） */
 (async function boot(){
+  await rememberPageVersion();
   try{ await api('/api/admin/accounts'); hide('loginMask'); shellEnter(); refresh(); checkUpdateBadge(); }
   catch(e){ /* 401 已在 api() 内触发 showLogin */ }
 })();
 timer=setInterval(()=>{if(autoRefresh)refresh();},10000);
 setInterval(checkUpdateBadge,5*60*1000);
+setInterval(checkPageVersion,60*1000);
 </script>
 </body>
 </html>

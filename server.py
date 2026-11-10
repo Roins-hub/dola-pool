@@ -81,6 +81,7 @@ from proxy_store import (
 )
 from store import PendingTaskLimitExceeded, TaskQuotaExceeded, TaskStore
 from stress_test import run_stress
+import user_store
 from user_store import (
     create_user as user_create,
     delete_user as user_delete,
@@ -93,7 +94,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.7.9"
+APP_VERSION = "2.7.10"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -341,6 +342,11 @@ def _admin_auth(x_admin_key: str | None):
     if not x_admin_key:
         raise HTTPException(401, "请先登录")
     session = ADMIN_SESSIONS.get(x_admin_key)
+    if not session:
+        # 服务重启后内存里没有了：从库里找回来，面板一键更新后不用重新登录
+        session = user_store.load_session(x_admin_key)
+        if session:
+            ADMIN_SESSIONS[x_admin_key] = session
     if not session or session.get("expires_at", 0) < time.time():
         ADMIN_SESSIONS.pop(x_admin_key, None)
         raise HTTPException(401, "登录已过期，请重新登录")
@@ -1187,9 +1193,14 @@ async def resume_incomplete_tasks():
     _load_responder()
     work_reply.apply_saved(store.get_setting(WORK_15S_KEY), store.get_setting(WORK_15S_CONCURRENCY_KEY))
     # 15 秒额度锁在号池库里；按任务记录补齐，升级前用过的号不必各撞一次上限
-    restored = pool.restore_work_quota(store.work_videos_since(time.time() - work_reply.WORK_QUOTA_SECONDS))
+    work_since = time.time() - work_reply.WORK_QUOTA_SECONDS
+    restored = pool.restore_work_quota(store.work_videos_since(work_since))
+    # 失败记录里 Dola 写明了恢复时间的（在别处用掉额度的号），以及同邮箱的重复账号，一并补上
+    restored += pool.restore_work_limits(store.work_failures_since(work_since))
+    restored += pool.share_work_locks()
+    pool.restore_work_suspects(store.work_failures_since(work_since))
     if restored:
-        print(f"[startup] 按任务记录恢复 15 秒额度锁：{'、'.join(restored)}", flush=True)
+        print(f"[startup] 按任务记录恢复 15 秒额度锁：{'、'.join(dict.fromkeys(restored))}", flush=True)
     # 先处理崩溃时留下的 processing 孤儿任务（有 conversation 保留续轮询，
     # 无 conversation 清空账号重新派号），避免永久卡死。
     stale_refs = sweep_stale_references()
@@ -2597,6 +2608,7 @@ async def admin_login(body: AdminLogin):
         "role": user["role"],
         "expires_at": time.time() + ADMIN_SESSION_TTL,
     }
+    user_store.save_session(token, **ADMIN_SESSIONS[token])
     return {
         "ok": True,
         "auth_required": True,
@@ -3634,6 +3646,14 @@ async def admin_user_update(username: str, body: AdminUserUpdate,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    if body.password or body.enabled is False or (body.username and body.username.strip() != username):
+        # 改了密码 / 改名 / 禁用：这个用户在别处的登录作废，正在操作的这一个留着
+        mine = ADMIN_SESSIONS.get(x_admin_key or "", {}).get("username") == username
+        keep = x_admin_key if mine and not (body.username and body.username.strip() != username) else None
+        user_store.drop_sessions(username, keep_token=keep)
+        for token, session in list(ADMIN_SESSIONS.items()):
+            if session.get("username") == username and token != keep:
+                ADMIN_SESSIONS.pop(token, None)
     return {"updated": updated}
 
 
@@ -3673,6 +3693,7 @@ async def admin_user_delete(username: str,
         user_delete(username)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    user_store.drop_sessions(username)
     return {"ok": True}
 
 

@@ -224,6 +224,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `DOLA_DAILY_LIMIT` | `4` | 每个 dola 号每天的额度点数 |
 | `DOLA_LIMIT_RESET_TZ` / `_HOUR` | `UTC` / `0` | 每日额度重置时刻（UTC 0 点 = 北京 8 点） |
 | `DOLA_TASK_DEADLINE` | `600` | 取得账号后的尝试时间（秒） |
+| `DOLA_WORK_RETRY_SECONDS` | `1800` | 工作模式（2.0 的 15 / 30 秒）换号重试的时间窗口（秒）；每次发送前失败要 2～4 分钟，所以比上一项长 |
 | `DOLA_MAX_QUEUE_WAIT_SECONDS` | `1800` | 排队等名额 / 账号的上限（秒） |
 | `DOLA_MAX_CONCURRENCY` | `0` | 全局并发初始值，`0` = 不限；面板里保存的值优先 |
 | `DOLA_MAX_PENDING_TASKS` | `100` | 待处理任务上限，超过返回 429 |

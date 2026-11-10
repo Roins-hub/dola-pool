@@ -32,8 +32,63 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    # 登录会话：只存令牌的 SHA-256。服务重启（比如面板一键更新）后登录不掉。
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_sessions (
+            token_hash TEXT PRIMARY KEY,
+            username TEXT NOT NULL,
+            role TEXT NOT NULL,
+            expires_at REAL NOT NULL
+        )
+        """
+    )
     conn.commit()
     return conn
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def save_session(token: str, username: str, role: str, expires_at: float) -> None:
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM admin_sessions WHERE expires_at<?", (time.time(),))
+        conn.execute("INSERT OR REPLACE INTO admin_sessions (token_hash, username, role, expires_at) VALUES (?,?,?,?)",
+                     (_token_hash(token), username, role, float(expires_at)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_session(token: str) -> dict | None:
+    """没过期的会话：{"username", "role", "expires_at"}；没有或过期返回 None。"""
+    if not token:
+        return None
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT username, role, expires_at FROM admin_sessions WHERE token_hash=?",
+                           (_token_hash(token),)).fetchone()
+        if not row or row["expires_at"] < time.time():
+            return None
+        return dict(row)
+    finally:
+        conn.close()
+
+
+def drop_sessions(username: str, keep_token: str | None = None) -> None:
+    """改密码、改名、删除后让这个用户在别处的登录失效；keep_token 是正在操作的这一个。"""
+    conn = _connect()
+    try:
+        if keep_token:
+            conn.execute("DELETE FROM admin_sessions WHERE username=? AND token_hash<>?",
+                         (username, _token_hash(keep_token)))
+        else:
+            conn.execute("DELETE FROM admin_sessions WHERE username=?", (username,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _hash_password(password: str, salt_hex: str) -> str:
