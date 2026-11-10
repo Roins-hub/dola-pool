@@ -479,10 +479,20 @@ class _WorkSession:
 
     async def send(self, text: str) -> str:
         page = self.page
+        sent_at = time.time()
+        self.url_before = page.url
         for _ in range(3):
-            await self.restore_composer()
-            await self.fill_prompt(text)
-            if await self.press_send():
+            if self.went_out():
+                break
+            try:
+                await self.restore_composer()
+                await self.fill_prompt(text)
+                if self.went_out() or await self.press_send():
+                    break
+            except Exception as exc:
+                if not browser_error(exc) or not self.went_out():
+                    raise
+                # 前端迟到发出请求并重绘后，旧输入框会消失；接着取会话，避免重输或漏记。
                 break
             self.raise_if_send_failed()
             await self.raise_if_blocked()
@@ -490,14 +500,13 @@ class _WorkSession:
         else:
             left = (await self.composer_text()).strip()[:40]
             raise PreSubmissionParametersError(f"{self.account} 工作模式请求没有发出去（输入框内容：{left or '空'}）")
-        sent_at = time.time()
         for _ in range(CONVERSATION_WAIT_SECONDS):
             self.raise_if_rejected()
-            await self.solve_captcha()
             match = re.search(r"/chat/(\d+)", page.url)
             if match and page.url != self.url_before:
                 return match.group(1)
             self.raise_if_send_failed()
+            await self.solve_captcha()
             await page.wait_for_timeout(1000)
         self.raise_if_rejected()
         known, conversation = await self.find_conversation(sent_at)

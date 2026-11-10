@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from test_task_deadline import _run
-from test_work_session import load_agent, send_session, PROMPT
+from test_work_session import load_agent, send_session, PROMPT, PlaywrightLike
 
 
 class Response:
@@ -81,3 +81,59 @@ def test_response_listener_receives_real_completion_events(monkeypatch):
     _run(handlers["response"](Response(data={"code": 710022002, "msg": "请求过于频繁"})))
     with pytest.raises(agent.RiskControlError):
         item.raise_if_send_failed()
+
+
+def test_late_send_during_composer_rebuild_keeps_original_conversation(monkeypatch):
+    _, item, page = send_session(monkeypatch, enter_sends=False, button_sends=False)
+    rebuilt = []
+
+    async def restore():
+        rebuilt.append(True)
+        if len(rebuilt) == 2:
+            page.go_out()
+            raise PlaywrightLike('Locator.click: Timeout 8000ms exceeded.')
+        page.text = 'Creative video '
+    item.restore_composer = restore
+    assert _run(item.send(PROMPT)) == '123'
+    assert page.enters == 1 and len(item.sent) == 1
+
+
+def test_delayed_request_is_checked_before_rebuilding_composer(monkeypatch):
+    _, item, page = send_session(monkeypatch, enter_sends=False, button_sends=False)
+    waits = []
+
+    async def waited(ms):
+        waits.append(ms)
+        if ms == 3000:
+            page.go_out()
+    page.wait_for_timeout = waited
+    assert _run(item.send(PROMPT)) == '123'
+    assert page.enters == 1 and len(item.sent) == 1
+
+
+def test_recent_lookup_uses_time_before_the_first_send(monkeypatch):
+    agent, item, page = send_session(monkeypatch, jumps=True)
+    monkeypatch.setattr(agent, 'CONVERSATION_WAIT_SECONDS', 1)
+    clock = [100.0]
+    monkeypatch.setattr(agent, 'time', SimpleNamespace(time=lambda: clock[0]))
+    original = page.press
+
+    async def press(key):
+        await original(key)
+        clock[0] = 130.0
+
+    async def lookup(since):
+        assert since == 100.0
+        return True, '123'
+    page.press, item.find_conversation = press, lookup
+    assert _run(item.send(PROMPT)) == '123'
+
+
+def test_late_send_while_filling_does_not_press_enter_again(monkeypatch):
+    _, item, page = send_session(monkeypatch)
+
+    async def fill(text):
+        page.go_out()
+    item.fill_prompt = fill
+    assert _run(item.send(PROMPT)) == '123'
+    assert page.enters == 0 and len(item.sent) == 1
