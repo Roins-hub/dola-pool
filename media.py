@@ -27,16 +27,22 @@ def _is_data_image(url: str) -> bool:
     return isinstance(url, str) and url.startswith(_DATA_URL_RE) and ";base64," in url
 
 
-def is_local_reference(path: str) -> bool:
-    """本服务自己落盘的参考图（data: URL 物化出来的）——只认 REFERENCE_FILE_DIR 下的文件。"""
+def _local_reference_path(path: str) -> Path | None:
+    """本服务的参考图路径，包括已清理的文件；兼容 Windows 盘符。"""
     if not isinstance(path, str) or not path or "://" in path:
-        return False
+        return None
     try:
         resolved = Path(path).resolve()
         resolved.relative_to(Path(config.REFERENCE_FILE_DIR).resolve())
     except (OSError, ValueError):
-        return False
-    return resolved.is_file()
+        return None
+    return resolved
+
+
+def is_local_reference(path: str) -> bool:
+    """本服务自己落盘的参考图——只认 REFERENCE_FILE_DIR 下的文件。"""
+    resolved = _local_reference_path(path)
+    return resolved is not None and resolved.is_file()
 
 
 def materialize_data_urls(urls: list[str]) -> list[str]:
@@ -185,6 +191,8 @@ def validate_public_url(url: str) -> str:
     if is_local_reference(url):
         # 本服务落盘的参考图（data: URL 物化出来的），直接复用文件
         return str(Path(url).resolve())
+    if _local_reference_path(url) is not None:
+        raise ValueError(f"参考图文件已丢失（任务重排或被清理）：{url}")
     if isinstance(url, str) and url.startswith(("refs/", "/")) and (
             Path(config.REFERENCE_FILE_DIR).name in url):
         # 形如 refs/xxx.png 但文件不在了：多半是任务被重排/清理过，
@@ -230,6 +238,8 @@ async def _validate_url_async(url: str) -> str:
     if is_local_reference(url):
         # 本服务落盘的参考图（data: URL 物化出来的），直接复用文件
         return str(Path(url).resolve())
+    if _local_reference_path(url) is not None:
+        raise ValueError(f"参考图文件已丢失（任务重排或被清理）：{url}")
     if isinstance(url, str) and url.startswith(("refs/", "/")) and (
             Path(config.REFERENCE_FILE_DIR).name in url):
         # 形如 refs/xxx.png 但文件不在了（任务重排/被清理）：说清楚，别报成「格式不支持」

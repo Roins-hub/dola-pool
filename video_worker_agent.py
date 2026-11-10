@@ -31,7 +31,7 @@ import failure_text
 from browser import cloak_proxy_settings, cookie_value, launch_account_context
 from browser_feedback import emit as emit_feedback
 from generation_errors import (
-    PreSubmissionParametersError, PreSubmissionUploadError, UpstreamReplyError, WorkQuotaError,
+    PreSubmissionParametersError, PreSubmissionUploadError, UploadRouteError, UpstreamReplyError, WorkQuotaError,
 )
 from upstream_reply import QUOTA_RE
 from video_worker import RiskControlError, _download
@@ -197,7 +197,7 @@ async def _work_slot(on_poll):
 class _WorkSession:
     """一次工作模式出片：打开页面、发送、确认、等视频。"""
 
-    def __init__(self, account, page, on_poll, *, ratio=None, attachments=0):
+    def __init__(self, account, page, on_poll, *, ratio=None, attachments=0, prompt=""):
         self.account, self.page, self.on_poll = account, page, on_poll
         self.ratio, self.attachments = ratio, attachments
         self.confirmed = False
@@ -213,6 +213,10 @@ class _WorkSession:
         self.url_before = ""
         self.conversation_id = ""
         self.ask_rounds = 0
+        self.prompt = prompt
+        self.choice_answers = {}
+        self.uploading = False
+        self.upload_error = None
 
     def watch(self):
         def on_request(request):
@@ -227,8 +231,14 @@ class _WorkSession:
         self.page.on("request", on_request)
 
         def on_failed(request):
-            if urlsplit(request.url).path.endswith("/chat/completion"):
+            parts = urlsplit(request.url)
+            if parts.path.endswith("/chat/completion"):
                 self.send_error = str(request.failure or "连接失败")[:120]
+            host = (parts.hostname or "").lower()
+            if self.uploading and any(host == domain or host.endswith("." + domain)
+                                      for domain in ("bytevcloudapi.com", "vodupload.com")):
+                self.upload_error = UploadRouteError(host, short_error(request.failure or "连接失败"),
+                                                     stage="工作模式参考图")
         self.page.on("requestfailed", on_failed)
 
     def rejected(self) -> bool:
@@ -319,18 +329,31 @@ class _WorkSession:
 
     async def attach_references(self, paths: list[str]):
         page = self.page
-        if not await self._pick_files(paths):
-            await self._paste_files(paths)
-        total = sum(Path(path).stat().st_size for path in paths if Path(path).exists())
-        wait = upload_wait_seconds(total)
-        for _ in range(wait):
-            if uploads_committed(self.upload_actions) >= len(paths):
-                break
-            await page.wait_for_timeout(1000)
-        else:
-            raise PreSubmissionUploadError(
-                f"{self.account} 工作模式参考图 {wait} 秒内没有传完（{total / 1048576:.1f} MB）")
-        await page.wait_for_timeout(2500)
+        self.uploading, self.upload_error = True, None
+        try:
+            picked = await self._pick_files(paths)
+            self.raise_if_upload_failed()
+            if not picked:
+                await self._paste_files(paths)
+            total = sum(Path(path).stat().st_size for path in paths if Path(path).exists())
+            wait = upload_wait_seconds(total)
+            for _ in range(wait):
+                self.raise_if_upload_failed()
+                if uploads_committed(self.upload_actions) >= len(paths):
+                    break
+                await page.wait_for_timeout(1000)
+            else:
+                raise PreSubmissionUploadError(
+                    f"{self.account} 工作模式参考图 {wait} 秒内没有传完（{total / 1048576:.1f} MB）")
+            await page.wait_for_timeout(2500)
+            self.raise_if_upload_failed()
+        finally:
+            self.uploading = False
+
+    def raise_if_upload_failed(self):
+        if self.upload_error:
+            print(f"[{self.account}] 工作模式上传失败：{self.upload_error}", flush=True)
+            raise self.upload_error
 
     async def choose_skill(self):
         page = self.page
@@ -456,7 +479,10 @@ class _WorkSession:
 
     async def chain_query(self) -> str:
         cookies = await self.page.context.cookies("https://www.dola.com")
-        query = dict(parse_qsl(urlsplit(self.page_query or self.sent[0]).query, keep_blank_values=True))
+        source = self.page_query or (self.sent[0] if self.sent else "")
+        if not source:
+            raise PreSubmissionParametersError(f"{self.account} 页面签名参数尚未就绪")
+        query = dict(parse_qsl(urlsplit(source).query, keep_blank_values=True))
         query.pop("a_bogus", None)
         query["msToken"] = cookie_value(cookies, "msToken") or query.get("msToken", "")
         return urlencode(query)
@@ -492,9 +518,36 @@ class _WorkSession:
         await page.wait_for_timeout(1000)
         await page.keyboard.press("Enter")
 
+    async def choice_labels(self, questions: list[dict]) -> list[str]:
+        key = json.dumps(questions, ensure_ascii=False, sort_keys=True)
+        if key in self.choice_answers:
+            return self.choice_answers[key]
+        labels = choose_options(questions)
+        if dola_responder.enabled():
+            emit_feedback(self.on_poll, progress="工作模式：正在请 AI 选择方案")
+            selected = []
+            for question in questions:
+                options = question.get("options") or []
+                if not options:
+                    continue
+                text = (f"原始视频要求：{self.prompt[:4000]}\n选择题：{question.get('title', '')}\n"
+                        + "\n".join(f"- {option}" for option in options)
+                        + "\n请选最符合原始要求的一个选项，只回复该选项的完整原文，不加解释。")
+                try:
+                    reply, _why = await dola_responder.ai_reply_detail(
+                        text, self.ratio, WORK_DURATION, self.attachments)
+                except Exception as exc:
+                    print(f"[{self.account}] 工作模式 AI 选项请求失败：{short_error(exc)}", flush=True)
+                    reply = None
+                matched = next((option for option in options if reply and option.strip() == reply.strip()), None)
+                selected.append(matched or labels[len(selected)])
+            labels = selected
+        self.choice_answers[key] = labels
+        return labels
+
     async def answer_ask(self, questions: list[dict]) -> str:
         """回答选择题，返回给人看的说明。第一次点选项，还挂着就改成打字（题目允许自己输入）。"""
-        page, labels = self.page, choose_options(questions)
+        page, labels = self.page, await self.choice_labels(questions)
         self.ask_rounds += 1
         clicked = 0
         if self.ask_rounds == 1:
@@ -516,7 +569,7 @@ class _WorkSession:
                     pass
         picked = "、".join(labels) or "推荐方案"
         if clicked < max(1, len(labels)):
-            await self.type_reply(f"确认，按推荐方案直接生成：{picked}" if labels else "确认，按推荐方案直接生成")
+            await self.type_reply(f"确认，按以下选择直接生成：{picked}" if labels else "确认，按推荐方案直接生成")
             how = "已打字回答选择题"
         else:
             how = "已选"
@@ -689,11 +742,9 @@ async def _launch_cloak(account: str, profile: str, extension_paths: list[str] |
         license_key=config.CLOAK_LICENSE_KEY or None)
 
 
-async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
-                              on_conversation_id=None, on_poll=None,
-                              reference_image_paths: list[str] | None = None) -> dict:
-    """工作模式出一条 15 秒。发送前的失败可以换号；发送后超时不换号，避免重复出片。"""
-    text = build_prompt(prompt, ratio)
+@asynccontextmanager
+async def _work_browser(account: str, on_poll=None, *, ratio=None, attachments=0, prompt=""):
+    """生成和只读取回共用浏览器名额、独立临时目录、绑定代理与退出登录拦截。"""
     async with _work_slot(on_poll):
         profile = tempfile.mkdtemp(prefix="dola-work-")
         context = session = None
@@ -705,7 +756,7 @@ async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
             await context.add_cookies(cookies)
             page = context.pages[0] if context.pages else await context.new_page()
             session = _WorkSession(account, page, on_poll, ratio=ratio,
-                                   attachments=len(reference_image_paths or []))
+                                   attachments=attachments, prompt=prompt)
 
             async def stop_logout(route):
                 request = route.request
@@ -719,20 +770,7 @@ async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
 
             emit_feedback(on_poll, progress="工作模式：打开页面")
             await session.open_chat()
-            emit_feedback(on_poll, progress="工作模式：切换到工作模式")
-            await session.enter_work_mode()
-            if reference_image_paths:
-                emit_feedback(on_poll, progress="工作模式：上传参考图")
-                await session.attach_references(reference_image_paths)
-            emit_feedback(on_poll, progress="工作模式：选择技能")
-            await session.choose_skill()
-            emit_feedback(on_poll, progress="工作模式：发送请求")
-            conversation_id = await session.send(text)
-            deadline = time.time() + config.WORK_15S_TIMEOUT
-            if on_conversation_id:
-                on_conversation_id(account, conversation_id, deadline)
-            vm_str = await session.wait_for_video(conversation_id, deadline)
-            return await _deliver(account, vm_str, conversation_id, on_poll)
+            yield session
         except Exception as exc:
             if not browser_error(exc):
                 raise
@@ -745,3 +783,58 @@ async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
                 print(f"[{account}] 工作模式关闭浏览器失败：{short_error(exc)}", flush=True)
             finally:
                 shutil.rmtree(Path(profile), ignore_errors=True)
+
+
+def _stage(account, on_poll, text):
+    print(f"[{account}] {text}", flush=True)
+    emit_feedback(on_poll, progress=text)
+
+
+async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
+                              on_conversation_id=None, on_poll=None,
+                              reference_image_paths: list[str] | None = None) -> dict:
+    """工作模式出一条 15 秒；已发送超时由任务恢复器接着读原会话。"""
+    text = build_prompt(prompt, ratio)
+    async with _work_browser(account, on_poll, ratio=ratio, prompt=prompt,
+                             attachments=len(reference_image_paths or [])) as session:
+        _stage(account, on_poll, "工作模式：切换到工作模式")
+        await session.enter_work_mode()
+        if reference_image_paths:
+            _stage(account, on_poll, "工作模式：上传参考图")
+            await session.attach_references(reference_image_paths)
+        _stage(account, on_poll, "工作模式：选择技能")
+        await session.choose_skill()
+        _stage(account, on_poll, "工作模式：发送请求")
+        conversation_id = await session.send(text)
+        deadline = time.time() + config.WORK_15S_TIMEOUT
+        if on_conversation_id:
+            on_conversation_id(account, conversation_id, deadline)
+        _stage(account, on_poll, "工作模式：请求已提交，等待原会话出片")
+        vm_str = await session.wait_for_video(conversation_id, deadline)
+        _stage(account, on_poll, "工作模式：已读到视频结果")
+        return await _deliver(account, vm_str, conversation_id, on_poll)
+
+
+async def fetch_work_conversation_video(account: str, conversation_id: str, *, on_poll=None) -> dict:
+    """只读已有会话，不发送提示词、不代答、不创建新会话。"""
+    async with _work_browser(account, on_poll) as session:
+        _stage(account, on_poll, "工作模式：只读检查超时原会话")
+        session.conversation_id = conversation_id
+        chain = await session.read_chain(await session.chain_query(), conversation_id)
+        pending = {"status": "pending", "local_path": "", "final": False}
+        if chain is None:
+            return pending
+        found = video_models(chain)
+        if found:
+            return {**await _deliver(account, found[0], conversation_id, on_poll),
+                    "status": "succeeded", "final": False}
+        bots = [m for m in chain_messages(chain) if str(m.get("user_type")) == "2"]
+        latest = bots[-1] if bots else None
+        if latest and reply_finished(latest):
+            failure = failure_from_reply(account, reply_text(latest),
+                                         ran_tools=any(generation_started(m) for m in bots))
+            if failure:
+                return {"status": "failed", "local_path": "", "final": True,
+                        "detail": str(failure), "work_limit_until": getattr(failure, "until", None),
+                        "work_quota_blocked": isinstance(failure, WorkQuotaError)}
+        return pending

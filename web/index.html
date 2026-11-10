@@ -1519,7 +1519,7 @@ async function saveWork15Settings(){
   finally{btn.disabled=false;}
 }
 
-/* ---- AI 代答：dola 追问时，通用回复用完仍不开工，交给兼容 OpenAI 的模型写一句回复 ---- */
+/* ---- AI 代答：选择题可优先选方案，文字追问在通用回复用完后代答 ---- */
 async function openResponderSettings(){
   showDlg(`<h2>AI 代答</h2><p class="hint">正在读取设置…</p>`);
   const epoch=dialogEpoch;
@@ -1530,6 +1530,7 @@ async function openResponderSettings(){
       <p class="hint">dola 有时不直接生成，而是反问（用哪个比例、要不要开始、说已经生成过了……）。程序会先自动发两次「重申参数、直接生成」的通用回复；
         仍在问时，再把 dola 的原话和任务参数交给这里配置的模型写一句回复。模型只能确认、重申参数或选择与参数一致的选项，
         回复里出现与参数不一致的比例或秒数会被丢弃。都不行才结束任务（此时尚未开始生成，不扣点）。</p>
+      <p class="hint">工作模式选择题会优先请 AI 选择已有选项；未开启、请求失败或答案不匹配时，使用推荐／确认／第一个的规则选择。</p>
       <label class="sw-row" style="margin-top:14px"><span class="sw"><input type="checkbox" id="rpEnabled" ${c.enabled?'checked':''}><i></i></span>开启 AI 代答</label>
       <label for="rpBase">接口地址（兼容 OpenAI）</label>
       <input id="rpBase" placeholder="https://你的网关/v1" value="${esc(c.base_url||'')}" autocomplete="off" spellcheck="false">
@@ -2082,7 +2083,8 @@ function sameLoginNote(x){
   const twins=x.same_login||[];
   if(!twins.length)return '';
   return '<div class="tiny" style="color:var(--orange)" title="同一个邮箱登录了两遍，是同一个 Dola 账号：每日额度和 15 秒额度都是共用的，建议删掉其中一个">'
-    +'同一账号：<span translate="no">'+esc(twins.join('、'))+'</span></div>';
+    +'同一账号：<span translate="no">'+esc(twins.join('、'))+'</span>'
+    +(x.duplicate_of?'<br>重复项不参与自动调度，使用 <span translate="no">'+esc(x.duplicate_of)+'</span>':'')+'</div>';
 }
 /** 剩余额度列：dola 号按点数；豆包号不报剩余，只显示今天出了几条 */
 function quotaCell(x,unit){
@@ -3804,6 +3806,9 @@ function queueNote(t){
   return '<div class="tiny" style="color:var(--warning)">⏳ '+esc(n)+'</div>';
 }
 function recoverNote(t){
+  if(t.recover_state==='watching'&&t.status==='completed')
+    return (t.recovered_at?'<div class="tiny" style="color:#00a870">✓ 超时后已自动取回（'+fmtHM(t.recovered_at)+'）</div>':'')
+      +'<div class="tiny">视频已交付，正在核对超时分段的额度</div>';
   if(t.recover_state==='watching')
     return '<div class="tiny" style="color:var(--info)">⏳ 后台继续等 dola 出片（最晚到 '+fmtHM(t.recover_until)+'），出片后自动转为完成</div>';
   if(t.recover_state==='recovered')

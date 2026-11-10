@@ -28,7 +28,7 @@ from pure_api_gen import (
     generate_pure_video, hello_probe, probe_login,
 )
 from work_reply import (
-    QUOTA_NOTE as WORK_QUOTA_NOTE, WORK_DURATION, WORK_LIMIT_RE, WORK_QUOTA_SECONDS, uses_work_mode, uses_work_pair,
+    QUOTA_NOTE as WORK_QUOTA_NOTE, WORK_DURATION, WORK_LIMIT_RE, WORK_QUOTA_SECONDS, is_work_request, uses_work_mode, uses_work_pair,
     work_limit_until,
 )
 import config
@@ -692,7 +692,25 @@ class BrowserPool:
         """
         row = self._meta(account)
         email = (row["email"] or "").strip().lower() if row else ""
-        return [name for name in self.find_accounts_by_email(email) if name != account] if email else []
+        return [name for name in self.find_accounts_by_email(email)
+                if name != account and self.site_of(name) == self.site_of(account)] if email else []
+
+    def _duplicate_owners(self) -> dict[str, str]:
+        """同站点、同邮箱只保留一个自动调度入口，不删除资料或改用户的调度开关。"""
+        known, groups = set(self.accounts), {}
+        rows = self._conn.execute(
+            "SELECT name, email, scheduling, login_ok, created_at FROM accounts_meta "
+            "WHERE trim(COALESCE(email, ''))<>''").fetchall()
+        for row in rows:
+            if row["name"] in known:
+                key = (self.site_of(row["name"]), row["email"].strip().casefold())
+                groups.setdefault(key, []).append(row)
+        owners = {}
+        for twins in groups.values():
+            ordered = sorted(twins, key=lambda row: (not row["scheduling"], row["login_ok"] == 0,
+                                                     float(row["created_at"] or 0), row["name"]))
+            owners.update({row["name"]: ordered[0]["name"] for row in ordered[1:]})
+        return owners
 
     def _mark_work_blocked(self, account: str, until: float | None, reason: str = "") -> None:
         """工作模式额度用完：只锁这个号的 15 秒，每日聊天额度照常可用。同邮箱的号一起锁。"""
@@ -751,6 +769,11 @@ class BrowserPool:
         """工作模式发出去后没等到结果：片子可能还在做，额度可能已经用掉。不锁，派号时排到最后。"""
         self._work_suspect[account] = time.time()
 
+    def clear_work_suspect(self, account: str, *, before: float | None = None) -> None:
+        """原会话明确结束后清理可疑标记，保留之后新尝试留下的标记。"""
+        if before is None or self._work_suspect.get(account, 0) <= before:
+            self._work_suspect.pop(account, None)
+
     def restore_work_suspects(self, notes: list[tuple[str, str]]) -> list[str]:
         """重启后把「发出去后没等到结果」的号重新排到最后（这个标记只在内存里）。"""
         marked = []
@@ -784,7 +807,7 @@ class BrowserPool:
     @staticmethod
     def _work_ready(a: dict) -> bool:
         """能接工作模式：开着调度、没在风控冷却、登录没坏、7 天额度没锁。不看每日额度。"""
-        return (bool(a.get("scheduling")) and not a.get("cooling") and a.get("login_ok") != 0
+        return (bool(a.get("scheduling")) and not a.get("duplicate_of") and not a.get("cooling") and a.get("login_ok") != 0
                 and float(a.get("work_blocked_until") or 0) <= time.time())
 
     def _work_all_blocked(self, site: str) -> str:
@@ -916,6 +939,7 @@ class BrowserPool:
         for row in self._conn.execute("SELECT name, email FROM accounts_meta WHERE trim(COALESCE(email, ''))<>''"):
             by_email.setdefault(row["email"].strip().lower(), []).append(row["name"])
         known = set(self.accounts)
+        duplicate_owners = self._duplicate_owners()
         for a in self.accounts:
             m = self._meta(a)
             used = self.used_today(a)
@@ -928,6 +952,7 @@ class BrowserPool:
                 "no_watermark": (m["no_watermark"] if m and "no_watermark" in m.keys() else None),
                 "name": a,
                 "scheduling": bool(m["scheduling"]) if m else True,
+                "duplicate_of": duplicate_owners.get(a, ""),
                 "note": m["note"] if m else "",
                 "email": m["email"] if m else "",
                 "created_at": m["created_at"] if m else 0,
@@ -974,7 +999,7 @@ class BrowserPool:
             })
         for a in out:
             a["group"], a["group_reason"] = group_of(
-                a, now, busy=a["busy"] and a["operation"] not in ("verifying", "probing", "occupied"), processing_accounts=processing_accounts)
+                a, now, busy=a["busy"] and a["operation"] not in ("verifying", "probing", "recovering", "occupied"), processing_accounts=processing_accounts)
         return out
 
     def _derive_status(self, m, now: float) -> str:
@@ -1385,7 +1410,7 @@ class BrowserPool:
         return not row or row["credit_balance"] is None or row["credit_balance"] >= required
 
     def _schedulable(self, a: dict) -> bool:
-        return (a["scheduling"] and not a["cooling"] and not a["rate_limited"]
+        return (a["scheduling"] and not a.get("duplicate_of") and not a["cooling"] and not a["rate_limited"]
                 and not a["quota_blocked"] and a["login_ok"] != 0
                 and a["used_today"] < int(a.get("limit") or DAILY_LIMIT)
                 and (a["credit_balance"] is None or a["credit_balance"] >= 2))
@@ -1674,14 +1699,26 @@ class BrowserPool:
                 "proxy_url": proxy_store.proxy_url_for(name)}
 
     async def generate_work_pair(self, prompt: str, ratio: str, model: str, *, on_poll=None, on_wait=None,
-                                 reference_image_paths: list[str] | None = None, **dispatch) -> dict:
+                                 reference_image_paths: list[str] | None = None,
+                                 on_pair_state=None, pair_state: dict | None = None, **dispatch) -> dict:
         """30 秒 = 两段 15 秒：第二段用第一段最后一帧做参考图「接着继续」，最后本地拼接。
 
         两段各是一次完整的 15 秒派单（换号、额度锁、失败处理都一样），一个号 7 天只能出
-        一条，所以必然是两个号。第二段失败时整单失败，第一段的额度已经用掉了。
+        一条。第二段发送后超时最多额外换号一次，保留第一段和所有超时会话供后台取回。
         """
         import uuid
         import work_pair
+        state = pair_state if pair_state is not None else {"pending": [], "second_retries": 0}
+        if not state.get("stem"):
+            state["stem"] = str(Path(config.DOWNLOAD_DIR) / f"pair_{uuid.uuid4().hex[:12]}")
+        workspace = Path(config.DOWNLOAD_DIR) / ".work-pairs" / Path(state["stem"]).name
+        workspace.mkdir(parents=True, exist_ok=True)
+        excluded = set(dispatch.pop("excluded_accounts", None) or ())
+        excluded.update(item["account"] for item in state.get("pending", []))
+
+        def save():
+            if on_pair_state:
+                on_pair_state(state)
 
         def tagged(index):
             prefix = f"30 秒第 {index}/2 段："
@@ -1697,30 +1734,124 @@ class BrowserPool:
                     on_wait(prefix + note)
             return poll, wait
 
-        poll, wait = tagged(1)
-        first = await self.generate_video(work_pair.first_prompt(prompt), ratio, WORK_DURATION, model,
-                                          on_poll=poll, on_wait=wait,
-                                          reference_image_paths=reference_image_paths, **dispatch)
-        first_path = await self._local_video(first)
-        stem = Path(config.DOWNLOAD_DIR) / f"pair_{uuid.uuid4().hex[:12]}"
-        frame = await asyncio.to_thread(work_pair.last_frame, first_path, f"{stem}_frame.png")
-        poll, wait = tagged(2)
-        try:
-            second = await self.generate_video(work_pair.continue_prompt(prompt), ratio, WORK_DURATION, model,
-                                               on_poll=poll, on_wait=wait, reference_image_paths=[str(frame)],
-                                               **dispatch)
-        except Exception as exc:
-            raise RuntimeError(f"30 秒第 2 段失败（第 1 段已用掉 {first.get('account')} 的 15 秒额度）：{exc}") from exc
+        async def segment(index, paths):
+            state["segment"], state["active"] = index, None
+            if index == 2:
+                state["second_attempts"] = state.get("second_attempts", 0) + 1
+            started = time.time()
+            current = {"segment": index, "submitted_at": started}
+            save()
+            options = dict(dispatch)
+            account_callback = options.pop("on_account_try", None)
+            conversation_callback = options.pop("on_conversation_id", None)
+
+            def tried(account, attempt):
+                current.update(account=account, submitted_at=time.time())
+                if account_callback:
+                    account_callback(account, attempt)
+
+            def acknowledged(account, conv, deadline):
+                current.update(account=account, conversation_id=conv)
+                state["active"] = dict(current)
+                save()
+                if conversation_callback:
+                    conversation_callback(account, conv, deadline)
+
+            poll, wait = tagged(index)
+            try:
+                result = await self.generate_video(
+                    work_pair.first_prompt(prompt) if index == 1 else work_pair.continue_prompt(prompt),
+                    ratio, WORK_DURATION, model, on_poll=poll, on_wait=wait, reference_image_paths=paths,
+                    on_account_try=tried, on_conversation_id=acknowledged,
+                    excluded_accounts=excluded, work_context=True, **options)
+                state["active"] = None
+                save()
+                return result
+            except TimeoutError as exc:
+                if not isinstance(exc, (PreSubmissionUploadError, PreSubmissionParametersError)):
+                    if current.get("account"):
+                        excluded.update([current["account"], *self.same_login(current["account"])])
+                    if current.get("conversation_id"):
+                        current["suspect_at"] = time.time()
+                        state.setdefault("pending", []).append(dict(current))
+                    save()
+                raise
+
+        if not state.get("first"):
+            first = await segment(1, reference_image_paths)
+            first_path = await self._local_video(first)
+            destination = workspace / "first.mp4"
+            if Path(first_path) != destination:
+                Path(first_path).replace(destination)
+            state["first"] = {"account": first.get("account"), "local_path": str(destination),
+                              "conversation_id": first.get("conversation_id")}
+            save()
+        first = state["first"]
+        destination = workspace / "first.mp4"
+        if Path(first["local_path"]) != destination:
+            Path(first["local_path"]).replace(destination)
+            first["local_path"] = str(destination)
+            save()
+        excluded.update([first["account"], *self.same_login(first["account"])])
+        if not state.get("frame") or not Path(state["frame"]).is_file():
+            state["frame"] = str(await asyncio.to_thread(work_pair.last_frame,
+                                                       first["local_path"], workspace / "frame.png"))
+            save()
+        if state.get("second_attempts", 0) and not state.get("pending"):
+            state["second_retries"] = 1
+        while True:
+            try:
+                if state.get("second_attempts", 0) >= 2:
+                    raise RuntimeError("第 2 段已达到最多两次发送尝试，保留原会话等待取回")
+                second = await segment(2, [state["frame"]])
+                break
+            except Exception as exc:
+                retry = (isinstance(exc, TimeoutError)
+                         and not isinstance(exc, (PreSubmissionUploadError, PreSubmissionParametersError))
+                         and state.get("second_retries", 0) < 1)
+                if retry:
+                    state["second_retries"] = state.get("second_retries", 0) + 1
+                    save()
+                    if on_wait:
+                        on_wait("30 秒第 2 段等待超时，保留第 1 段，额外换号重做 1/1；原会话继续后台核对")
+                    continue
+                raise RuntimeError(f"30 秒第 2 段失败（第 1 段已用掉 {first.get('account')} 的 15 秒额度）：{exc}") from exc
+        result = await self.finish_work_pair(state, second, on_poll=on_poll)
+        save()
+        return result
+
+    async def finish_work_pair(self, state: dict, second: dict, *, on_poll=None) -> dict:
+        """正常生成和超时取回都用保留的第一段拼接，交付完整的 30 秒。"""
+        import work_pair
+        first = state.get("first") or {}
+        if not first.get("local_path") or not Path(first["local_path"]).is_file():
+            raise RuntimeError("30 秒任务缺少保留的第 1 段，已取回的 15 秒片段暂不交付")
         second_path = await self._local_video(second)
         if on_poll:
             from browser_feedback import emit
             emit(on_poll, progress="30 秒：两段都已出片，正在拼接")
-        merged = await asyncio.to_thread(work_pair.concat, first_path, second_path, f"{stem}.mp4")
-        for leftover in (frame, first_path, second_path):
-            Path(leftover).unlink(missing_ok=True)
+        merged = await asyncio.to_thread(work_pair.concat, first["local_path"], second_path, state["stem"] + ".mp4")
+        for leftover in (state.get("frame"), first["local_path"], second_path):
+            if leftover:
+                Path(leftover).unlink(missing_ok=True)
+        state["delivered"], state["active"] = True, None
         return {"video_url": "", "local_path": str(merged), "account": second.get("account"),
                 "accounts": [first.get("account"), second.get("account")],
                 "conversation_id": second.get("conversation_id"), "merge_mode": "work_pair"}
+
+    @staticmethod
+    def discard_work_pair(state: dict) -> None:
+        """恢复结束后清理本任务保留的中间片段和末帧。"""
+        first = state.get("first") or {}
+        for raw in (first.get("local_path"), state.get("frame")):
+            if raw:
+                Path(raw).unlink(missing_ok=True)
+        if state.get("stem"):
+            workspace = Path(config.DOWNLOAD_DIR) / ".work-pairs" / Path(state["stem"]).name
+            try:
+                workspace.rmdir()
+            except OSError:
+                pass
 
     async def _local_video(self, result: dict) -> str:
         """直链交付的段落没有落地文件，拼接前先下载到本地。"""
@@ -1815,8 +1946,22 @@ class BrowserPool:
     def claim_recovered(self, account: str, model: str, duration: int | None,
                         result: dict | None = None) -> int:
         """取回成功按正常出片记账（上游已经扣了这个号的额度）。事件循环线程里调用。"""
+        if is_work_request(model, duration):
+            submitted = float((result or {}).get("submitted_at") or time.time())
+            meta = self._meta(account)
+            until = max(submitted + WORK_QUOTA_SECONDS, float(meta["work_blocked_until"] or 0) if meta else 0)
+            self._mark_work_blocked(account, until, WORK_QUOTA_NOTE + "（超时原会话已出片）")
+            return 0
         cost = self._duration_cost(model or "", int(duration or 0))
         return self._claim_for(account, cost, result or {})
+
+    async def fetch_work_conversation_video(self, account: str, conversation_id: str) -> dict:
+        """恢复查询与生成共用全局并发和账号锁，浏览器名额由 worker 管理。"""
+        from video_worker_agent import fetch_work_conversation_video
+        async with self.semaphore:
+            async with self._use_account(account, "recovering"):
+                self._phases[account] = "只读检查超时原会话"
+                return await self._web_playable(await fetch_work_conversation_video(account, conversation_id))
 
     def is_pure_account(self, name: str) -> bool:
         """这个号能不能走纯 API（cookie 来源 + 有 cookie_state.json）。
@@ -1832,7 +1977,7 @@ class BrowserPool:
 
     async def _generate_effective(self, account, prompt, ratio, duration, model, *,
                                   on_conversation_id, on_poll, on_balance,
-                                  reference_image_paths, on_retry=None):
+                                  reference_image_paths, on_retry=None, work_mode=False):
         """cookie 账号走纯 API；失败直接抛出真实原因（不再回退浏览器）。
 
         浏览器 profile 对 cookie 号不可靠（导入的浏览器会话常显示已登出），
@@ -1875,10 +2020,11 @@ class BrowserPool:
             return await self._web_playable(result)
         pure_cookie = (pure_state is not None and self._is_cookie_source(account)
                        and not is_cloak_cookie_account(account))
-        if uses_work_mode(model, duration) and pure_cookie:
+        work_mode = work_mode or uses_work_mode(model, duration)
+        if work_mode and pure_cookie:
             raise PreSubmissionParametersError(f"{account} 是纯 API 号，跑不了工作模式")
-        if uses_work_mode(model, duration):
-            # 2.0 的 15 秒：工作模式，实际扣点未知，先按当天额度用完算
+        if work_mode:
+            # 工作模式使用独立的 7 天额度。
             from video_worker_agent import generate_work_video
             result = await generate_work_video(
                 account, prompt, ratio, on_conversation_id=on_conversation_id, on_poll=on_poll,
@@ -2097,14 +2243,16 @@ class BrowserPool:
         """从 accounts + proxy_store + accounts_meta 重建/刷新共享选号引擎。"""
         now = time.time()
         cfg_list = []
+        duplicates = self._duplicate_owners()
         for name in self.accounts:
+            meta = self._meta(name)
             cfg_list.append(_PoolAccountConfig(
                 id=name,
                 state_file=Path(self.accounts_dir) / name / "state.json",
                 profile_dir=str(Path(self.accounts_dir) / name),
                 proxy=self._proxy_url_for(name),
                 egress_key=self._egress_for(name),
-                enabled=True,
+                enabled=bool(meta["scheduling"] if meta else True) and name not in duplicates,
                 weight=self._meta_weight(name),
             ))
         engine = _PoolEngine(
@@ -2299,7 +2447,8 @@ class BrowserPool:
                              on_account_try=None, max_attempts: int = 3,
                              deadline: float | None = None, on_wait=None,
                              attempt_timeout: float | None = None, on_dispatch=None,
-                             on_attempt_end=None) -> dict:
+                             on_attempt_end=None, on_pair_state=None, pair_state=None,
+                             excluded_accounts: set[str] | None = None, work_context=False) -> dict:
         """挑一个可调度且空闲的号出片；失败自动换号重试（最多 max_attempts 次）。
 
         2.0 的 30 秒（工作模式开着时）交给 generate_work_pair：两段 15 秒各走一遍这里。
@@ -2316,13 +2465,14 @@ class BrowserPool:
         - max_attempts <= 0 表示不限次数：在 deadline（任务总时限）之前一轮轮换号重试，
           到点仍未出片才判失败。
         """
-        if uses_work_pair(model, duration):
+        if uses_work_pair(model, duration) or pair_state and is_work_request(model, duration) and int(duration) == 30:
             return await self.generate_work_pair(
                 prompt, ratio, model, on_conversation_id=on_conversation_id, on_poll=on_poll,
                 on_balance=on_balance, reference_image_paths=reference_image_paths,
                 on_account_try=on_account_try, max_attempts=max_attempts, deadline=deadline,
                 on_wait=on_wait, attempt_timeout=attempt_timeout, on_dispatch=on_dispatch,
-                on_attempt_end=on_attempt_end)
+                on_attempt_end=on_attempt_end, on_pair_state=on_pair_state, pair_state=pair_state,
+                excluded_accounts=excluded_accounts)
         if on_wait:
             on_wait("排队中：等待全局并发名额")
         async with self.semaphore:
@@ -2334,7 +2484,7 @@ class BrowserPool:
             need = start_need(model, duration)      # 派号门槛（2.0 只要还有额度）；记账仍按 cost
             allowed_groups = self._allowed_quota_groups(model, duration)
             # 工作模式有自己的 7 天额度：不看、也不扣每日聊天额度
-            work_job = uses_work_mode(model, duration)
+            work_job = uses_work_mode(model, duration) or work_context and is_work_request(model, duration)
             if work_job:
                 need, allowed_groups = 0, (GROUP_FULL, GROUP_HALF, GROUP_COOLING)
             want_site = sites.site_for_model(model)
@@ -2409,7 +2559,7 @@ class BrowserPool:
                 busy_names: list[str] = []  # 能接单、但正被别的任务占着出片的号
                 candidates = self._ordered_candidates(allowed_groups)
                 for a in (self._work_order(candidates) if work_job else candidates):
-                    if a["name"] in tried:
+                    if a["name"] in tried or a["name"] in (excluded_accounts or ()):
                         continue
                     # 站点要对上：dola 模型只派 dola 号，豆包模型只派豆包号
                     if a.get("site", sites.DOLA) != want_site:
@@ -2469,7 +2619,8 @@ class BrowserPool:
                         busy_names.append(account)
                         continue
                     async with self._use_account(account, "generating"):
-                        if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
+                        latest = next(x for x in self.list_accounts() if x['name'] == account)
+                        if not (self._work_ready(latest) if work_job else self._schedulable(latest)):
                             continue  # 等待期间状态变化
                         if not dispatched:
                             dispatched = True
@@ -2522,7 +2673,7 @@ class BrowserPool:
                             # cancelling to_thread would not stop their submission.
                             # 工作模式要排队等名额、开浏览器，有自己的时限，不套提交准备超时
                             browser_preparation = (not self.is_pure_account(account) and want_site == sites.DOLA
-                                                   and not uses_work_mode(model, duration))
+                                                   and not work_job)
                             preparation = asyncio.timeout(config.PREPARE_TIMEOUT if browser_preparation else None)
                             def acknowledged(*args):
                                 if browser_preparation and not preparation.expired():
@@ -2542,7 +2693,7 @@ class BrowserPool:
                                         on_conversation_id=acknowledged, on_poll=on_poll,
                                         on_balance=on_balance,
                                         reference_image_paths=reference_image_paths,
-                                        on_retry=restarted)
+                                        on_retry=restarted, work_mode=work_job)
                             except TimeoutError:
                                 if preparation.expired():
                                     raise TimeoutError(

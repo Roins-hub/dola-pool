@@ -53,6 +53,16 @@ def uses_work_mode(model: str, duration) -> bool:
     return ("2.0" in text or "2-0" in text) and "doubao" not in text
 
 
+def is_work_request(model: str, duration) -> bool:
+    """已提交任务的类型不随面板开关改变，供恢复和记账使用。"""
+    try:
+        seconds = int(duration or 0)
+    except (TypeError, ValueError):
+        return False
+    text = (model or "").lower().replace("_", "-")
+    return seconds in (15, 30) and ("2.0" in text or "2-0" in text) and "doubao" not in text
+
+
 def uses_work_pair(model: str, duration) -> bool:
     """这一单是否是两段工作模式拼成的 30 秒：开关打开、Dola 的 2.0、30 秒。"""
     try:

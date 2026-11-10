@@ -751,6 +751,11 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
     acquired = False
     reference_root = None
     try:
+        pair_context = _pair_state(store.get(task_id) or {})
+        if pair_context.get("pending") or pair_context.get("active"):
+            store.update(task_id, status="failed", error="服务中断后正在取回工作模式原会话", finished_at=time.time())
+            _maybe_start_recovery(task_id, TimeoutError("工作模式等待超时"))
+            return
         # 重新受理：排队时钟（updated_at）与上一轮的报错一起清零。看门狗按「最后一次状态
         # 变化」算排队时长，不清零的话刚被重启捞回来的任务会带着旧的 updated_at 立刻被判
         # 「排队超时」——把刚修好的恢复路径又堵死。
@@ -775,6 +780,12 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                          conversation_id=conversation_id, deadline_at=deadline_at,
                          queue_note="已取得上游会话，正在查询视频结果",
                          last_poll_at=time.time())
+            if current_attempt is not None:
+                current_attempt["conversation_id"] = conversation_id
+                save_history()
+
+        def on_pair_state(state):
+            store.update(task_id, work_pair_state=json.dumps(state, ensure_ascii=False))
 
         # 每个号的 dola 回执原话（按尝试顺序），面板把当前号显示在前、其它号折叠
         note_state: dict = {"account": None, "notes": []}
@@ -844,7 +855,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             store.update(task_id, **fields)
 
         reference_root, reference_paths = await download_reference_images(
-            reference_images or [], task_id)
+            [] if pair_context.get("first") else reference_images or [], task_id)
         if reference_paths:
             # 趁原图还在（终态会被清理）先存一份缩略图，供面板回看
             thumbs = await asyncio.to_thread(
@@ -881,7 +892,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                     reference_image_paths=reference_paths,
                     on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
                     attempt_timeout=config.TASK_DEADLINE, on_dispatch=on_dispatch,
-                    on_attempt_end=on_attempt_end,
+                    on_attempt_end=on_attempt_end, on_pair_state=on_pair_state, pair_state=pair_context or None,
                     on_wait=lambda note: store.set_queue_note(task_id, note))
         except TimeoutError:
             # TimeoutError is also raised by upload/navigation/polling. Preserve that
@@ -899,6 +910,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                      queue_note="",
                      account=result.get("account"), last_poll_at=time.time(),
                      finished_at=time.time(), **fields)
+        if _pair_state(store.get(task_id) or {}).get("pending"):
+            _maybe_start_recovery(task_id, TimeoutError("工作模式分段原会话待核对"))
         # 出片目录超限就从旧到新删，避免磁盘被撑满（同样是同步目录遍历）
         await asyncio.to_thread(_prune_downloads)
     except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
@@ -938,6 +951,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         if row and row.get("status") in ("completed", "failed"):
             cleanup_local_references(reference_images or [])
             store.update(task_id, reference_images="[]")
+            if row.get("work_pair_state") and row.get("recover_state") != "watching":
+                pool.discard_work_pair(_pair_state(row))
         if acquired:
             await key_limiter.release(api_key_hash)
 
@@ -955,13 +970,30 @@ def _is_wait_timeout(exc: BaseException) -> bool:
 
 
 def _maybe_start_recovery(task_id: str, exc: BaseException) -> bool:
-    """任务刚判失败：是超时、且有会话、且是纯 API 号 → 进入后台自动取回。"""
-    if config.RECOVER_TIMEOUT_SECONDS <= 0 or not _is_wait_timeout(exc):
-        return False
+    """超时原会话继续取回；工作模式分段重试留下的会话也继续核对额度。"""
     row = store.get(task_id) or {}
-    account, conv = row.get("account"), row.get("conversation_id")
-    if not account or not conv or not pool.is_pure_account(account):
+    work = work_reply.is_work_request(row.get("model"), row.get("duration"))
+    pair = _pair_state(row)
+    if config.RECOVER_TIMEOUT_SECONDS <= 0 or not (_is_wait_timeout(exc) or work and pair.get("pending")):
         return False
+    account, conv = row.get("account"), row.get("conversation_id")
+    if work and (pair.get("pending") or pair.get("active")) and (not account or not conv):
+        target = pair.get("active") or pair["pending"][0]
+        account, conv = target["account"], target["conversation_id"]
+        if row.get("status") != "completed":
+            store.update(task_id, account=account, conversation_id=conv)
+    if not account or not conv or not (work or pool.is_pure_account(account)):
+        return False
+    if work and int(row.get("duration") or 0) == 30:
+        pending = pair.setdefault("pending", [])
+        target = pair.get("active")
+        if not target and not pending:
+            target = {"account": account, "conversation_id": conv, "segment": pair.get("segment", 0),
+                      "submitted_at": row.get("attempt_started_at") or row.get("started_at")}
+        if target and not any(item.get("conversation_id") == target["conversation_id"]
+                   and item.get("account") == target["account"] for item in pending):
+            pending.append({**target, "suspect_at": time.time()})
+        store.update(task_id, work_pair_state=json.dumps(pair, ensure_ascii=False))
     until = time.time() + config.RECOVER_TIMEOUT_SECONDS
     store.update(task_id, recover_state="watching", recover_until=until)
     print(f"[recover] {task_id}（{account}）等待超时，后台继续盯会话 {conv}，"
@@ -976,6 +1008,10 @@ async def _recover_loop(task_id: str) -> None:
         return
     RECOVERING.add(task_id)
     try:
+        initial = store.get(task_id) or {}
+        if work_reply.is_work_request(initial.get("model"), initial.get("duration")):
+            await _recover_work_loop(task_id)
+            return
         while True:
             row = store.get(task_id)
             if not row or row.get("recover_state") != "watching":
@@ -1014,6 +1050,179 @@ async def _recover_loop(task_id: str) -> None:
             await asyncio.sleep(max(1, config.RECOVER_INTERVAL_SECONDS))
     finally:
         RECOVERING.discard(task_id)
+
+
+def _pair_state(row: dict) -> dict:
+    try:
+        value = json.loads(row.get("work_pair_state") or "{}")
+        return value if isinstance(value, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _record_work_recovery(task_id: str, target: dict, *, final_error: str | None = None) -> None:
+    row = store.get(task_id) or {}
+    try:
+        history = json.loads(row.get("attempt_history") or "[]")
+    except (TypeError, ValueError):
+        history = []
+    item = next((item for item in reversed(history) if item.get("account") == target["account"]
+                 and item.get("conversation_id") in (None, target["conversation_id"])), None)
+    if item is None:
+        item = {"account": target["account"], "conversation_id": target["conversation_id"],
+                "started_at": target.get("submitted_at") or row.get("started_at") or time.time()}
+        history.append(item)
+    if item.get("error"):
+        item["timeout_error"] = item["error"]
+    item.update(outcome="completed" if final_error is None else "failed",
+                error=redact_error(final_error) if final_error is not None else "",
+                recovered=final_error is None, recovery_final=True, finished_at=time.time())
+    store.update(task_id, attempt_history=json.dumps(history, ensure_ascii=False))
+
+
+async def _continue_recovered_pair(task_id: str, state: dict, result: dict) -> dict:
+    """第一段迟到后继续原 30 秒订单，已完成的第一段不重做。"""
+    row = store.get(task_id)
+    state["first"] = {"account": result["account"], "local_path": await pool._local_video(result),
+                      "conversation_id": result.get("conversation_id")}
+    state["continuation_started"] = True
+
+    def saved(value):
+        store.update(task_id, work_pair_state=json.dumps(value, ensure_ascii=False))
+
+    def poll(now, **fields):
+        store.update(task_id, last_poll_at=now)
+        if fields.get("progress"):
+            store.set_queue_note(task_id, fields["progress"])
+
+    def tried(account, attempt):
+        current = store.get(task_id)
+        history = json.loads(current.get("attempt_history") or "[]")
+        history.append({"account": account, "started_at": time.time(), "outcome": "running", "stages": []})
+        store.update(task_id, account=account, conversation_id=None, attempt_started_at=time.time(),
+                     attempt_history=json.dumps(history, ensure_ascii=False))
+
+    def acknowledged(account, conv, deadline):
+        current = store.get(task_id)
+        history = json.loads(current.get("attempt_history") or "[]")
+        if history:
+            history[-1]["conversation_id"] = conv
+        store.update(task_id, account=account, conversation_id=conv, deadline_at=deadline,
+                     attempt_history=json.dumps(history, ensure_ascii=False))
+
+    def ended(account, attempt, started, error):
+        current = store.get(task_id)
+        history = json.loads(current.get("attempt_history") or "[]")
+        if history:
+            history[-1].update(outcome="failed" if error else "completed", error=redact_error(error),
+                               finished_at=time.time())
+        store.update(task_id, attempt_history=json.dumps(history, ensure_ascii=False))
+
+    saved(state)
+    await key_limiter.acquire(row.get("api_key_hash"), int(row.get("client_concurrency_limit") or 0))
+    try:
+        return await pool.generate_work_pair(
+            dispatch_prompt(row["prompt"], row.get("prompt_supplement") or "", row.get("ratio")),
+            None if row.get("ratio") == "default" else row.get("ratio"), row["model"],
+            pair_state=state, on_pair_state=saved, on_poll=poll,
+            on_wait=lambda note: store.set_queue_note(task_id, note),
+            on_account_try=tried, on_conversation_id=acknowledged, on_attempt_end=ended,
+            max_attempts=VIDEO_MAX_ATTEMPTS, attempt_timeout=config.TASK_DEADLINE)
+    finally:
+        await key_limiter.release(row.get("api_key_hash"))
+
+
+async def _recover_work_loop(task_id: str) -> None:
+    """工作模式只读轮询；30 秒保留分段上下文，已交付后的迟到片只核对额度。"""
+    await asyncio.sleep(max(0, config.RECOVER_INTERVAL_SECONDS))
+    while True:
+        row = store.get(task_id)
+        if not row or row.get("recover_state") != "watching":
+            return
+        pair = int(row.get("duration") or 0) == 30
+        state = _pair_state(row)
+        if not pair and row.get("status") == "completed":
+            store.update(task_id, recover_state="recovered" if row.get("recovered_at") else "checked")
+            return
+        if time.time() >= float(row.get("recover_until") or 0):
+            store.update(task_id, recover_state="recovered" if row.get("recovered_at") else
+                         "checked" if row.get("status") == "completed" else "gave_up")
+            pool.discard_work_pair(state)
+            return
+        targets = state.get("pending", []) if pair else [{
+            "account": row["account"], "conversation_id": row["conversation_id"],
+            "submitted_at": row.get("attempt_started_at") or row.get("started_at") or row.get("created_at"),
+            "suspect_at": float(row["recover_until"]) - config.RECOVER_TIMEOUT_SECONDS}]
+        if pair and not targets and state.get("active") and row.get("status") != "completed":
+            targets = state["pending"] = [dict(state["active"], suspect_at=time.time())]
+        for target in list(targets):
+            if time.time() >= float(row["recover_until"]):
+                break
+            account, conv = target["account"], target["conversation_id"]
+            if pool.egress_throttle_remaining(account) > 0:
+                continue
+            try:
+                async with asyncio.timeout(max(.1, float(row["recover_until"]) - time.time())):
+                    res = target.get("result") or await pool.fetch_work_conversation_video(account, conv)
+                if res.get("local_path") or res.get("video_url"):
+                    res.update(account=account, conversation_id=conv, submitted_at=target.get("submitted_at"))
+                    if not target.get("quota_claimed"):
+                        pool.claim_recovered(account, row.get("model") or "", row.get("duration"), res)
+                        _record_work_recovery(task_id, target)
+                        target["quota_claimed"] = True
+                    if row.get("status") == "completed":
+                        if res.get("local_path"):
+                            Path(res["local_path"]).unlink(missing_ok=True)
+                        targets.remove(target)
+                        continue
+                    if pair:
+                        target["result"] = {key: res.get(key) for key in ("account", "conversation_id", "local_path")}
+                        if not target["result"]["local_path"]:
+                            target["result"]["local_path"] = await pool._local_video(res)
+                        res["local_path"] = target["result"]["local_path"]
+                        store.update(task_id, work_pair_state=json.dumps(state, ensure_ascii=False))
+                    if pair:
+                        if target.get("segment") == 1:
+                            targets.remove(target)
+                            res = await _continue_recovered_pair(task_id, state, res)
+                        elif target.get("segment") == 2:
+                            res = await pool.finish_work_pair(state, res)
+                            targets.remove(target)
+                        else:
+                            targets.remove(target)
+                            store.update(task_id, error="已找到迟到片段并记录额度；旧 30 秒任务缺少分段资料，无法拼接交付")
+                            continue
+                    fields = await _completion_fields(task_id, res, row.get("duration"), row.get("ratio"))
+                    store.update(task_id, status="completed", account=res.get("account"), error="", queue_note="",
+                                 failure_code=None, recover_state="watching" if pair else "recovered",
+                                 recovered_at=time.time(), finished_at=time.time(), **fields)
+                    print(f"[recover] {task_id} 工作模式已自动取回", flush=True)
+                    if not pair:
+                        await asyncio.to_thread(_prune_downloads)
+                        return
+                    row = store.get(task_id)
+                elif res.get("final"):
+                    if res.get("work_quota_blocked"):
+                        pool._mark_work_blocked(account, res.get("work_limit_until"), res.get("detail") or "")
+                    pool.clear_work_suspect(account, before=target.get("suspect_at"))
+                    _record_work_recovery(task_id, target, final_error=res.get("detail") or "原会话已明确结束，未生成视频")
+                    if pair:
+                        targets.remove(target)
+                    else:
+                        store.update(task_id, recover_state="gave_up", error=failure_text.summarize(
+                            (row.get("error") or "") + "；原会话已明确结束：" + (res.get("detail") or "")))
+                        return
+            except Exception as exc:
+                print(f"[recover] {task_id} 工作模式查询或交付稍后重试：{redact_error(exc)[:160]}", flush=True)
+        if pair:
+            store.update(task_id, work_pair_state=json.dumps(state, ensure_ascii=False))
+            if not targets:
+                current = store.get(task_id)
+                store.update(task_id, recover_state="recovered" if current.get("recovered_at") else
+                             "checked" if current.get("status") == "completed" else "gave_up")
+                pool.discard_work_pair(state)
+                return
+        await asyncio.sleep(max(1, config.RECOVER_INTERVAL_SECONDS))
 
 
 RESUMING: set[str] = set()
@@ -1085,6 +1294,16 @@ async def _resume_pure_conversation(row: dict) -> None:
 async def _resume_task(row: dict):
     task_id = row["id"]
     account = row.get("account")
+    pair = _pair_state(row)
+    if pair.get("first") and not pair.get("pending") and not pair.get("active"):
+        await _run_task(task_id, row["model"], row["prompt"],
+                        None if row.get("ratio") == "default" else row.get("ratio"), row.get("duration"),
+                        _task_reference_images(row.get("reference_images")), _task_client(row))
+        return
+    if account and row.get("conversation_id") and work_reply.is_work_request(row.get("model"), row.get("duration")):
+        store.update(task_id, status="failed", error="服务中断后正在取回工作模式原会话", finished_at=time.time())
+        _maybe_start_recovery(task_id, TimeoutError("工作模式等待超时"))
+        return
     # cookie 号（纯 API）重启后不该去调浏览器 resume —— 本机没有可用 Chromium，
     # 只会报 `Connection closed while reading from the driver` 把任务判死。
     # 已经提交过上游（有会话）的接着等原会话；还没提交的才按原参数重新受理

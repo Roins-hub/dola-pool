@@ -820,3 +820,11 @@ vi /www/wwwroot/stable-dola-pool/cookies.txt   # 一行一个
 通过 `GET /api/admin/jobs` 读取进度。需要操作时，任务的 `challenge` 包含 `id`、`kind`（`code` 或 `continue`）、`expires_at`。调用 `POST /api/admin/jobs/{name}/apple-answer`，传 `challenge_id`；`code` 类型同时传六位数字 `code`，`continue` 类型确认 Apple 当前的邮箱共享设置。过期、重复或不匹配的回答返回 409。
 
 `POST /api/admin/jobs/{name}/apple-cancel` 取消登录并等待浏览器关闭、临时目录清理。上述接口均要求 `X-Admin-Key` 管理员会话。总等待时间为 10 分钟；失败后重新填写密码登录，现有 Google 凭据重试接口不适用于 Apple 账号。
+
+### 工作模式超时恢复
+
+Dola 2.0 的 15 秒和两段拼接的 30 秒任务支持浏览器只读取回。`recover_state` 为 `watching` 时仍在检查原会话，迟到出片后任务转为 `completed`，`recover_state` 为 `recovered`，并记录 `recovered_at`。明确结束或观察到期时为 `gave_up`；已交付任务完成迟到分段额度核对后为 `checked`。`DOLA_RECOVER_INTERVAL_SECONDS` 默认 120，`DOLA_RECOVER_TIMEOUT_SECONDS` 默认 10800，后者设为 0 可关闭后台取回。
+
+工作模式 30 秒任务的第二段发送后超时最多额外换号一次，第一段不会重做。两次第二段会话都可能实际使用各自账号的 7 天额度。迟到片段取回后先完成拼接再交付，已交付视频的链接保持不变。第一段迟到时，继续完成原订单所需的第二段。客户收到超时失败且 `recover_state=watching` 时，可继续查询该任务的最终结果。
+
+账号列表新增 `duplicate_of`：同站点、同邮箱的历史重复项返回自动调度所使用的账号名；空字符串表示该记录可独立参与调度。此字段只影响自动派单，管理面板的验证、导出和删除仍可操作原记录。

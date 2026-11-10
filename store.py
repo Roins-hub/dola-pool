@@ -89,6 +89,7 @@ class TaskStore:
                 ("attempt", "INTEGER DEFAULT 0"),
                 ("attempted_accounts", "TEXT"),
                 ("attempt_history", "TEXT"),
+                ("work_pair_state", "TEXT DEFAULT ''"),
                 # 超时任务自动取回：watching（后台盯着）/ recovered（已取回）/ gave_up（放弃）
                 ("recover_state", "TEXT DEFAULT ''"),
                 ("recover_until", "REAL"),
