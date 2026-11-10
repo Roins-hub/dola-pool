@@ -213,6 +213,58 @@ def test_work_timeout_recovers_with_browser_even_when_work_switch_is_off(tmp_pat
     assert dict(server.store.work_videos_since(0))["acc1"] > 0
 
 
+def test_account_test_persists_conversation_and_recovers_without_resubmission(tmp_path, monkeypatch):
+    server, pool = work_server(tmp_path, monkeypatch, [
+        {"local_path": str(tmp_path / "dl" / "late.mp4"), "status": "succeeded"}])
+    monkeypatch.setattr(server, "TEST_JOBS", {"test_late": {}})
+    monkeypatch.setattr(server, "_admin_auth", lambda key: "owner")
+    submitted = []
+
+    async def generate(account, *args, on_conversation_id, on_poll):
+        submitted.append(account)
+        on_poll(time.time(), progress="工作模式：发送请求")
+        on_conversation_id(account, "original-conv", time.time() + 60)
+        return {"ok": False, "account": account, "error": "生成超时", "recoverable": True}
+    monkeypatch.setattr(pool, "test_generate", generate, raising=False)
+
+    async def check():
+        await server._run_test_generate("test_late", "acc1", "猫", "16:9", 15, "seedance-2.0")
+        assert server.store.get("test_late")["conversation_id"] == "original-conv"
+        for _ in range(30):
+            await asyncio.sleep(.01)
+            if server.store.get("test_late")["status"] == "completed":
+                break
+        job = await server.admin_test_gen_status("test_late", None)
+        assert job["status"] == "done" and job["result"]["recovered"]
+        assert not job["error"]
+    _run(check())
+    assert submitted == ["acc1"]
+    history = json.loads(server.store.get("test_late")["attempt_history"])
+    assert history[0]["conversation_id"] == "original-conv"
+    assert history[0]["stages"][0]["stage"] == "工作模式：发送请求"
+
+
+def test_account_test_pool_passes_original_conversation_and_marks_only_ambiguous_timeouts(tmp_path, monkeypatch):
+    _, pool = _work_pool(tmp_path, monkeypatch, ["acc1"])
+    from generation_errors import PreSubmissionParametersError
+    conversations = []
+    error = TimeoutError("发送后等待超时")
+
+    async def generate(account, *args, **kwargs):
+        kwargs["on_conversation_id"](account, "conv1", time.time() + 60)
+        raise error
+    monkeypatch.setattr(pool, "_generate_effective", generate)
+    result = _run(pool.test_generate("acc1", "猫", "16:9", 15, "seedance-2.0",
+                                   on_conversation_id=lambda *args: conversations.append(args)))
+    assert result["recoverable"] and conversations[0][1] == "conv1"
+    assert "acc1" in pool._work_suspect
+    pool.clear_work_suspect("acc1")
+    error = PreSubmissionParametersError("HTTP 403")
+    result = _run(pool.test_generate("acc1", "猫", "16:9", 15, "seedance-2.0",
+                                   on_conversation_id=lambda *args: None))
+    assert not result.get("recoverable") and "acc1" not in pool._work_suspect
+
+
 def test_final_work_failure_clears_suspect_and_survives_restart(tmp_path, monkeypatch):
     server, pool = work_server(tmp_path, monkeypatch, [
         {"local_path": "", "final": True, "status": "failed", "detail": "内容被拒绝，未生成"}])

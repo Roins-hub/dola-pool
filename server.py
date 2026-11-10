@@ -95,7 +95,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.7.11"
+APP_VERSION = "2.7.12"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -3440,21 +3440,43 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
     try:
         # 测试生成同样消耗账号额度，因此写入正式任务库，便于在任务列表追踪结果。
         store.create(task_id, model, prompt, ratio, duration, account=name)
-        store.update(task_id, status="processing", started_at=time.time())
+        started = time.time()
+        attempt = {"account": name, "attempt": 1, "started_at": started,
+                   "stage": "准备生成", "outcome": "running", "stages": []}
+        def save_attempt():
+            store.update(task_id, attempt_history=json.dumps([attempt], ensure_ascii=False))
+        store.update(task_id, status="processing", started_at=started,
+                     attempt_started_at=started, attempt=1,
+                     attempted_accounts=json.dumps([name]))
+        save_attempt()
+        def on_conversation_id(account, conversation_id, deadline_at):
+            attempt["conversation_id"] = conversation_id
+            save_attempt()
+            store.update(task_id, conversation_id=conversation_id, deadline_at=deadline_at,
+                         queue_note="已取得上游会话，正在查询视频结果", last_poll_at=time.time())
         def on_poll(now, note=None, wait_seconds=None, progress=None):
             fields = {"last_poll_at": now}
             if progress:
                 store.set_queue_note(task_id, progress)
+                if attempt["stage"] != progress:
+                    attempt["stage"] = redact_error(progress)[:240]
+                    attempt["stages"].append({"at": now, "stage": attempt["stage"]})
+                    attempt["stages"] = attempt["stages"][-12:]
+                    save_attempt()
             if note:
                 fields["upstream_note"] = note
             if wait_seconds:
                 fields["upstream_wait"] = int(wait_seconds)
             store.update(task_id, **fields)
 
-        result = await pool.test_generate(name, prompt, ratio, duration, model, on_poll=on_poll)
+        result = await pool.test_generate(name, prompt, ratio, duration, model, on_poll=on_poll,
+                                          on_conversation_id=on_conversation_id)
         TEST_JOBS[task_id]["result"] = result
         TEST_JOBS[task_id]["status"] = "done"
         err = result.get("error", "") if not result.get("ok") else ""
+        attempt.update(outcome="completed" if result.get("ok") else "failed",
+                       error=redact_error(err), finished_at=time.time())
+        save_attempt()
         TEST_JOBS[task_id]["error"] = err
         if result.get("ok"):
             # 下载交付也要补时长/分辨率/码率（以前只存地址，测试任务的这几列一直是空的）
@@ -3470,6 +3492,8 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
             status = "风控" if _is_risk_error(err) else "failed"
             store.update(task_id, status=status, error=failure_text.summarize(err),
                          finished_at=time.time())
+            if result.get("recoverable"):
+                _maybe_start_recovery(task_id, TimeoutError(err))
     except Exception as exc:
         TEST_JOBS[task_id]["status"] = "failed"
         TEST_JOBS[task_id]["error"] = failure_text.summarize(str(exc), limit=600)
@@ -3493,6 +3517,11 @@ async def admin_test_gen_status(task_id: str,
     job = TEST_JOBS.get(task_id)
     if not job:
         raise HTTPException(404, "test task not found")
+    row = store.get(task_id) or {}
+    if row.get("recover_state") == "recovered" and row.get("status") == "completed":
+        job.update(status="done", error="", result={"ok": True, "account": row.get("account"),
+                   "conversation_id": row.get("conversation_id"), "video_url": row.get("video_url"),
+                   "recovered": True})
     return job
 
 

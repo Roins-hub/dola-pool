@@ -2102,7 +2102,7 @@ class BrowserPool:
 
     async def test_generate(self, account: str, prompt: str, ratio: str | None = None,
                             duration: int = 10, model: str = "seedance-2.0-fast",
-                            on_poll=None) -> dict:
+                            on_poll=None, on_conversation_id=None) -> dict:
         """账号级测试出片：强制用指定账号生成一条，返回成功/失败与成品 URL。
 
         不经过号池选号调度（跳过 _schedulable / 每日上限等），只验证该号本身能否出片。
@@ -2124,7 +2124,7 @@ class BrowserPool:
             try:
                 result = await self._generate_effective(
                     account, prompt, ratio, duration, model,
-                    on_conversation_id=None, on_poll=on_poll, on_balance=on_balance,
+                    on_conversation_id=on_conversation_id, on_poll=on_poll, on_balance=on_balance,
                     reference_image_paths=[],
                 )
                 local = result.get("local_path")
@@ -2146,11 +2146,14 @@ class BrowserPool:
                     "account": account,
                     "local_path": str(local),
                     "video_url": f"{config.PUBLIC_BASE}/videos/{Path(local).name}",
+                    "conversation_id": result.get("conversation_id"),
                 }
             except (PreSubmissionUploadError, PreSubmissionParametersError) as exc:
                 return {"ok": False, "account": account, "error": str(exc)}   # 没发出去，不是超时
             except TimeoutError as exc:
-                return {"ok": False, "account": account, "error": f"生成超时: {exc}"}
+                if uses_work_mode(model, duration):
+                    self.note_work_suspect(account)
+                return {"ok": False, "account": account, "error": f"生成超时: {exc}", "recoverable": True}
             except ShortClipError as exc:
                 # 只给了短视频（例如 30 秒只回 15 秒）：不拼接、也不把这个号标成失败。
                 return {"ok": False, "account": account, "error": str(exc)[:300]}

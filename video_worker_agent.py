@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 from patchright.async_api import async_playwright
 
-from account_transport import http_proxy
+from account_transport import http_proxy, redact_error
 import config
 import dola_responder
 import failure_text
@@ -210,6 +210,7 @@ class _WorkSession:
         self.page_query = ""
         self.upload_actions: list[str] = []
         self.send_error = ""
+        self.send_response_error = None
         self.url_before = ""
         self.conversation_id = ""
         self.ask_rounds = 0
@@ -240,6 +241,45 @@ class _WorkSession:
                 self.upload_error = UploadRouteError(host, short_error(request.failure or "连接失败"),
                                                      stage="工作模式参考图")
         self.page.on("requestfailed", on_failed)
+        self.page.on("response", self.read_send_response)
+
+    async def read_send_response(self, response):
+        """提交被 HTTP 或 JSON 明确拒绝时立即报告，流式成功响应交给原会话轮询。"""
+        if not urlsplit(response.url).path.endswith("/chat/completion"):
+            return
+        status = response.status
+        if status >= 500:
+            self.send_response_error = TimeoutError(
+                f"{self.account} 工作模式提交返回 HTTP {status}，结果待核对，不换号重提")
+            return
+        if status == 401:
+            self.send_response_error = LoginExpiredError(
+                f"{self.account} 工作模式提交被拒绝（HTTP 401），请重新登录")
+        elif status == 429:
+            self.send_response_error = RiskControlError(
+                f"{self.account} 工作模式提交被限流（HTTP 429），请稍后重试")
+        elif 400 <= status < 500:
+            self.send_response_error = PreSubmissionParametersError(
+                f"{self.account} 工作模式提交被拒绝（HTTP {status}），未建立会话")
+        if "json" not in response.headers.get("content-type", "").lower():
+            return
+        try:
+            data = await response.json()
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        code = data.get("code")
+        if isinstance(code, bool) or not isinstance(code, (int, str)) or not re.fullmatch(r"\d{1,12}", str(code)):
+            return
+        code = int(code)
+        if code in (0, 2000):
+            return
+        message = short_error(redact_error(data.get("msg") or data.get("message") or "上游拒绝了提交"))
+        detail = f"{self.account} 工作模式提交被拒绝（code={code}）：{message}"
+        self.send_response_error = (RiskControlError(detail) if code == 710022002 else
+                                    failure_from_reply(self.account, message, ran_tools=False) or
+                                    PreSubmissionParametersError(detail))
 
     def rejected(self) -> bool:
         return bool(self.logouts)
@@ -419,6 +459,8 @@ class _WorkSession:
         return False
 
     def raise_if_send_failed(self):
+        if self.send_response_error:
+            raise self.send_response_error
         if self.send_error:
             # 请求没到 Dola（多半是代理断了）：没有会话，换号不会重复出片
             raise PreSubmissionParametersError(f"{self.account} 工作模式请求没连上：{self.send_error}")
