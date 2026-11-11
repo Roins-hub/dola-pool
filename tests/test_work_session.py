@@ -337,17 +337,25 @@ def test_queue_note_appears_at_once_when_every_slot_is_busy(monkeypatch):
 
 class SkillPage(Page):
     """菜单只有输入名字筛选后才露出 Creative video。"""
-    def __init__(self):
+    def __init__(self, label="Creative video", *, selection_sticks=True):
         super().__init__([])
         self.keys = ""
+        self.label, self.selected, self.selection_sticks = label, "", selection_sticks
 
     def get_by_text(self, pattern):
         page, target = self, Target()
 
         async def count():                # 真实 locator 每次重新查询
-            return 1 if "Creative" in page.keys else 0
+            return 1 if ("Creative" in page.keys or page.label in page.keys) and pattern.fullmatch(page.label) else 0
+        async def click(**kwargs):
+            page.clicked.append(page.label)
+            page.selected = page.label if page.selection_sticks else ""
         target.count = count
+        target.click = click
         return target
+
+    async def evaluate(self, script, args):
+        return self.selected if 'node-mention' in script else self.keys
 
     @property
     def keyboard(self):
@@ -361,14 +369,35 @@ class SkillPage(Page):
         self.keys += text
 
     async def press(self, key):
-        pass
+        if key == "Backspace":
+            self.keys = ""
 
 
-def test_skill_is_found_by_filtering_the_menu(monkeypatch):
-    page = SkillPage()
+@pytest.mark.parametrize("label", ["Creative video", "Creative Videos", "Creative Video", "creative videos",
+                                    "Creative Videos (New)", "Creative-video generator", "New Creative Videos v2",
+                                    "创意视频", "クリエイティブ動画", "クリエイティブビデオ"])
+def test_skill_is_found_by_filtering_the_menu(monkeypatch, label):
+    page = SkillPage(label)
     _, item = session(monkeypatch, page)
     _run(item.choose_skill())
     assert page.keys == "/Creative"
+    assert page.selected == label
+
+
+def test_unselected_skill_text_does_not_count_as_an_inserted_chip(monkeypatch):
+    page = SkillPage("Creative Videos", selection_sticks=False)
+    agent, item = session(monkeypatch, page)
+    with pytest.raises(agent.PreSubmissionParametersError, match="没有进入输入框"):
+        _run(item.choose_skill())
+    assert page.clicked == ["Creative Videos"] * 3
+
+
+def test_similarly_named_skill_is_not_chosen(monkeypatch):
+    page = SkillPage("Creative video analysis")
+    agent, item = session(monkeypatch, page)
+    with pytest.raises(agent.PreSubmissionParametersError, match="技能列表"):
+        _run(item.choose_skill())
+    assert page.clicked == []
 
 
 class SendPage(Page):
@@ -405,6 +434,8 @@ class SendPage(Page):
             self.go_out()
 
     async def evaluate(self, script, args):
+        if 'node-mention' in script:
+            return "Creative video" if self.text.startswith("Creative video ") else ""
         return self.text
 
     def locator(self, selector):

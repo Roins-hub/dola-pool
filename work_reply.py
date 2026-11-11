@@ -106,6 +106,25 @@ def session_cookies(cookies: list[dict]) -> list[dict]:
     return keep
 
 
+def video_skill_labels(data) -> list[str]:
+    """用稳定技能名读取当前显示名称，界面改名后仍定位同一视频技能。"""
+    labels = []
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("name") == "dola-creative-video" or node.get("skill_name") == "dola-creative-video":
+                label = node.get("display_name")
+                if isinstance(label, str) and label.strip():
+                    labels.append(label.strip())
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+    walk(data)
+    return list(dict.fromkeys(labels))
+
+
 def chain_messages(chain) -> list[dict]:
     found = {}
 

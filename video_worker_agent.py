@@ -43,11 +43,11 @@ from video_worker_ui import (
 from work_reply import (
     WORK_DURATION, WORK_LIMIT_RE, ask_summary, asks_to_confirm, build_prompt, chain_messages, choose_options,
     generation_started, pending_ask, recent_conversations, reply_finished, reply_text, session_cookies, tools_ran,
-    upload_wait_seconds, uploads_committed, video_models, work_limit_until,
+    upload_wait_seconds, uploads_committed, video_models, video_skill_labels, work_limit_until,
 )
 
-SKILL_RE = re.compile(r"^(Creative video|创意视频|クリエイティブ動画|クリエイティブビデオ)$")
-SKILL_CHIP_RE = re.compile(r"Creative video|创意视频|クリエイティブ動画|クリエイティブビデオ")
+SKILL_RE = re.compile(r"^(?!.*(?:analysis|analy[sz]|分析))[^\r\n]*"
+                      r"(?:\bcreative[\s_-]*videos?\b|创意视频|クリエイティブ動画|クリエイティブビデオ)[^\r\n]*$", re.I)
 WORK_TAB_RE = re.compile(r"^(ワーク|工作|Work)$")
 UPLOAD_ITEM_RE = re.compile(r"ファイルまたは画像|上传文件|Upload file", re.I)
 COMPOSER = 'textarea, [contenteditable="true"]'
@@ -79,6 +79,11 @@ THROTTLE_NOTE = "710022002 工作模式请求被 dola 拒绝，页面随后要�
 COMPOSER_TEXT_JS = r"""(selector) => {
   const box = document.querySelector(selector);
   return box ? (box.value || box.innerText || '') : '';
+}"""
+
+SELECTED_SKILLS_JS = r"""(selector) => {
+  const box = document.querySelector(selector);
+  return box ? [...box.querySelectorAll('.node-mention')].map(el => el.innerText || '').join('\n') : '';
 }"""
 
 # 只看当前会话那一行：别的旧会话也可能挂着「一時停止中」
@@ -218,6 +223,7 @@ class _WorkSession:
         self.choice_answers = {}
         self.uploading = False
         self.upload_error = None
+        self.skill_labels = []
 
     def watch(self):
         def on_request(request):
@@ -241,7 +247,22 @@ class _WorkSession:
                 self.upload_error = UploadRouteError(host, short_error(request.failure or "连接失败"),
                                                      stage="工作模式参考图")
         self.page.on("requestfailed", on_failed)
+        self.page.on("response", self.read_skill_response)
         self.page.on("response", self.read_send_response)
+
+    async def read_skill_response(self, response):
+        parts = urlsplit(response.url)
+        if (parts.hostname not in ("dola.com", "www.dola.com")
+                or parts.path != "/alice/office/skills/list_user_and_featured" or response.status != 200):
+            return
+        try:
+            data = await response.json()
+        except Exception:
+            return
+        if isinstance(data, dict) and data.get("code") in (None, 0, "0", 2000, "2000"):
+            labels = video_skill_labels(data)
+            if labels:
+                self.skill_labels = labels
 
     async def read_send_response(self, response):
         """提交被 HTTP 或 JSON 明确拒绝时立即报告，流式成功响应交给原会话轮询。"""
@@ -332,7 +353,15 @@ class _WorkSession:
         if not await tab.count():
             await self.raise_if_blocked()
             raise PreSubmissionParametersError(f"{self.account} 页面上没有工作模式入口")
-        await tab.first.click(timeout=6000)
+        for attempt in range(2):
+            try:
+                await tab.first.click(timeout=6000)
+                break
+            except Exception as exc:
+                if attempt or not browser_error(exc):
+                    raise
+                # 桌面应用推广可能在初始弹层清理后才出现，挡住模式切换。
+                await dismiss_popups(self.page)
         await self.page.wait_for_timeout(8000)
         await self.raise_if_blocked()
 
@@ -397,24 +426,44 @@ class _WorkSession:
 
     async def choose_skill(self):
         page = self.page
-        skill = page.get_by_text(SKILL_RE)
+        found = False
         for _ in range(3):
             await page.locator(COMPOSER).first.click(timeout=8000)
             await page.keyboard.type("/", delay=120)
             await page.wait_for_timeout(3000)
             # 它排在菜单下方的分组里，列表没加载完就找不到；输入名字让菜单筛选出来
-            await page.keyboard.type("Creative", delay=80)
+            query = self.skill_labels[0] if self.skill_labels else "Creative"
+            await page.keyboard.type(query, delay=80)
             for _ in range(10):
                 await page.wait_for_timeout(1000)
+                if self.skill_labels and query != self.skill_labels[0]:
+                    query = self.skill_labels[0]
+                    await page.keyboard.press("Control+A")
+                    await page.keyboard.press("Backspace")
+                    await page.keyboard.type("/" + query, delay=80)
+                skill = page.get_by_text(self.skill_pattern())
                 if await skill.count():
+                    found = True
                     await skill.first.click(timeout=5000)
                     await page.wait_for_timeout(1500)
-                    return
+                    if await self.skill_selected():
+                        return
+                    break
             await page.keyboard.press("Control+A")
             await page.keyboard.press("Backspace")
             await page.wait_for_timeout(2500)
             await self.raise_if_blocked()
-        raise PreSubmissionParametersError(f"{self.account} 技能列表里没有 Creative video")
+        detail = "视频技能没有进入输入框" if found else "技能列表未找到视频生成技能，请检查列表加载或账号权限"
+        raise PreSubmissionParametersError(f"{self.account} {detail}，尚未发送生成")
+
+    def skill_pattern(self):
+        if self.skill_labels:
+            return re.compile(r"^\s*(?:" + "|".join(re.escape(label) for label in self.skill_labels) + r")\s*$", re.I)
+        return SKILL_RE
+
+    async def skill_selected(self) -> bool:
+        labels = await self.page.evaluate(SELECTED_SKILLS_JS, COMPOSER)
+        return any(self.skill_pattern().fullmatch(label.strip()) for label in labels.splitlines())
 
     async def composer_text(self) -> str:
         return await self.page.evaluate(COMPOSER_TEXT_JS, COMPOSER)
@@ -468,7 +517,7 @@ class _WorkSession:
     async def restore_composer(self) -> None:
         """页面重绘把技能和文字清掉时重新选一遍。已经在工作模式（看不到入口、输入框还在）就只重选技能。"""
         self.raise_if_send_failed()
-        if SKILL_CHIP_RE.search(await self.composer_text()):
+        if await self.skill_selected():
             return
         if await self.page.get_by_text(WORK_TAB_RE).count():
             await self.enter_work_mode()
