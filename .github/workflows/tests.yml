@@ -13,40 +13,18 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/roins-hub/dola-pool:2.7.12
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            deploy-extra-requirements.txt
-            requirements-dev.txt
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: Ensure FFmpeg is available
-        timeout-minutes: 8
-        shell: bash
+      - name: Check runtime tools
         run: |
-          set -euo pipefail
-          if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null &&
-             ffmpeg -version >/dev/null 2>&1 && ffprobe -version >/dev/null 2>&1; then
-            echo "Using FFmpeg and ffprobe already installed on the runner"
-          else
-            echo "Installing missing FFmpeg with bounded network and lock waits"
-            if [[ -f /etc/apt/apt-mirrors.txt ]]; then
-              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
-            fi
-            apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=30)
-            sudo timeout --kill-after=10s 120s apt-get "${apt_options[@]}" update
-            sudo timeout --kill-after=10s 300s apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
-          fi
+          python --version
+          node --version
           ffmpeg -version
           ffprobe -version
       - name: Install Python packages
-        run: pip install -r requirements-dev.txt
+        run: python -m pip install -r requirements-dev.txt
       - name: Run tests
-        run: pytest -q tests
+        run: python -m pytest -q tests
