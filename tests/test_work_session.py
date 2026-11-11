@@ -213,33 +213,30 @@ def test_thinking_or_generating_is_never_answered(monkeypatch):
     assert page.typed == []
 
 
-def test_unknown_question_gets_generic_replies_then_ai(monkeypatch):
-    page = Page([bot("你想要什么风格？")] * 50)
+def test_unknown_question_gets_ai_reply_once_then_waits_for_the_video(monkeypatch):
+    page = Page([bot("你想要什么风格？")] * 9 + [video()])
     agent, item = session(monkeypatch, page)
     asked = []
 
-    async def ai(question, ratio, duration, attachments):
+    async def ai(question, ratio, duration, attachments, **kwargs):
         asked.append((question, ratio, duration, attachments))
-        return "按提示词直接生成", ""
+        return {"action": "reply", "category": "other", "reply": "按提示词直接生成", "reason": "按原风格"}, ""
     monkeypatch.setattr(agent.dola_responder, "enabled", lambda: True)
-    monkeypatch.setattr(agent.dola_responder, "ai_reply_detail", ai)
-    with pytest.raises(agent.UpstreamReplyError) as caught:
-        wait(item)
-    assert len(page.typed) == 3
+    monkeypatch.setattr(agent.dola_responder, "ai_decision_detail", ai)
+    wait(item)
+    assert len(page.typed) == 1
     assert page.typed[-1] == "按提示词直接生成"
     assert asked == [("你想要什么风格？", "16:9", 15, 1)]
-    assert caught.value.category == "上游在等待回复"
-    assert caught.value.generation_started is False
 
 
 def test_unknown_picker_also_reaches_ai(monkeypatch):
     page = Page([bot("", False)] * 40, paused=True, question="选哪种风格", picker_rounds=9)
     agent, item = session(monkeypatch, page)
 
-    async def ai(question, ratio, duration, attachments):
-        return "选第一个", ""
+    async def ai(question, ratio, duration, attachments, **kwargs):
+        return {"action": "reply", "category": "other", "reply": "选第一个", "reason": "选原风格"}, ""
     monkeypatch.setattr(agent.dola_responder, "enabled", lambda: True)
-    monkeypatch.setattr(agent.dola_responder, "ai_reply_detail", ai)
+    monkeypatch.setattr(agent.dola_responder, "ai_decision_detail", ai)
     with pytest.raises(TimeoutError):      # 答完还在暂停：不判失败，等到时限
         _run(item.wait_for_video("123", time.time() + 0.3))
     assert page.typed[-1] == "选第一个"
@@ -249,14 +246,14 @@ def test_ai_refusal_ends_the_task_instead_of_guessing(monkeypatch):
     page = Page([bot("你想要什么风格？")] * 50)
     agent, item = session(monkeypatch, page)
 
-    async def ai(*args):
-        return None, "模型的回复不符合规则（放弃）"
+    async def ai(*args, **kwargs):
+        return {"action": "stop", "category": "missing_input", "reason": "缺少风格要求"}, ""
     monkeypatch.setattr(agent.dola_responder, "enabled", lambda: True)
-    monkeypatch.setattr(agent.dola_responder, "ai_reply_detail", ai)
-    with pytest.raises(agent.UpstreamReplyError, match="AI 代答：模型的回复不符合规则") as caught:
+    monkeypatch.setattr(agent.dola_responder, "ai_decision_detail", ai)
+    with pytest.raises(agent.UpstreamReplyError, match="AI 判断：缺少风格要求") as caught:
         wait(item)
-    assert "上游在等待回复" in str(caught.value)
-    assert len(page.typed) == 2
+    assert caught.value.category == "需要补充信息"
+    assert page.typed == []
 
 
 def test_seven_day_limit_switches_accounts_without_nudging(monkeypatch):

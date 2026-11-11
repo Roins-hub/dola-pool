@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from generation_errors import (
-    CreditError, PreSubmissionUploadError, PreSubmissionParametersError, RegionRestrictedError,
+    AIAccountUnavailableError, CreditError, PreSubmissionUploadError, PreSubmissionParametersError, RegionRestrictedError,
     UploadRouteError, UpstreamGenerationFailed, UpstreamReplyError, WorkQuotaError, portrait_refusal,
 )
 from account_transport import diagnose_upload_route, egress_alive, redact_error
@@ -33,11 +33,15 @@ from work_reply import (
 )
 import config
 import cred_store
+import dola_responder
 import failure_text
 import proxy_store
 import sites
 from concurrency import AdjustableConcurrency
-from doubao_gen import DoubaoModelLockedError, DoubaoQuotaError, quota_recover_at
+from doubao_gen import (
+    DoubaoModelLockedError, DoubaoPlanUnavailableError, DoubaoQuotaError,
+    looks_like_plan_unavailable, quota_recover_at,
+)
 from pool import AccountConfig as _PoolAccountConfig, AccountPool as _PoolEngine
 try:
     from browser import is_cloak_cookie_account
@@ -165,7 +169,7 @@ def _beijing_clock(ts: float) -> str:
 
 
 def doubao_all_locked(rows: list[dict], model: str, member_only: bool, horizon: float) -> str:
-    """能接这个豆包模型的号是否都被额度锁到 horizon 之后；是就返回说明，否则返回空串。
+    """可用豆包号都被额度锁定或因套餐拒绝暂停时返回原因，避免空转排队。
 
     2026-11-03：唯一的会员号 acc151「近 7 天额度已用完，预计11月5日 01:59 恢复」，
     2.5 的任务却一轮轮「稍后再来一轮」排到任务时限才失败。
@@ -174,14 +178,21 @@ def doubao_all_locked(rows: list[dict], model: str, member_only: bool, horizon: 
               and not (member_only and a.get("tier") == "free")]
     if not usable:
         return ""
-    locks = []
+    locks, plans = [], []
     for a in usable:
+        if (float(a.get("abnormal_until") or 0) > time.time()
+                and looks_like_plan_unavailable(a.get("abnormal_reason") or "")):
+            plans.append(f"{a['name']}（{a['abnormal_reason'][:180]}）")
+            continue
         until = max(float(a.get("rate_limited_until") or 0), float(a.get("quota_blocked_until") or 0))
         if until <= horizon:
             return ""
         reason = (a.get("limit_reason") or a.get("quota_reason") or "额度已用完").replace(f"{a['name']} ", "", 1)
         locks.append(f"{a['name']}（{reason[:80]}，{_beijing_clock(until)}恢复）")
     who = "会员号" if member_only else "豆包号"
+    if plans:
+        return (f"能出 {model} 的{who}当前均不可用：" + "；".join(plans + locks)
+                + "。请检查账号套餐或添加其他可用豆包号；本次未生成视频")
     return f"能出 {model} 的{who}额度都用完了：" + "；".join(locks) + "。尚未提交生成，未扣额度"
 
 
@@ -1709,6 +1720,7 @@ class BrowserPool:
         import uuid
         import work_pair
         state = pair_state if pair_state is not None else {"pending": [], "second_retries": 0}
+        state.setdefault("ai_switches", 0)
         if not state.get("stem"):
             state["stem"] = str(Path(config.DOWNLOAD_DIR) / f"pair_{uuid.uuid4().hex[:12]}")
         workspace = Path(config.DOWNLOAD_DIR) / ".work-pairs" / Path(state["stem"]).name
@@ -1763,7 +1775,8 @@ class BrowserPool:
                     work_pair.first_prompt(prompt) if index == 1 else work_pair.continue_prompt(prompt),
                     ratio, WORK_DURATION, model, on_poll=poll, on_wait=wait, reference_image_paths=paths,
                     on_account_try=tried, on_conversation_id=acknowledged,
-                    excluded_accounts=excluded, work_context=True, **options)
+                    excluded_accounts=excluded, work_context=True, _ai_retry_state=state,
+                    _on_ai_switch=save, **options)
                 state["active"] = None
                 save()
                 return result
@@ -2165,6 +2178,12 @@ class BrowserPool:
             except DoubaoModelLockedError as exc:
                 self.set_tier(account, "free")
                 return {"ok": False, "account": account, "error": str(exc)[:300]}
+            except DoubaoPlanUnavailableError as exc:
+                self._mark_abnormal(account, str(exc))
+                return {"ok": False, "account": account, "error": str(exc)[:500]}
+            except AIAccountUnavailableError as exc:
+                self._mark_abnormal(account, str(exc))
+                return {"ok": False, "account": account, "error": str(exc)[:1500]}
             except DoubaoQuotaError as exc:
                 self._mark_daily_limit(account, str(exc), until=quota_recover_at(str(exc)))
                 return {"ok": False, "account": account, "error": str(exc)[:300]}
@@ -2451,7 +2470,8 @@ class BrowserPool:
                              deadline: float | None = None, on_wait=None,
                              attempt_timeout: float | None = None, on_dispatch=None,
                              on_attempt_end=None, on_pair_state=None, pair_state=None,
-                             excluded_accounts: set[str] | None = None, work_context=False) -> dict:
+                             excluded_accounts: set[str] | None = None, work_context=False,
+                             _ai_retry_state=None, _on_ai_switch=None) -> dict:
         """挑一个可调度且空闲的号出片；失败自动换号重试（最多 max_attempts 次）。
 
         2.0 的 30 秒（工作模式开着时）交给 generate_work_pair：两段 15 秒各走一遍这里。
@@ -2521,6 +2541,7 @@ class BrowserPool:
             unlimited = max_attempts <= 0
             generation_retries = 0     # 已提交且上游确认失败后的换号重提次数
             portrait_retries = 0       # 肖像保护拒绝（未开始生成）后的换号重提次数
+            ai_retry_state = _ai_retry_state if _ai_retry_state is not None else {"ai_switches": 0}
             last_note = [""]
 
             def say(note: str) -> None:
@@ -2728,6 +2749,10 @@ class BrowserPool:
                             tried.add(account)
                             tried_order.append(account)
                             continue
+                        except DoubaoPlanUnavailableError as e:
+                            self._mark_abnormal(account, str(e))
+                            say(f"{account} 当前套餐不支持创作，暂停派发并检查其他豆包号")
+                            last_err = e
                         except DoubaoQuotaError as e:
                             until = quota_recover_at(str(e))
                             print(f"[pool] {account} 豆包额度用完，锁到"
@@ -2781,8 +2806,20 @@ class BrowserPool:
                                 (time.time() + COOLDOWN_SEC, account))
                             self._conn.commit()
                             last_err = e
+                        except AIAccountUnavailableError as e:
+                            attempt_error = e
+                            self._mark_abnormal(account, str(e))
+                            if ai_retry_state.get("ai_switches", 0) >= dola_responder.AI_SWITCH_LIMIT or not time_left():
+                                raise
+                            ai_retry_state["ai_switches"] = ai_retry_state.get("ai_switches", 0) + 1
+                            if _on_ai_switch:
+                                _on_ai_switch()
+                            say(f"{account} {e} → 检查其他账号（AI 换号 {ai_retry_state['ai_switches']}/{dola_responder.AI_SWITCH_LIMIT}）")
+                            last_err = e
                         except UpstreamReplyError as e:
                             attempt_error = e
+                            if not e.allow_account_retry:
+                                raise
                             if (portrait_refusal(e) and portrait_retries < config.PORTRAIT_RETRIES
                                     and time_left()):
                                 # 肖像保护的审核结果因号而异（2026-11-02 同图同词 4 个号 2 过 2 拒）；
@@ -2967,6 +3004,7 @@ class BrowserPool:
                     # 有时限且还没到点：这一轮号都试过了，等失败冷却结束后从头再来一轮。
                     # 全池都已达上限/积分不足时没有等待意义，直接走下方的 429 报错。
                     if (deadline is not None and unlimited and time_left() and tried_order
+                            and not isinstance(last_err, AIAccountUnavailableError)
                             and not self.all_accounts_limited and not self.all_accounts_quota_blocked):
                         say(f"排队中：这一轮能用的号都试过了（{'、'.join(tried_order[-5:])}），稍后再来一轮"
                             + (f"；最近一次：{str(last_err)[:120]}" if last_err else ""))

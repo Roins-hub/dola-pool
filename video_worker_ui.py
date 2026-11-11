@@ -749,9 +749,11 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     limit_seen = 0
     stall_key, stall_since, stall_noted, stall_hits = None, 0.0, False, 0
     answered = set()
-    nudges, ai_tried, last_answer_at, tried_replies = 0, False, 0.0, []
+    nudges, last_answer_at, tried_replies = 0, 0.0, []
     import config as _config
     import dola_responder
+    responder = dola_responder.DialogueResponder(
+        prompt=prompt, ratio=ratio, duration=duration)
 
     async def _answer(text):
         """在会话输入框里回一句话（回复 dola 的追问）。"""
@@ -810,8 +812,10 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 last_wait = wait
                 emit_feedback(on_poll, progress=f"已取得上游会话，dola 预计约 {max(1, round(wait / 60))} 分钟出片，正在查询视频结果")
         videos = poll.get("videos") or []
+        accepted = bool(videos or poll.get("anyTool") or poll.get("anyVideoGen")
+                        or wait_seconds_from_reply("\n".join(poll.get("assistantTexts") or [latest_text])))
         # ---- 新版 Dola：提交后要求 A/B/C 选择时长，不回复则永远不出片 ----
-        if duration and not choice_replied:
+        if duration and not choice_replied and not accepted:
             joined = "\n".join(texts)
             if latest and not videos:
                 reply = duration_reply(joined, duration, ratio)
@@ -834,7 +838,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                             print(f"[{account}] 回复时长选择失败: {str(e)[:100]}", flush=True)
         # ---- UI 把参考图单独发成一条附件消息，dola 偶尔当成「上一轮」的图，问用不用（A）：
         # 新会话里「上一轮的图」只能是我们刚传的，确实有附件就回 A；没有就交给下面判【需要补充信息】。
-        if latest and not videos and latest.get("index") not in answered:
+        if latest and not videos and not accepted and latest.get("index") not in answered:
             from upstream_reply import reference_reuse_reply
             reuse = reference_reuse_reply("\n".join(texts), poll.get("userAttachments"))
             if reuse:
@@ -852,6 +856,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                     emit_feedback(on_poll, progress=f"dola 问用哪个画面比例，已回复「{pick}」，等待出片")
                     continue
         joined = "\n".join(texts)
+        category = None
         if not videos and (joined or latest):
             category = reply_failure(joined)
             if DAILY_LIMIT_PATTERN.search(joined) or FREE_LIMIT_REPLY.search(joined):
@@ -887,7 +892,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             if category:
                 previous, hits = failure_seen
                 failure_seen = (joined, hits + 1 if previous == joined else 1)
-                nudgeable = category == "需要补充信息" and nudges < dola_responder.GENERIC_LIMIT
+                nudgeable = ((category == "需要补充信息" and nudges < dola_responder.GENERIC_LIMIT)
+                             or (category in {"需要补充信息", "网络失败", "上游生成失败"}
+                                 and not accepted and dola_responder.enabled()))
                 if failure_seen[1] >= 2 and not nudgeable:
                     # 记下会话里有没有开始生成（生成卡片 / 生成标记）：没开始的肖像拒绝才允许换号重提
                     started = bool(videos or poll.get("anyTool") or poll.get("anyVideoGen"))
@@ -915,8 +922,6 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
         #   - 追问标记 + 已说完 + 连续两轮不变 → 立即结束；
         #   - 没有标记、但同样「说完了却没开始生成」持续 STALL_REPLY_SECONDS → 结束。
         # 没开始生成就没扣点；结束时给出 dola 原话，不替客户乱答。
-        accepted = bool(videos or poll.get("anyTool") or poll.get("anyVideoGen")
-                        or wait_seconds_from_reply("\n".join(poll.get("assistantTexts") or [latest_text])))
         waiting = (_config.STALL_REPLY_SECONDS > 0 and latest and latest_text and latest.get("finished")
                    and not latest.get("tools") and not accepted)
         if waiting:
@@ -925,22 +930,29 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 stall_key, stall_since, stall_noted, stall_hits = key, now, False, 0
             stall_hits += 1
             # dola 在等答话：带追问标记连续两轮，或没标记但说完后 45 秒不动。不再逐句识别话术——
-            # 先发通用回复（重申参数、说明是新请求，最多 2 次），仍不动再交给 AI 代答（若已配置），都不行才结束。
+            # 开启 AI 时先判断动作；未配置或调用失败时，最多发两次通用回复。
             # 「已经生成过了」（dola 跨会话记忆）不会自己开工，认出来就直接回，不必等 45 秒
             asking = ((latest.get("clarifying") and stall_hits >= 2) or now - stall_since >= 45
+                      or (category in {"网络失败", "上游生成失败"} and stall_hits >= 2)
                       or (dola_responder.says_already_generated(latest_text)
                           and latest.get("index") not in answered))
             if asking:
                 reply, how = None, ""
-                if nudges < dola_responder.GENERIC_LIMIT:
+                if dola_responder.enabled():
+                    responder.context["attachments"] = poll.get("userAttachments") or 0
+                    emit_feedback(on_poll, progress="dola：正在请 AI 判断上游回复")
+                    decision = await responder.decide(latest_text)
+                    if decision:
+                        emit_feedback(on_poll, progress=f"dola AI 判断：{dola_responder.DECISION_ACTIONS[decision['action']]}，{decision['reason']}")
+                        reply, how = dola_responder.decision_reply(decision, latest_text), "AI 代答"
+                        if decision["action"] == "wait":
+                            continue
+                if not reply and category in {"网络失败", "上游生成失败"}:
+                    raise UpstreamReplyError(category, latest_text, generation_started=False)
+                if not reply and nudges < dola_responder.GENERIC_LIMIT:
                     reply, how = dola_responder.generic_reply(ratio, duration, poll.get("userAttachments"), nudges,
                                                               latest_text), "通用回复"
                     nudges += 1
-                elif not ai_tried and dola_responder.enabled():
-                    ai_tried = True
-                    emit_feedback(on_poll, progress="dola 仍在追问，正在请 AI 代答")
-                    reply, how = await dola_responder.ai_reply(latest_text, ratio, duration,
-                                                              poll.get("userAttachments")), "AI 代答"
                 if reply and await _answer(reply):
                     tried_replies.append(f"{how}：{reply}")
                     answered.add(latest.get("index"))

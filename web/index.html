@@ -200,7 +200,7 @@ tbody tr{transition:background-color .12s}
 tbody tr:hover{background:var(--hover)}
 td.num,th.num{text-align:right}
 td b{font-weight:600}
-td .btn{height:26px;padding:0 9px;font-size:12.5px;margin:2px 4px 2px 0!important;background:var(--surface)}
+td .btn{height:26px;padding:0 9px;font-size:12.5px;margin:2px 4px 2px 0!important}
 .pager{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:14px 0 0;color:var(--muted);font-size:12.5px}
 .pager button[disabled]{opacity:.45;cursor:not-allowed}
 .thumb{width:44px;height:44px;object-fit:cover;border-radius:4px;cursor:zoom-in;vertical-align:middle;display:block;background:var(--raised)}
@@ -1519,7 +1519,7 @@ async function saveWork15Settings(){
   finally{btn.disabled=false;}
 }
 
-/* ---- AI 代答：选择题可优先选方案，文字追问在通用回复用完后代答 ---- */
+/* ---- AI 代答：Dola / 豆包的对话判断与受约束回复 ---- */
 async function openResponderSettings(){
   showDlg(`<h2>AI 代答</h2><p class="hint">正在读取设置…</p>`);
   const epoch=dialogEpoch;
@@ -1527,9 +1527,8 @@ async function openResponderSettings(){
     const c=await api('/api/admin/settings/responder');
     if(epoch!==dialogEpoch)return;
     showDlg(`<h2>AI 代答</h2>
-      <p class="hint">dola 有时不直接生成，而是反问（用哪个比例、要不要开始、说已经生成过了……）。程序会先自动发两次「重申参数、直接生成」的通用回复；
-        仍在问时，再把 dola 的原话和任务参数交给这里配置的模型写一句回复。模型只能确认、重申参数或选择与参数一致的选项，
-        回复里出现与参数不一致的比例或秒数会被丢弃。都不行才结束任务（此时尚未开始生成，不扣点）。</p>
+      <p class="hint">Dola 或豆包没有开始生成时，程序先识别明确的额度、权限和内容拒绝；遇到未知回复，再请 AI 判断回复、换号、等待或结束，并保留判断原因和上游原文。</p>
+      <p class="hint">AI 只按原提示词和参数回答，不改模型、时长、比例或参考图，不确认付费。已接单或正在生成时继续查询原会话；内容审核拒绝直接结束。每个会话最多判断 3 次，每个任务最多因 AI 判断换号 2 次。</p>
       <p class="hint">工作模式选择题会优先请 AI 选择已有选项；未开启、请求失败或答案不匹配时，使用推荐／确认／第一个的规则选择。</p>
       <label class="sw-row" style="margin-top:14px"><span class="sw"><input type="checkbox" id="rpEnabled" ${c.enabled?'checked':''}><i></i></span>开启 AI 代答</label>
       <label for="rpBase">接口地址（兼容 OpenAI）</label>
@@ -1542,7 +1541,7 @@ async function openResponderSettings(){
           role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="rpModelList">
         <button class="btn" id="rpFetch" type="button" onclick="fetchResponderModels()">获取模型</button>
       </div>
-      <p id="rpFeedback" class="hint" role="status" aria-live="polite" style="margin-top:12px">${c.ready?'已开启，配置完整。':'未开启或配置不全：只用通用回复。'}</p>
+      <p id="rpFeedback" class="hint" role="status" aria-live="polite" style="margin-top:12px">${c.ready?'已开启，配置完整。':'未开启或配置不全：使用现有规则。'}</p>
       <div class="row"><button class="btn" onclick="hide('dlg')">关闭</button>
         <button class="btn" id="rpTest" onclick="testResponder()">测试</button>
         <button class="btn btn-p" id="rpSave" onclick="saveResponderSettings()">保存</button></div>`);
@@ -1559,7 +1558,7 @@ async function saveResponderSettings(){
     const c=await api('/api/admin/settings/responder',{method:'PATCH',body});
     q('#rpKey').value='';
     if(c.api_key_set)q('#rpKey').placeholder=`已保存 ${c.api_key_hint||''}，留空不修改`;
-    fb.textContent=c.ready?'已保存并开启。可以点「测试」看看它会怎么回。':'已保存，但未开启或配置不全：只用通用回复。';
+    fb.textContent=c.ready?'已保存并开启。可以点「测试」看看它会怎么回。':'已保存，但未开启或配置不全：使用现有规则。';
   }catch(e){if(e.message!=='unauthorized')fb.textContent='保存失败：'+e.message;}
   finally{btn.disabled=false;}
 }

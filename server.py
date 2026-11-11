@@ -1042,7 +1042,10 @@ async def _recover_loop(task_id: str) -> None:
                 await asyncio.to_thread(_prune_downloads)
                 return
             if res and res.get("final"):
-                note = f"；后台取回结束：dola 最终状态 {res.get('status')}（{(res.get('detail') or '')[:80]}）"
+                if res.get("plan_unavailable"):
+                    pool._mark_abnormal(account, res.get("detail") or "豆包套餐不支持创作")
+                upstream = "豆包" if sites.is_doubao_model(row.get("model")) else "dola"
+                note = f"；后台取回结束：{upstream} 最终状态 {res.get('status')}（{(res.get('detail') or '')[:80]}）"
                 store.update(task_id, recover_state="gave_up",
                              error=failure_text.summarize((row.get("error") or "") + note))
                 print(f"[recover] {task_id} 上游已判定 {res.get('status')}，停止盯守", flush=True)
@@ -1282,9 +1285,12 @@ async def _resume_pure_conversation(row: dict) -> None:
                 await asyncio.to_thread(_prune_downloads)
                 return
             if res and res.get("final"):
+                if res.get("plan_unavailable"):
+                    pool._mark_abnormal(account, res.get("detail") or "豆包套餐不支持创作")
+                upstream = "豆包" if sites.is_doubao_model(row.get("model")) else "dola"
                 store.update(task_id, status="failed", queue_note="", finished_at=time.time(),
                              error=failure_text.summarize(
-                                 f"dola 最终状态 {res.get('status')}：{(res.get('detail') or '')[:200]}"))
+                                 f"{upstream} 最终状态 {res.get('status')}：{(res.get('detail') or '')[:200]}"))
                 return
             await asyncio.sleep(max(1, config.RESUME_POLL_SECONDS))
     finally:

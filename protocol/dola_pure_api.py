@@ -3203,6 +3203,7 @@ def wait_for_video(
     conversation_id: str,
     timeout_sec: int = 900,
     interval_sec: int = DEFAULT_POLL_INTERVAL,
+    on_pending=None,
 ) -> PollResult:
     """轮询 /im/chain/single，返回视频 URL/VID/状态。"""
     deadline = time.time() + timeout_sec
@@ -3220,6 +3221,11 @@ def wait_for_video(
             time.sleep(interval_sec)
             continue
         consecutive_errors = 0
+        if on_pending and last.status in {"pending", "failed", "submit_retry"}:
+            action = on_pending(last)
+            if action in {"reply", "wait"}:
+                time.sleep(interval_sec)
+                continue
         if last.status in {
             "succeeded",
             "failed",
@@ -3703,10 +3709,11 @@ def fetch_play_info_urls(session: requests.Session, ctx: dict[str, str], vids: l
     return {"urls": all_urls, "fplay_urls": all_fplay_urls, "video_infos": all_video_infos, "items": results}
 
 
-def get_video_result(session: requests.Session, ctx: dict[str, str], conversation_id: str, *, timeout: int = 900, interval: int = DEFAULT_POLL_INTERVAL, remove_watermark: bool = False, proxy: str = "") -> dict[str, Any]:
+def get_video_result(session: requests.Session, ctx: dict[str, str], conversation_id: str, *, timeout: int = 900, interval: int = DEFAULT_POLL_INTERVAL, remove_watermark: bool = False, proxy: str = "", on_pending=None) -> dict[str, Any]:
     """封装结果获取：轮询任务，拿链路 URL/VID，补拉 play_info，并返回可下载 URL。"""
     proxy = normalize_proxy_url(proxy or get_dola_proxy(session))
-    poll = wait_for_video(session, ctx, conversation_id, timeout_sec=timeout, interval_sec=interval)
+    extra = {"on_pending": on_pending} if on_pending else {}
+    poll = wait_for_video(session, ctx, conversation_id, timeout_sec=timeout, interval_sec=interval, **extra)
     result: dict[str, Any] = {
         "conversation_id": conversation_id,
         "status": poll.status,

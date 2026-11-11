@@ -40,17 +40,27 @@ class UpstreamReplyError(RuntimeError):
 
     generation_started: the conversation had a creation card / video-gen flag when this
     was raised (None = unknown). Only a refusal with nothing started may be resubmitted.
+    allow_account_retry=False: an explicit stop decision must also stop fallback retries.
     """
-    def __init__(self, category, reply, *, generation_started=None):
+    def __init__(self, category, reply, *, generation_started=None, allow_account_retry=True):
         self.category = category
         self.reply = reply
         self.generation_started = generation_started
+        self.allow_account_retry = allow_account_retry
         super().__init__(f"【{category}】{reply}")
+
+
+class AIAccountUnavailableError(UpstreamReplyError):
+    """AI 从未接单的最新回复判断账号暂不可用；有界换号，不推算或扣减额度。"""
+    def __init__(self, category, reply):
+        super().__init__(category, reply, generation_started=False)
 
 
 def portrait_refusal(error) -> bool:
     """dola 以「肖像保护」拒绝、且确认还没开始生成：可以换号重提（不会重复出片）。"""
     if not isinstance(error, UpstreamReplyError):
+        return False
+    if not error.allow_account_retry:
         return False
     import failure_text
     if failure_text.label_for(getattr(error, "reply", "") or str(error)) != "肖像保护":

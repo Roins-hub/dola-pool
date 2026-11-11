@@ -7,7 +7,7 @@
   就说明这次被拒绝了。
 - 助手一般先要确认：有时是普通回复，有时是输入框上的选择题（侧栏显示「一時停止中」，
   chain 里读不到）；选择题不回也会继续，但要等二十多分钟，所以主动回。要确认就回「确认」，
-  问别的就和普通聊天一样走 dola_responder：通用回复两次，再交给 AI 代答（如已开启）。
+  问别的交给 dola_responder 判断回复、等待、换号或结束；未配置 AI 时通用回复最多两次。
 - 助手可能改写提示词，内容审核拦下时还会换更短的词重试，成片和原词未必完全一致。
 """
 import asyncio
@@ -207,7 +207,6 @@ class _WorkSession:
         self.ratio, self.attachments = ratio, attachments
         self.confirmed = False
         self.nudges = 0
-        self.ai_tried = False
         self.ai_note = ""
         self.tried: list[str] = []
         self.logouts: list[str] = []
@@ -221,6 +220,9 @@ class _WorkSession:
         self.ask_rounds = 0
         self.prompt = prompt
         self.choice_answers = {}
+        self.responder = dola_responder.DialogueResponder(
+            prompt=prompt, ratio=ratio, duration=WORK_DURATION, attachments=self.attachments,
+            model="Seedance 2.0")
         self.uploading = False
         self.upload_error = None
         self.skill_labels = []
@@ -588,24 +590,23 @@ class _WorkSession:
         return urlencode(query)
 
     async def next_answer(self, question: str) -> tuple[str | None, str]:
-        """这次该怎么回：要确认就确认；问别的走通用回复，用完再交给 AI 代答。"""
+        """确认走规则，未知回复交给 AI 判断；失败时使用有上限的通用回复。"""
         if not self.confirmed and asks_to_confirm(question):
             self.confirmed = True
             return "确认", "确认"
+        if dola_responder.enabled():
+            emit_feedback(self.on_poll, progress="工作模式：正在请 AI 判断上游回复")
+            decision = await self.responder.decide(question)
+            if decision:
+                emit_feedback(self.on_poll, progress=f"工作模式 AI 判断：{dola_responder.DECISION_ACTIONS[decision['action']]}，{decision['reason']}")
+                reply = dola_responder.decision_reply(decision, question)
+                return reply, "AI 等待" if decision["action"] == "wait" else "AI 代答"
+            self.ai_note = self.responder.last_error
         if self.nudges < dola_responder.GENERIC_LIMIT:
             reply = dola_responder.generic_reply(self.ratio, WORK_DURATION, self.attachments,
                                                  self.nudges, question)
             self.nudges += 1
             return reply, "通用回复"
-        if not self.ai_tried and dola_responder.enabled():
-            self.ai_tried = True
-            emit_feedback(self.on_poll, progress="工作模式：助手仍在追问，正在请 AI 代答")
-            reply, why = await dola_responder.ai_reply_detail(question, self.ratio, WORK_DURATION,
-                                                              self.attachments)
-            if not reply:
-                self.ai_note = why
-                emit_feedback(self.on_poll, progress=f"工作模式：AI 代答没有回复（{why[:80]}）")
-            return reply, "AI 代答"
         return None, ""
 
     async def type_reply(self, reply: str):
@@ -745,7 +746,7 @@ class _WorkSession:
                     raise (failure_from_reply(self.account, reply, ran_tools=True)
                            or UpstreamReplyError("生成失败", reply, generation_started=True))
                 continue
-            if finished and stable >= QUIET_POLLS and not asks_to_confirm(reply_text(latest)):
+            if finished and stable >= QUIET_POLLS:
                 failure = failure_from_reply(self.account, reply_text(latest), ran_tools=False)
                 if failure:
                     raise failure
@@ -773,8 +774,10 @@ class _WorkSession:
                   and reply_text(latest).strip()):
                 # 回复没标完成，却一分多钟一个字没动，也没在出片：它在等人确认
                 question = reply_text(latest)
-            if question and since_answer >= ANSWER_GAP_POLLS:
+            if question and not making and since_answer >= ANSWER_GAP_POLLS:
                 reply, how = await self.next_answer(question)
+                if how == "AI 等待":
+                    continue
                 if not reply and paused:
                     continue        # 选择题没人答也会自己往下走，不算失败
                 if not reply:

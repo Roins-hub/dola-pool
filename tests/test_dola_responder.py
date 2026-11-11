@@ -96,17 +96,17 @@ def test_ai_is_skipped_when_not_configured():
     assert not r.enabled()
 
 
-def test_poll_uses_generic_replies_first_then_ai(monkeypatch):
+def test_poll_uses_ai_first_and_does_not_repeat_the_same_reply(monkeypatch):
     calls = []
     async def fake_ai(text, ratio, duration, attachments, **kw):
         calls.append((text, ratio, duration))
-        return 'AI：请按 16:9 直接生成'
-    monkeypatch.setattr(r, 'ai_reply', fake_ai)
+        return {'action': 'reply', 'category': 'other', 'reply': 'AI：请按 16:9 直接生成', 'reason': '已按原要求选择'}, ''
+    monkeypatch.setattr(r, 'ai_decision_detail', fake_ai)
     monkeypatch.setattr(r, 'enabled', lambda: True)
     err, typed = _stall_run([_poll(UNKNOWN_Q, clarifying=True)] * 10, ratio='16:9', with_typed=True)
-    assert len(typed) == 3 and typed[2] == 'AI：请按 16:9 直接生成'       # 两次通用 + 一次 AI
+    assert typed == ['AI：请按 16:9 直接生成']
     assert calls == [(UNKNOWN_Q, '16:9', 10)]
-    assert err.category == '上游在等待回复' and '已尝试 3 次' in str(err)
+    assert err.category == '网络失败'  # 假上游结束脚本；没有把旧问题再发一遍
 
 
 def test_settings_endpoint_masks_the_key_and_keeps_it(tmp_path, monkeypatch):

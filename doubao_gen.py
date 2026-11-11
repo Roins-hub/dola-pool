@@ -15,6 +15,7 @@ dola 那边的 30 秒拼接 / 时长吸附 / 额度点数一概不碰：
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -24,7 +25,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 import config
+import dola_responder
 import sites
+from generation_errors import UpstreamReplyError
+from upstream_reply import reply_failure
 from pure_api_gen import (
     AbnormalNoAckError, PureApiError, PureLoginExpired, ShortClipError,
     UnsupportedDurationError, _emit_note_text, _emit_upstream_note, _load_state,
@@ -45,6 +49,10 @@ class DoubaoQuotaError(PureApiError):
 
 class DoubaoModelLockedError(PureApiError):
     """这个号用不了请求的模型（免费号请求 2.0 标准版 / 2.5）。号池记下「非会员」，换号重派。"""
+
+
+class DoubaoPlanUnavailableError(PureApiError):
+    """上游明确拒绝当前套餐的创作权限；暂停该号，不当作登录失效或等待出片。"""
 
 
 def _site():
@@ -83,6 +91,7 @@ def _messages(chain: Any) -> list[dict]:
         texts: list[str] = []
         buttons: list[dict] = []
         vids: list[str] = []
+        generating = False
         finished = True
         for block in raw.get("content_block") or []:
             if not isinstance(block, dict):
@@ -98,6 +107,7 @@ def _messages(chain: Any) -> list[dict]:
                 buttons.append(button)
             creation = content.get("creation_block")
             if isinstance(creation, dict):
+                generating = True
                 for item in creation.get("creations") or []:
                     vid = ((item or {}).get("video") or {}).get("vid")
                     if isinstance(vid, str) and vid and vid not in vids:
@@ -113,11 +123,12 @@ def _messages(chain: Any) -> list[dict]:
             "text": "\n".join(texts),
             "buttons": buttons,
             "vids": vids,
-            "finished": finished,
+            "finished": finished and str(ext.get("is_finish", "1")).lower() in {"1", "true"},
             # 哪个智能体回的：视频创作是 Agent-Creation（带 use_creation），普通对话是 seed_main
             "agent_intention": str(ext.get("agent_intention") or ""),
             "creation": bool(ext.get("use_creation") or ext.get("has_video_gen")
                              or str(ext.get("agent_name") or "") == "Agent-Creation"),
+            "generating": generating or str(ext.get("has_video_gen") or "") == "1",
         })
     out.sort(key=lambda m: m["index"])
     return out
@@ -162,6 +173,11 @@ def looks_like_model_locked(text: str) -> bool:
     return "无法使用" in c and ("模型" in c or "seedance" in c.lower())
 
 
+def looks_like_plan_unavailable(text: str) -> bool:
+    c = _compact(text)
+    return bool(re.search(r"(?:套餐|订阅|权益).{0,20}(?:不可|不能|不支持|无法).{0,12}(?:创作|生成视频|视频生成)", c))
+
+
 def looks_like_paid_prompt(text: str, buttons: list[dict] | None = None) -> bool:
     c = _compact(text)
     if any(str((b or {}).get("scene")) == PAID_SCENE for b in buttons or []):
@@ -181,7 +197,7 @@ def looks_like_confirm_request(text: str) -> bool:
 
 
 QUOTA_EXHAUSTED_MARKERS = (
-    "额度已用完", "额度不足", "开通会员", "升级会员", "无法生成", "次数已用完", "今日已达上限", "购买",
+    "额度已用完", "额度不足", "次数已用完", "今日已达上限",
 )
 
 
@@ -457,6 +473,8 @@ def generate_doubao_video(
         seen_texts: list[str] = []
         chain: Any = None
         vid = ""
+        responder = dola_responder.DialogueResponder(
+            prompt=prompt, ratio=ratio, duration=duration, attachments=len(images), model=display, site="豆包")
         with _progress_heartbeat(on_poll):
             while time.time() < deadline:
                 try:
@@ -473,7 +491,11 @@ def generate_doubao_video(
                         vid = m["vids"][0]
                 if vid:
                     break
-                for m in msgs:
+                accepted = accepted or any(m["bot"] and (m["generating"] or looks_like_accepted(m["text"])) for m in msgs)
+                latest = next((m for m in reversed(msgs) if m["bot"]), None)
+                if latest and latest["index"] <= max((m["index"] for m in msgs if not m["bot"]), default=-1):
+                    latest = None
+                for m in ([latest] if latest else []):
                     if not m["bot"] or m["index"] in handled or not m["finished"] or not m["text"]:
                         continue
                     handled.add(m["index"])
@@ -481,8 +503,12 @@ def generate_doubao_video(
                     text = m["text"]
                     seen_texts.append(text)
                     _emit_upstream_note(on_poll, dp, [text])
+                    if looks_like_plan_unavailable(text):
+                        raise DoubaoPlanUnavailableError(f"{account} 豆包套餐不支持创作：{text[:300]}")
                     if looks_like_model_locked(text):
                         raise DoubaoModelLockedError(f"{account} 用不了 {display}（豆包：{text[:160]}）")
+                    if reply_failure(text) == "内容拒绝":
+                        raise UpstreamReplyError("内容拒绝", text[:1000], generation_started=accepted)
                     if looks_like_paid_prompt(text, m["buttons"]):
                         if not config.DOUBAO_ALLOW_PAID:
                             raise DoubaoQuotaError(
@@ -504,10 +530,8 @@ def generate_doubao_video(
                         continue
                     if looks_like_quota_exhausted(text):
                         raise DoubaoQuotaError(f"{account} 豆包额度不足：{text[:200]}")
-                    if dp.looks_like_content_refusal(text):
-                        raise PureApiError(f"{account} 豆包拒绝生成（内容审核）：{text[:300]}")
                     if accepted and dp.looks_like_generation_failure(text):
-                        raise PureApiError(f"{account} 豆包生成失败：{text[:300]}")
+                        raise UpstreamReplyError("上游生成失败", text[:1000], generation_started=True)
                     if looks_like_confirm_request(text) and not accepted:
                         mismatch = confirm_mismatch(text, duration=duration, model_display=display)
                         if mismatch:
@@ -519,6 +543,20 @@ def generate_doubao_video(
                         _reply(dp, session, ctx, headers, conversation_id,
                                model=upstream_model, duration=duration, ratio=ratio)
                         confirms += 1
+                        continue
+                    if not accepted and dola_responder.enabled():
+                        _emit_note_text(on_poll, "豆包：正在请 AI 判断上游回复")
+                        decision = asyncio.run(responder.decide(text))
+                        if decision:
+                            _emit_note_text(on_poll, f"豆包 AI 判断：{dola_responder.DECISION_ACTIONS[decision['action']]}，{decision['reason']}")
+                            reply = dola_responder.decision_reply(decision, text)
+                            if reply:
+                                _reply(dp, session, ctx, headers, conversation_id, text=reply,
+                                       model=upstream_model, duration=duration, ratio=ratio)
+                                _emit_note_text(on_poll, f"豆包：已 AI 代答：{reply}")
+                        else:
+                            raise UpstreamReplyError("上游在等待回复",
+                                f"豆包未开始生成，AI 判断失败（{responder.last_error}）：{text[:800]}", generation_started=False)
                 if not replied_any and time.time() - submitted_at > config.NO_ACK_SECONDS:
                     raise AbnormalNoAckError(
                         f"生视频过程中出现异常情况，请重试（豆包 {config.NO_ACK_SECONDS} 秒内没有任何回应）")
@@ -580,12 +618,15 @@ def fetch_conversation_video(cookie_state_path, conversation_id: str, *, proxy: 
                                        out_dir / f"recovered_{uuid.uuid4().hex[:12]}.mp4")
             return {"status": "succeeded", "local_path": str(saved), "final": False,
                     "detail": detail, "conversation_id": conversation_id}
-        last = texts[-1] if texts else ""
+        latest = next((m for m in reversed(msgs) if m["bot"]), {})
+        last = latest.get("text", "")
+        plan_unavailable = bool(latest.get("finished") and looks_like_plan_unavailable(last))
         # 停在确认 / 付费追问 / 模型锁 / 额度 / 拒稿上：没人回话就永远不会出片（也没扣额度），不用再盯
-        final = bool(last) and (looks_like_model_locked(last) or looks_like_quota_exhausted(last)
+        final = bool(last) and (plan_unavailable or looks_like_model_locked(last) or looks_like_quota_exhausted(last)
                                 or looks_like_paid_prompt(last) or dp.looks_like_content_refusal(last)
                                 or (looks_like_confirm_request(last) and not looks_like_accepted(last)))
         return {"status": "failed" if final else "pending", "local_path": "", "final": final,
-                "detail": detail, "conversation_id": conversation_id}
+                "detail": detail, "conversation_id": conversation_id,
+                "plan_unavailable": plan_unavailable}
     finally:
         session.close()

@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import config
+import dola_responder
 from pure_signer import install
 
 log = logging.getLogger("dola.pure_api")
@@ -268,6 +270,7 @@ def _wait_video_same_conversation(
     poll_interval: int,
     on_poll: Callable | None,
     credits: "_CreditTracker | None" = None,
+    on_pending=None,
 ):
     """轮询出片，**不向上游协商拆段**。
 
@@ -319,6 +322,13 @@ def _wait_video_same_conversation(
         if len(keys) >= 2:
             # 上游自己出了两段：交给调用方拼接。
             return poll, keys[-2:]
+        if on_pending and status in {"pending", "failed", "submit_retry"}:
+            action = on_pending(poll)
+            if action in {"reply", "wait"}:
+                if time.time() >= deadline:
+                    raise TimeoutError(f"{account} 等待上游回复超时，保留原会话继续取回")
+                time.sleep(poll_interval)
+                continue
         if status == "succeeded" or status in FINAL_POLL_STATUSES:
             return poll, []
         announced = _announced_seconds(dola, texts)
@@ -538,9 +548,65 @@ def _timeout_for_upstream_wait(base_timeout: int, wait_seconds: int) -> int:
     return min(max(int(base_timeout), want), cap)
 
 
+def _dialogue_handler(*, dola, session, ctx, headers, conversation_id, account, responder, on_poll=None, allow_switch=True):
+    """只分析已结束的最新助手消息；会话出现过接单或生成工具后持续只读。"""
+    from work_reply import chain_messages, generation_started, reply_finished, reply_text
+    from upstream_reply import reply_failure, wait_seconds_from_reply
+    from generation_errors import CreditError, UpstreamReplyError
+    started, seen = False, {}
+
+    def handle(poll):
+        nonlocal started
+        if not dola_responder.enabled() or getattr(poll, "status", "") == "succeeded":
+            return
+        messages = chain_messages(getattr(poll, "source_data", None))
+        bots = [m for m in messages if str(m.get("user_type")) == "2"]
+        started = started or bool(getattr(poll, "creation_statuses", None)) or any(
+            generation_started(m) or str((m.get("ext") or {}).get("has_video_gen")) == "1"
+            or str((m.get("ext") or {}).get("ai_creation_tool_list") or "").strip() not in {"", "[]", "{}", "null"}
+            or getattr(dola, "looks_like_generation_accepted", lambda _t: False)(reply_text(m))
+            or wait_seconds_from_reply(reply_text(m)) for m in bots)
+        if started or not bots:
+            return
+        latest = bots[-1]
+        user_index = max((int(m.get("index_in_conv") or 0) for m in messages
+                          if str(m.get("user_type")) == "1"), default=-1)
+        if int(latest.get("index_in_conv") or 0) <= user_index or not reply_finished(latest):
+            return
+        text = reply_text(latest)
+        key = (latest.get("message_id"), text)
+        if key in seen:
+            return seen[key]
+        _emit_upstream_note(on_poll, dola, [text])
+        category = reply_failure(text)
+        if category == "额度不足":
+            raise CreditError(f"{account} 额度不足：{text[:1000]}")
+        if category == "内容拒绝":
+            raise UpstreamReplyError(category, text[:1000], generation_started=False, allow_account_retry=False)
+        _emit_note_text(on_poll, "dola：正在请 AI 判断上游回复")
+        decision = asyncio.run(responder.decide(text))
+        if not decision:
+            raise UpstreamReplyError("上游在等待回复",
+                f"AI 判断失败（{responder.last_error}）：{text[:800]}", generation_started=False)
+        _emit_note_text(on_poll, f"dola AI 判断：{dola_responder.DECISION_ACTIONS[decision['action']]}，{decision['reason']}")
+        if decision['action'] == 'switch_account' and not allow_switch:
+            raise UpstreamReplyError(dola_responder.DECISION_CATEGORIES[decision['category']],
+                f"已生成的分段保留，停止重提整单；AI 判断：{decision['reason']}；上游原文：{text[:800]}",
+                generation_started=True)
+        reply = dola_responder.decision_reply(decision, text)
+        if reply:
+            if not _chat_reply(dola=dola, session=session, ctx=ctx, headers=headers,
+                               conversation_id=conversation_id, text=reply, account=account):
+                raise UpstreamReplyError("网络失败", "AI 代答发送失败，已保留原会话", generation_started=False)
+            _emit_note_text(on_poll, f"dola：已 AI 代答：{reply}")
+        seen[key] = decision['action']
+        return decision['action']
+    return handle
+
+
 def _wait_for_video(dola, session, ctx, conversation_id: str, *, account: str, started_at: float,
                     base_timeout: int, wait_seconds: int, poll_interval, remove_watermark: bool,
-                    proxy: str, on_poll=None, on_deadline=None) -> dict:
+                    proxy: str, on_poll=None, on_deadline=None, on_pending=None) -> dict:
     """等 dola 出片，上限跟着 dola 的预计走；到点时再读一次 dola 最新的预计，变长了就顺延。
 
     返回 get_video_result 的结果（到点仍没出片时 status=timeout）。
@@ -552,6 +618,7 @@ def _wait_for_video(dola, session, ctx, conversation_id: str, *, account: str, s
                 session, ctx, conversation_id,
                 timeout=max(60, int(deadline - time.time())), interval=poll_interval,
                 remove_watermark=remove_watermark, proxy=proxy or "",
+                **({"on_pending": on_pending} if on_pending else {}),
             )
         if result.get("status") != "timeout":
             return result
@@ -803,6 +870,7 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
         parts: list[Path] = list(existing_parts or [])
         pending: list[tuple[int, str]] = []
         plan: dict[str, tuple[float, int]] = {}      # 会话 → (提交时间, dola 预计等待秒数)
+        responders, pending_handlers = {}, {}
 
         def submit(index: int, *, whole: bool) -> str:
             # whole=True：第一次按完整提示词请求（多半直接出满 30 秒）；补段时才带「后半段」提示
@@ -825,6 +893,14 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                 stats["segments"] += 1
             pending.append((index, result.conversation_id))
             plan[result.conversation_id] = (time.time(), 0)
+            if dola_responder.enabled():
+                responder = dola_responder.DialogueResponder(prompt=text, ratio=ratio, duration=segment_duration,
+                    attachments=len(images or []), model=model)
+                responders[result.conversation_id] = responder
+                pending_handlers[result.conversation_id] = _dialogue_handler(
+                    dola=dola, session=session, ctx=ctx, headers=headers,
+                    conversation_id=result.conversation_id, account=account, responder=responder,
+                    on_poll=on_poll, allow_switch=not parts)
             return result.conversation_id
 
         def acknowledge(index: int, conv: str) -> None:
@@ -843,6 +919,8 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                     raise PureApiError(
                         f"{account} 第 {index} 段 dola 在等确认（{_upstream_note(dola, ack)[:120]}），但回话失败")
                 _emit_note_text(on_poll, f"30 秒：第 {index} 段 dola 问要不要按 15 秒生成 → 已回「确认生成」")
+                if conv in responders:
+                    responders[conv].seen.update(ack)
                 ack = _await_acceptance(dola=dola, session=session, ctx=ctx, account=account,
                                         conversation_id=conv, poll_interval=poll_interval,
                                         credits=credits, on_poll=on_poll)
@@ -865,7 +943,8 @@ def _generate_capped_pair(*, dola, session, ctx, headers, account: str, prompt: 
                 base_timeout=timeout, wait_seconds=wait, poll_interval=poll_interval,
                 remove_watermark=remove_watermark, proxy=proxy or "", on_poll=on_poll,
                 on_deadline=(lambda d: on_conversation_id(account, conv, d))
-                if (index == 1 and on_conversation_id) else None)
+                if (index == 1 and on_conversation_id) else None,
+                on_pending=pending_handlers.get(conv))
             part_credits.note(result.get("texts"))
             _emit_upstream_note(on_poll, dola, result.get("texts") or [])
             part_credits.note(result.get("failure_reasons"))
@@ -1334,6 +1413,11 @@ def generate_pure_video(
     conversation_id = submit.conversation_id
     submitted_at = time.time()
     deadline = submitted_at + timeout
+    responder = dola_responder.DialogueResponder(prompt=prompt, ratio=ratio, duration=duration,
+        attachments=len(uploaded_images), model=model)
+    on_pending = (_dialogue_handler(dola=dola, session=session, ctx=ctx, headers=headers,
+        conversation_id=conversation_id, account=account, responder=responder, on_poll=on_poll)
+        if dola_responder.enabled() else None)
     if on_conversation_id:
         try:
             on_conversation_id(account, conversation_id, deadline)
@@ -1348,6 +1432,7 @@ def generate_pure_video(
             duration=int(duration), deadline=deadline,
             poll_interval=poll_interval, on_poll=on_poll,
             credits=credits,
+            on_pending=on_pending,
         )
         if segments:
             # 上游不会自己做剪辑合成，两段 15 秒齐了就在这里用 ffmpeg 拼成 30 秒。
@@ -1396,6 +1481,7 @@ def generate_pure_video(
             # 不等「受理播报」（日文受理话术未必认得出，等不到会误判失败→重提重复扣点）；
             # 直接进下面的出片等待，出片 / 终态都由 _wait_for_video 判定
             _emit_note_text(on_poll, f"dola 询问是否按 {duration} 秒直接生成 → 已回复确认")
+            responder.seen.update(ack_texts)
         # 上游说「预计等待 N 分钟」：出片等待跟着放长（封顶 DOLA_PURE_TIMEOUT_MAX），
         # 否则上游排队久一点就会被我们自己判超时（上游其实还在生成，额度照扣）。
         upstream_wait = _wait_seconds_from_texts(dola, ack_texts)
@@ -1415,7 +1501,7 @@ def generate_pure_video(
             dola, session, ctx, conversation_id, account=account, started_at=submitted_at,
             base_timeout=timeout, wait_seconds=upstream_wait, poll_interval=poll_interval,
             remove_watermark=remove_watermark, proxy=proxy or "", on_poll=on_poll,
-            on_deadline=_on_deadline)
+            on_deadline=_on_deadline, on_pending=on_pending)
     credits.note(result.get("texts"))
     credits.note(result.get("failure_reasons"))
     status = result.get("status")

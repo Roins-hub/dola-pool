@@ -8,6 +8,7 @@ QUOTA_RE = re.compile(
 CONTENT_RE = re.compile(
     r'肖像保[护護]|肖像权|未认证人脸|実在する人物.*(?:対応していません|対応しておりません)|'
     r'审核不通过|未通过.{0,8}审核|内容审核.{0,8}(?:失败|拒绝|违规|不通过)|违反社区|'
+    r'内容安全|安全策略|版权限制|涉及版权|content policy|copyrighted content|face not verified|unverified face|'
     r'copyright.{0,25}(?:infringement|violation|not allowed)|著作権.{0,20}(?:侵害|保護)|portrait protection|'
     r'(?:real people|real person).*(?:not supported|cannot)', re.I | re.S)
 MISSING_RE = re.compile(
