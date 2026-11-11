@@ -37,6 +37,9 @@ jobs:
             echo "Using FFmpeg and ffprobe already installed on the runner"
           else
             echo "Installing missing FFmpeg with bounded network and lock waits"
+            if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+            fi
             apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=30)
             sudo timeout --kill-after=10s 120s apt-get "${apt_options[@]}" update
             sudo timeout --kill-after=10s 300s apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
