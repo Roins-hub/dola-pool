@@ -379,7 +379,18 @@ def probe_login(state_file, proxy: str = "") -> tuple[bool, str]:
     try:
         _load_state(Path(state_file))
         session, ctx, _ = _session(dp, state_file, proxy)
-        return _check_login(dp, session, ctx)
+        ok, reason = _check_login(dp, session, ctx)
+        if ok:
+            import doubao_account
+            kind = doubao_account.from_file(state_file)
+            try:
+                if proxy:
+                    data = dp.dola_api_post_json(session, ctx, "/alice/user/launch", {}, label="account_modes")
+                    kind = doubao_account.launch_type(data, kind)
+                doubao_account.remember(state_file, kind)
+            except Exception:  # 入口识别失败保留 Cookie 分类，不改变登录验证结果。
+                pass
+        return ok, reason
     except Exception as exc:  # noqa: BLE001
         return False, str(exc).replace("\n", " ")[:300]
     finally:

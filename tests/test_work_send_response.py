@@ -137,3 +137,17 @@ def test_late_send_while_filling_does_not_press_enter_again(monkeypatch):
     item.fill_prompt = fill
     assert _run(item.send(PROMPT)) == '123'
     assert page.enters == 0 and len(item.sent) == 1
+
+
+def test_doubao_button_click_without_request_is_not_mistaken_for_submission(monkeypatch):
+    agent, item, page = send_session(monkeypatch, enter_sends=False, button_sends=False)
+    item.site = agent.sites.DOUBAO
+    page.text = 'Creative video ' + PROMPT
+
+    async def no_new_conversation(_since):
+        return True, None
+
+    item.find_conversation = no_new_conversation
+    with pytest.raises(agent.PreSubmissionParametersError, match='尚未提交生成'):
+        _run(item.send(PROMPT))
+    assert page.clicks == 1 and not item.sent and not item.went_out()

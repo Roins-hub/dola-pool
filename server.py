@@ -868,6 +868,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                           last_poll_at=time.time(),
                           # 换号：预计等待清空、本号计时从现在起（倒计时不沿用上一个号的）
                           attempt_started_at=time.time(), upstream_wait=None)
+            if sites.is_doubao_model(model):
+                fields["execution_mode"] = pool.execution_mode_for(account, execution_mode)
             if len(tried_accs) == 1:
                 # started_at 只记首次尝试，否则换号会把出片耗时均值（ETA）拉长
                 fields["started_at"] = time.time()
@@ -3494,23 +3496,26 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         raise HTTPException(404, "account not found")
     if JOBS.get(name, {}).get("status") == "running":
         raise HTTPException(409, "该账号正在执行任务，稍后再试")
+    execution_mode = body.execution_mode
+    if pool.site_of(name) == sites.DOUBAO:
+        execution_mode = pool.execution_mode_for(name, execution_mode)
     # 和客户 API 同一道时长检查：2.0-fast 网页只给 4～10 秒，直接请求 15 秒会被 dola 拒绝（2026-10-30 实测）
     version = _model_version(body.model)
-    if body.execution_mode == "work":
+    if execution_mode == "work":
         error = work_reply.work_request_error(body.model, body.duration)
         if error:
             raise HTTPException(422, error)
         if sites.site_for_model(body.model) != pool.site_of(name):
             raise HTTPException(422, "模型与账号站点不一致；豆包账号请选择 doubao- 开头的模型")
-    if work_reply.uses_work_pair(body.model, body.duration, body.execution_mode):
+    if work_reply.uses_work_pair(body.model, body.duration, execution_mode):
         raise HTTPException(422, "测试生成只用一个号，跑不了 30 秒拼接（要两个号各出 15 秒）")
     if (version == "seedance-2.0" and not sites.is_doubao_model(body.model)
-            and body.execution_mode != "work" and body.duration not in config.V20_DURATIONS):
+            and execution_mode != "work" and body.duration not in config.V20_DURATIONS):
         raise HTTPException(
             422, f"{_public_model(version)} 仅支持 {'/'.join(map(str, config.V20_DURATIONS))} 秒视频"
                  f"（收到 {body.duration} 秒）")
     if not body.force:
-        warnings = pool.test_generate_warnings(name, body.model, body.duration, execution_mode=body.execution_mode)
+        warnings = pool.test_generate_warnings(name, body.model, body.duration, execution_mode=execution_mode)
         if warnings:
             # 前端认 TEST_GEN_WARN: 前缀，弹确认框列出原因，确认后带 force=true 重发
             raise HTTPException(409, "TEST_GEN_WARN:" + "\n".join(warnings))
@@ -3521,7 +3526,7 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         "model": body.model,
         "duration": body.duration,
         "ratio": body.ratio,
-        "execution_mode": body.execution_mode,
+        "execution_mode": execution_mode,
         "video_count": body.video_count,
         "status": "running",
         "started_at": time.time(),
@@ -3529,7 +3534,7 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         "error": "",
     }
     asyncio.create_task(_run_test_generate(
-        task_id, name, body.prompt, body.ratio, body.duration, body.model, body.execution_mode, body.video_count))
+        task_id, name, body.prompt, body.ratio, body.duration, body.model, execution_mode, body.video_count))
     return {"task_id": task_id, "account": name}
 
 

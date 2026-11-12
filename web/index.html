@@ -2067,11 +2067,13 @@ function srcBadge(x){
   if(x.source==='apple')return '<span class="badge b-green">Apple 登录</span>';
   if(x.source==='login')return '<span class="badge b-green" title="Google 账号登录">账号登录</span>';
   if(x.site==='doubao'){
+    const kind={work:'工作号',personal:'个人号'}[x.doubao_account_type]||'待识别';
     const tier={member:'会员',free:'免费号'}[x.tier]||'';
     const wm=x.no_watermark==null?'':(x.no_watermark
       ?'<div class="tiny" title="豆包「AI 生成水印管理」已设为无水印">无水印 ✓</div>'
       :'<div class="tiny" style="color:var(--red)" title="出片右下角会有「豆包AI生成」。DOUBAO_AUTO_NO_WATERMARK=1 时下次探测/出片会自动关；也可在豆包设置 → AI 生成水印管理 里手动关">⚠ 未关水印</div>');
     return '<span class="badge b-blue" title="doubao.com 账号（Cookie 载入），接 doubao-seedance-* 模型">豆包</span>'
+      +'<div class="tiny">'+kind+(kind==='工作号'?' · 仅工作模式':'')+'</div>'
       +(tier?'<div class="tiny">'+tier+'</div>':'')+wm;
   }
   if(x.source==='cookie')return '<span class="badge b-orange" title="Cookie 载入">Cookie 载入</span>';
@@ -2344,12 +2346,16 @@ let testGenPollTimer=null;
 function stopTestGenPoll(){if(testGenPollTimer){clearInterval(testGenPollTimer);testGenPollTimer=null;}}
 function openTestGen(name){
   stopTestGenPoll();
-  const isDoubao=((allAccounts.find(a=>a.name===name)||{}).site==='doubao');
+  const account=allAccounts.find(a=>a.name===name)||{};
+  const isDoubao=account.site==='doubao',workOnly=isDoubao&&account.doubao_account_type==='work';
+  const personalDoubao=isDoubao&&account.doubao_account_type==='personal';
+  const defaultModel=isDoubao?(workOnly?'doubao-seedance-2.0-fast':'doubao-seedance-2.0-mini'):'seedance-2.0-fast';
+  const defaultDuration=workOnly?15:undefined;
   const modelOpts=isDoubao
-    ?`<option value="doubao-seedance-2.0-mini" selected>doubao-seedance-2.0-mini（免费号可用）</option>
-      <option value="doubao-seedance-2.0-fast">doubao-seedance-2.0-fast（免费号可用）</option>
-      <option value="doubao-seedance-2.0">doubao-seedance-2.0（会员，2 倍消耗）</option>
-      <option value="doubao-seedance-2.5">doubao-seedance-2.5（会员，5 倍消耗，最长 30 秒）</option>`
+    ?`<option value="doubao-seedance-2.0-mini"${defaultModel==='doubao-seedance-2.0-mini'?' selected':''}>doubao-seedance-2.0-mini（免费号可用）</option>
+      <option value="doubao-seedance-2.0-fast"${defaultModel==='doubao-seedance-2.0-fast'?' selected':''}>doubao-seedance-2.0-fast（免费号可用）</option>
+      <option value="doubao-seedance-2.0"${defaultModel==='doubao-seedance-2.0'?' selected':''}>doubao-seedance-2.0（会员，2 倍消耗）</option>
+      <option value="doubao-seedance-2.5"${defaultModel==='doubao-seedance-2.5'?' selected':''}>doubao-seedance-2.5（会员，5 倍消耗，最长 30 秒）</option>`
     :`<option value="seedance-2.0-fast" selected>seedance-2.0-fast</option>
       <option value="seedance-2.5">seedance-2.5</option>`;
   showDlg(`<h2>测试生成：${noTr(name)}</h2>
@@ -2360,14 +2366,14 @@ function openTestGen(name){
     </select>
     <label>执行方式</label>
     <select id="tg_mode" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px" onchange="syncTestGenDurations()">
-      <option value="auto" selected>自动（现有生成流程）</option>
-      <option value="work">工作模式（原生视频）</option>
+      <option value="auto"${workOnly?' disabled':' selected'}>自动（现有生成流程）</option>
+      <option value="work"${workOnly?' selected':''}${personalDoubao?' disabled':''}>工作模式（原生视频）</option>
     </select>
     <label>时长（秒）</label>
     <select id="tg_duration" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px" onchange="syncTestGenCount()">
-      ${testGenDurationOptions(isDoubao?'doubao-seedance-2.0-mini':'seedance-2.0-fast')}
+      ${testGenDurationOptions(defaultModel,defaultDuration,workOnly?'work':'auto')}
     </select>
-    <div id="tg_hint" class="tiny" style="margin-top:6px">${testGenHint(isDoubao?'doubao-seedance-2.0-mini':'seedance-2.0-fast')}</div>
+    <div id="tg_hint" class="tiny" style="margin-top:6px">${testGenHint(isDoubao?'doubao-seedance-2.0-mini':'seedance-2.0-fast',workOnly?'work':'auto')}</div>
     <label>本次任务的视频条数</label>
     <select id="tg_count" disabled style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
       <option value="1">1 条</option>

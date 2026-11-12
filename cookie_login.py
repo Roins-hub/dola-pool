@@ -25,6 +25,7 @@ from pathlib import Path
 from patchright.async_api import async_playwright
 
 import config
+import doubao_account
 from browser import EDGE_MARKER, LAUNCH_ARGS, check_login_state, proxy_kwargs_for
 
 try:
@@ -139,6 +140,9 @@ def _write_cookie_state(profile_dir: Path, cookies: list[dict], storage_bundle: 
         },
         "storage": storage_bundle or {},
     }
+    kind = doubao_account.cookie_type(cookies)
+    if kind:
+        state["doubao_account_type"] = kind
     path = profile_dir / "cookie_state.json"
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
@@ -380,8 +384,8 @@ async def import_cookie_account(name: str, cookie_data,
             f"{reason or '浏览器后端不可用'}"
         )
     if site == sites.DOUBAO:
-        # 豆包号只走纯 API（浏览器 profile 那套是给 dola.com 页面准备的）
-        use_browser, reason = False, "豆包号只走纯 API"
+        # 豆包导入先保存 Cookie；生成时按账号类型选择普通或工作入口。
+        use_browser, reason = False, "豆包号通过 Cookie 验证登录"
     engine = "browser" if use_browser else "pure"
     browser_error = "" if use_browser else reason
     session_cookie_present = any(
@@ -495,6 +499,7 @@ async def import_cookie_account(name: str, cookie_data,
     return {
         "ok": True,
         "account": name,
+        "doubao_account_type": doubao_account.from_file(state_file) if site == sites.DOUBAO else "",
         "cookie_count": len(cookies),
         "cookie_state_file": str(state_file),
         "session_cookie_present": session_cookie_present,

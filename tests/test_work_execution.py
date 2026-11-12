@@ -266,6 +266,61 @@ def test_doubao_work_cookie_account_uses_browser_and_its_own_quota(tmp_path, mon
     assert _row(pool, "db")["used_today"] > 0
 
 
+def test_doubao_work_only_cookie_forces_work_mode_in_fixed_account_test(tmp_path, monkeypatch):
+    bp_module, pool = _work_pool(tmp_path, monkeypatch, ["db"])
+    monkeypatch.setattr(config, "PURE_API_ENABLED", True)
+    state = Path(pool.accounts_dir) / "db" / "cookie_state.json"
+    state.write_text(json.dumps({"cookies_list": [
+        {"domain": ".doubao.com", "name": "sessionid", "value": "test"},
+        {"domain": ".doubao.com", "name": "has_biz_token", "value": "true"},
+    ]}), encoding="utf-8")
+    pool.set_source("db", "cookie")
+    assert pool.execution_mode_for("db") == "work"
+    assert next(row for row in pool.list_accounts() if row["name"] == "db")["doubao_account_type"] == "work"
+    monkeypatch.setattr(bp_module, "ensure_web_playable", lambda p: p)
+    calls = []
+
+    async def generate(account, prompt, ratio, **kwargs):
+        calls.append(kwargs)
+        output = tmp_path / "work-only.mp4"
+        output.write_bytes(b"clip")
+        return {"local_path": str(output), "account": account}
+
+    _agent(monkeypatch, generate)
+    result = _run(pool.test_generate("db", "湖面", "16:9", 15,
+                                     "doubao-seedance-2.0-fast", execution_mode="auto"))
+    assert result["ok"] and calls[0]["model"] == "doubao-seedance-2.0-fast"
+
+
+def test_personal_doubao_cookie_keeps_auto_mode(tmp_path, monkeypatch):
+    bp_module, pool = _work_pool(tmp_path, monkeypatch, ["db"])
+    monkeypatch.setattr(config, "PURE_API_ENABLED", True)
+    state = Path(pool.accounts_dir) / "db" / "cookie_state.json"
+    state.write_text(json.dumps({"cookies_list": [
+        {"domain": ".doubao.com", "name": "sessionid", "value": "test"},
+        {"domain": ".doubao.com", "name": "has_biz_token", "value": "false"},
+    ]}), encoding="utf-8")
+    pool.set_source("db", "cookie")
+    assert pool.execution_mode_for("db") == "auto"
+    assert pool.execution_mode_for("db", "work") == "auto"
+    monkeypatch.setattr(bp_module, "ensure_web_playable", lambda p: p)
+    output = tmp_path / "personal.mp4"
+    output.write_bytes(b"clip")
+    work_calls = []
+
+    async def work_generate(*args, **kwargs):
+        work_calls.append((args, kwargs))
+        return {"local_path": str(output)}
+
+    _agent(monkeypatch, work_generate)
+    import doubao_gen
+    monkeypatch.setattr(doubao_gen, "generate_doubao_video", lambda **kwargs: {
+        "local_path": str(output), "account": "db"})
+    result = _run(pool.test_generate("db", "湖面", "16:9", 15,
+                                     "doubao-seedance-2.0-fast", execution_mode="work"))
+    assert result["ok"] and not work_calls
+
+
 def test_short_work_result_preserves_video_and_claims_only_one_quota(tmp_path, monkeypatch):
     bp_module, pool = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
     monkeypatch.setattr(bp_module, "ensure_web_playable", lambda p: p)
@@ -395,6 +450,21 @@ def test_account_endpoint_accepts_native_thirty_and_preserves_fixed_account(tmp_
     assert job["account"] == "acc1" and job["execution_mode"] == "work" and job["duration"] == 30
 
 
+def test_account_endpoint_records_cookie_classified_doubao_work_mode(tmp_path, monkeypatch):
+    server = api_server(tmp_path, monkeypatch)
+    monkeypatch.setattr(server, "_admin_auth", lambda key: "owner")
+    monkeypatch.setattr(server, "TEST_JOBS", {})
+    monkeypatch.setattr(server, "pool", SimpleNamespace(
+        available=True, accounts=["db"], site_of=lambda _name: sites.DOUBAO,
+        execution_mode_for=lambda _name, _requested: "work",
+        test_generate_warnings=lambda *args, **kwargs: [],
+    ))
+    body = server.TestGenRequest(prompt="湖面白鹭", model="doubao-seedance-2.0-fast", duration=15,
+                                 execution_mode="auto", force=True)
+    response = _run(server.admin_test_generate("db", body, None))
+    assert server.TEST_JOBS[response["task_id"]]["execution_mode"] == "work"
+
+
 def batch_chain(*vids, finished=False):
     value = bot('本任务已完成，免费额度用完，未额外生成' if finished else '正在处理', finished=finished, tool=True)
     value['results'] = [{'video_model': json.dumps({'vid': vid, 'video_duration':15})} for vid in vids]
@@ -510,7 +580,7 @@ def test_doubao_uses_send_button_without_accepting_an_enter_suggestion(monkeypat
     item.site=sites.DOUBAO
     assert _run(item.press_send()) is True
     assert page.clicks==1 and page.enters==0
-    assert item.went_out() is True
+    assert item.submit_clicked and item.went_out() is False
 
 
 def test_full_prompt_check_rejects_a_skill_example_containing_the_requested_text(monkeypatch):

@@ -445,6 +445,7 @@ class BrowserPool:
             # ---- 2.7.4：工作模式（2.0 的 15 秒）单独的额度：每号 7 天 1 条 ----
             ("work_blocked_until", "REAL DEFAULT 0"),
             ("work_block_reason", "TEXT DEFAULT ''"),
+            ("doubao_account_type", "TEXT DEFAULT ''"),
         ):
             try:
                 self._conn.execute(f"ALTER TABLE accounts_meta ADD COLUMN {column} {definition}")
@@ -459,6 +460,8 @@ class BrowserPool:
         self._conn.commit()
         self._engine: _PoolEngine | None = None
         self.backfill_sources()
+        for name in self.accounts:
+            self.refresh_doubao_account_type(name)
 
     def backfill_sources(self) -> list[str]:
         """来源一栏为空的老账号补成「账号登录」：有浏览器资料、没有 cookie_state.json 的就是登录加的号。
@@ -522,6 +525,26 @@ class BrowserPool:
             "UPDATE accounts_meta SET source=? WHERE name=?", (source or "", name)
         )
         self._conn.commit()
+        self.refresh_doubao_account_type(name)
+
+    def refresh_doubao_account_type(self, name: str) -> str:
+        import doubao_account
+        path = self.accounts_dir / name / "cookie_state.json"
+        kind = doubao_account.from_file(path) if self.site_of(name) == sites.DOUBAO else ""
+        row = self._meta(name)
+        if row and row["doubao_account_type"] != kind:
+            self._conn.execute("UPDATE accounts_meta SET doubao_account_type=? WHERE name=?", (kind, name))
+            self._conn.commit()
+        return kind
+
+    def execution_mode_for(self, name: str, requested: str = "auto") -> str:
+        row = self._meta(name)
+        if row and self.site_of(name) == sites.DOUBAO:
+            if row["doubao_account_type"] == "work":
+                return "work"
+            if row["doubao_account_type"] == "personal":
+                return "auto"
+        return requested
 
     def ensure_account(self, name: str) -> None:
         """确保账号在 accounts_meta 有行（新账号打标/写邮箱前调用）。"""
@@ -959,6 +982,7 @@ class BrowserPool:
             limit = config.DOUBAO_DAILY_LIMIT if site == sites.DOUBAO else DAILY_LIMIT
             out.append({
                 "site": site,
+                "doubao_account_type": m["doubao_account_type"] if m else "",
                 "tier": (m["tier"] if m and "tier" in m.keys() else "") or "",
                 "no_watermark": (m["no_watermark"] if m and "no_watermark" in m.keys() else None),
                 "name": a,
@@ -1369,6 +1393,8 @@ class BrowserPool:
             ok, msg = await asyncio.to_thread(
                 login_probe, pure_state, proxy=self._proxy_url_for(name),
             )
+            if self.site_of(name) == sites.DOUBAO:
+                self.refresh_doubao_account_type(name)
             if not ok:
                 reason = str(msg or "")[:200]
                 print(f"[verify] {name} pure_probe -> ok=False reason={reason}", flush=True)
@@ -2017,7 +2043,7 @@ class BrowserPool:
 
         pure_state = self._pure_state(account)
         site = self.site_of(account)
-        work_mode = work_mode or uses_work_mode(model, duration)
+        work_mode = work_mode or uses_work_mode(model, duration) or self.execution_mode_for(account) == "work"
         if site == sites.DOUBAO or sites.is_doubao_model(model):
             if site != sites.DOUBAO or not sites.is_doubao_model(model):
                 raise RuntimeError(f"{account} 是 {sites.SITE_LABELS[site]} 号，接不了模型 {model}")
@@ -2118,6 +2144,7 @@ class BrowserPool:
             proxied = bool(self._proxy_url_for(account))
         except Exception:  # noqa: BLE001
             proxied = True
+        execution_mode = self.execution_mode_for(account, execution_mode)
         if not proxied and uses_work_mode(model, duration, execution_mode):
             out.append("工作模式需要绑定启用的账号代理，缺少代理时不会提交")
         elif not proxied and row.get("site") != sites.DOUBAO:
@@ -2147,6 +2174,7 @@ class BrowserPool:
             model = "doubao-seedance-2.0-mini"
             duration = max(sites.DOUBAO_MIN_DURATION, min(15, int(duration or 5)))
         lock = self._locks.setdefault(account, asyncio.Lock())
+        execution_mode = self.execution_mode_for(account, execution_mode)
         using_work = uses_work_mode(model, duration, execution_mode)
         weekly = using_work and not sites.is_doubao_model(model)
         async with self.semaphore, self._use_account(account, "generating"):
@@ -2622,6 +2650,9 @@ class BrowserPool:
                     # 站点要对上：dola 模型只派 dola 号，豆包模型只派豆包号
                     if a.get("site", sites.DOLA) != want_site:
                         continue
+                    account_work = browser_work
+                    if want_site == sites.DOUBAO:
+                        account_work = self.execution_mode_for(a["name"], execution_mode) == "work"
                     # 会员模型（豆包 2.0 标准版 / 2.5）不派给已知的免费号
                     if member_only and a.get("tier") == "free":
                         continue
@@ -2683,7 +2714,7 @@ class BrowserPool:
                         if not dispatched:
                             dispatched = True
                             if attempt_timeout is not None:
-                                window = max(attempt_timeout, config.WORK_RETRY_SECONDS) if browser_work else attempt_timeout
+                                window = max(attempt_timeout, config.WORK_RETRY_SECONDS) if account_work else attempt_timeout
                                 deadline = time.time() + window
                             if on_dispatch:
                                 on_dispatch()
@@ -2751,7 +2782,7 @@ class BrowserPool:
                                         on_conversation_id=acknowledged, on_poll=on_poll,
                                         on_balance=on_balance,
                                         reference_image_paths=reference_image_paths,
-                                        on_retry=restarted, work_mode=browser_work, video_count=video_count)
+                                        on_retry=restarted, work_mode=account_work, video_count=video_count)
                             except TimeoutError:
                                 if preparation.expired():
                                     raise TimeoutError(

@@ -391,6 +391,35 @@ def test_dispatch_routes_by_site_and_tier(tmp_path, monkeypatch):
     assert res["account"] == "acc1"
 
 
+@pytest.mark.parametrize("kind,requested,expected_work", [
+    ("work", "auto", True),
+    ("personal", "work", False),
+])
+def test_auto_dispatch_uses_cookie_account_kind_for_doubao_route(
+        tmp_path, monkeypatch, kind, requested, expected_work):
+    _browser_pool, bp = _pool(tmp_path, monkeypatch, dola=(), doubao=("db1",))
+    state = Path(bp.accounts_dir) / "db1" / "cookie_state.json"
+    state.write_text(json.dumps({"cookies_list": [
+        {"name": "sessionid", "value": "db1", "domain": ".doubao.com"},
+        {"name": "has_biz_token", "value": "true" if kind == "work" else "false",
+         "domain": ".doubao.com"},
+    ]}), encoding="utf-8")
+    bp.set_source("db1", "cookie")
+    output = tmp_path / f"{kind}.mp4"
+    output.write_bytes(b"clip")
+    calls = []
+
+    async def fake(account, prompt, ratio, duration, model, **kwargs):
+        calls.append(kwargs["work_mode"])
+        return {"account": account, "local_path": str(output)}
+
+    bp._generate_effective = fake
+    result = _run(bp.generate_video(
+        "湖面", "16:9", 15, "doubao-seedance-2.0-fast",
+        execution_mode=requested, max_attempts=1))
+    assert result["account"] == "db1" and calls == [expected_work]
+
+
 def test_doubao_model_without_doubao_accounts_fails_fast(tmp_path, monkeypatch):
     _browser_pool, bp = _pool(tmp_path, monkeypatch, doubao=())
     with pytest.raises(RuntimeError, match="没有豆包号"):

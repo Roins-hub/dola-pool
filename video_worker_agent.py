@@ -627,9 +627,9 @@ class _WorkSession:
         raise PreSubmissionParametersError(f"{self.account} 工作模式提示词没有写进输入框")
 
     def went_out(self) -> bool:
-        """已点击豆包发送、看到请求或页面进入新会话；结果不明时不重新提交。"""
+        """看到提交请求或页面进入新会话；单纯点击按钮不算上游已收到。"""
         url = self.page.url
-        return self.submit_clicked or bool(self.sent) or (url != self.url_before and bool(re.search(r"/chat/(local_|\d)", url)))
+        return bool(self.sent) or (url != self.url_before and bool(re.search(r"/chat/(local_|\d)", url)))
 
     async def wait_sent(self, seconds: int) -> bool:
         for _ in range(seconds):
@@ -643,7 +643,7 @@ class _WorkSession:
         page = self.page
         self.url_before = page.url
         if self.site == sites.DOUBAO:
-            # 工作输入框的回车可能接受技能示例。明确点发送，点击后只查原会话，不重新填写。
+            # 工作输入框的回车可能接受技能示例。点击后必须等到真实请求或新会话。
             button = page.locator('[data-testid="chat_input_send_button"]:visible')
             if not await button.count() or not await button.first.is_enabled():
                 return False
@@ -691,9 +691,9 @@ class _WorkSession:
                 if self.went_out() or await self.press_send():
                     break
             except Exception as exc:
-                if not browser_error(exc) or not self.went_out():
+                if not browser_error(exc) or not (self.went_out() or self.submit_clicked):
                     raise
-                # 前端迟到发出请求并重绘后，旧输入框会消失；接着取会话，避免重输或漏记。
+                # 点击期间前端可能迟到发出请求；进入只读核对，不重新填写或点击。
                 break
             self.raise_if_send_failed()
             await self.raise_if_blocked()
@@ -701,6 +701,18 @@ class _WorkSession:
         else:
             left = (await self.composer_text()).strip()[:40]
             raise PreSubmissionParametersError(f"{self.account} 工作模式请求没有发出去（输入框内容：{left or '空'}）")
+        if self.site == sites.DOUBAO and self.submit_clicked and not self.went_out():
+            if not await self.wait_sent(15):
+                self.raise_if_send_failed()
+                self.raise_if_rejected()
+                known, conversation = await self.find_conversation(sent_at)
+                if conversation:
+                    return conversation
+                if known:
+                    raise PreSubmissionParametersError(
+                        f"{self.account} 点击发送后未产生提交请求或新会话，尚未提交生成")
+                raise TimeoutError(
+                    f"{self.account} 点击发送后未取得请求或会话状态，结果不明，不换号重提")
         for _ in range(CONVERSATION_WAIT_SECONDS):
             self.raise_if_rejected()
             match = re.search(r"/chat/(\d+)", page.url)
