@@ -2199,6 +2199,9 @@ class BrowserPool:
                 return {"ok": False, "account": account, "error": f"登录态失效: {exc}"}
             except FileNotFoundError as exc:
                 return {"ok": False, "account": account, "error": f"profile 缺失: {exc}"}
+            except WorkQuotaError as exc:
+                self._mark_work_blocked(account, exc.until, str(exc))
+                return {"ok": False, "account": account, "error": str(exc)[:1500]}
             except DoubaoModelLockedError as exc:
                 self.set_tier(account, "free")
                 return {"ok": False, "account": account, "error": str(exc)[:300]}

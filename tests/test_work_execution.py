@@ -125,6 +125,25 @@ def test_short_work_result_preserves_video_and_claims_only_one_quota(tmp_path, m
     assert not _row(pool, "acc2")["work_blocked_until"]
 
 
+def test_fixed_account_work_quota_refusal_saves_reopen_time_without_daily_charge_or_rotation(tmp_path, monkeypatch):
+    _, pool = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
+    from generation_errors import WorkQuotaError
+    until = time.time() + 2 * 86400
+    calls = []
+
+    async def generate(account, *args, **kwargs):
+        calls.append(account)
+        raise WorkQuotaError("7日間の無料利用分の上限に到達しました。", until=until)
+
+    _agent(monkeypatch, generate)
+    result = _run(pool.test_generate("acc1", "湖面", "16:9", 15, "seedance-2.0-fast", execution_mode="work"))
+    row = _row(pool, "acc1")
+    assert result["ok"] is False and not result.get("recoverable")
+    assert calls == ["acc1"] and row["work_blocked_until"] == until
+    assert row["used_today"] == 0 and not row["quota_blocked"] and not row["rate_limited"]
+    assert not pool._fail_streak.get("acc1") and not _row(pool, "acc2")["work_blocked_until"]
+
+
 @pytest.mark.parametrize("model,seconds", [("seedance-2.0-fast", 30), ("doubao-seedance-2.0-fast", 15)])
 def test_explicit_work_recovery_reads_original_without_pair_or_resubmission(tmp_path, monkeypatch, model, seconds):
     server, pool = work_server(tmp_path, monkeypatch, [{"local_path": str(tmp_path / "late.mp4")}])
