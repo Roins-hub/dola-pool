@@ -1,5 +1,8 @@
 """技能按稳定身份解析改名；名称匹配兼容界面变动，仍校验选中结果。"""
 from types import SimpleNamespace
+import json
+import shutil
+import subprocess
 
 import pytest
 
@@ -52,6 +55,124 @@ def test_doubao_attaches_the_official_skill_through_the_live_editor(monkeypatch)
     _run(item.choose_skill())
     assert references == [item.skill_reference] and _run(item.skill_selected())
     assert not page.keys and not item.sent
+
+
+def test_filtered_skill_response_preserves_the_loaded_official_reference(monkeypatch):
+    import sites
+
+    _, item = session(monkeypatch, SkillPage())
+    item.site = sites.DOUBAO
+    item.remember_skill_listing({'skills': [{'name': 'doubao-creative-video', 'display_name': '创意视频',
+                                            'external_skill_id': 'official-id', 'type': 2}]})
+    reference = dict(item.skill_reference)
+    item.remember_skill_listing({'skills': []})
+    item.remember_skill_listing({'skills': [{'name': 'other-skill', 'display_name': '其他技能'}]})
+    assert item.skill_reference == reference and item.skill_labels == ['创意视频']
+
+
+@pytest.mark.parametrize('lost_selection', [False, True])
+def test_doubao_retries_skill_selection_when_the_editor_remounts(monkeypatch, lost_selection):
+    import sites
+
+    page = SkillPage('创意视频')
+    agent, item = session(monkeypatch, page)
+    item.site = sites.DOUBAO
+    item.remember_skill_listing({'skills': [{'name': 'doubao-creative-video', 'display_name': '创意视频',
+                                            'external_skill_id': 'official-id', 'type': 2}]})
+    original, attempts, waits = page.evaluate, [], []
+
+    async def evaluate(script, args):
+        if script == agent.SELECT_SKILL_JS:
+            attempts.append(args['reference'])
+            if len(attempts) == 1:
+                return lost_selection
+            page.selected = args['reference']['label']
+            return True
+        if script == agent.SKILLS_JS:
+            pytest.fail('the already loaded reference must be reused')
+        return await original(script, args)
+
+    async def pause(ms):
+        waits.append(ms)
+
+    page.evaluate, page.wait_for_timeout = evaluate, pause
+    _run(item.choose_skill())
+    assert len(attempts) == 2 and 2000 in waits
+    assert _run(item.skill_selected()) and not item.sent and not page.typed
+
+
+def test_unavailable_editor_stops_after_three_attempts_before_sending(monkeypatch):
+    import sites
+
+    page = SkillPage('创意视频')
+    agent, item = session(monkeypatch, page)
+    item.site = sites.DOUBAO
+    item.remember_skill_listing({'skills': [{'name': 'doubao-creative-video', 'display_name': '创意视频',
+                                            'external_skill_id': 'official-id', 'type': 2}]})
+    original, attempts = page.evaluate, []
+
+    async def evaluate(script, args):
+        if script == agent.SELECT_SKILL_JS:
+            attempts.append(True)
+            return False
+        return await original(script, args)
+
+    page.evaluate = evaluate
+    with pytest.raises(agent.PreSubmissionParametersError, match='技能编辑器未就绪') as caught:
+        _run(item.choose_skill())
+    assert len(attempts) == 3 and 'HTTP None' not in str(caught.value)
+    assert not item.sent and not page.typed
+
+
+@pytest.mark.parametrize('preceding_node', ['hidden-textarea', 'visible-textarea', 'destroyed-editor'])
+def test_live_editor_javascript_ignores_stale_composers(monkeypatch, preceding_node):
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node is required to execute composer JavaScript')
+    agent, _ = session(monkeypatch, SkillPage())
+    scripts = {name: getattr(agent, name) for name in
+               ('COMPOSER_TEXT_JS', 'SELECT_SKILL_JS', 'SELECTED_SKILLS_JS', 'REPLACE_DRAFT_JS', 'EDITOR_READY_JS')}
+    source = r'''
+const assert = require('node:assert/strict');
+const {scripts, preceding} = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+let doc = {type: 'doc', content: [{type: 'paragraph', content: [
+  {type: 'mention', attrs: {mentionType: 'file', id: 'image'}},
+  {type: 'text', text: 'example prompt'}]}]};
+const editor = {getJSON: () => doc, commands: {setContent: value => {doc = value; return true;}, focus: () => {}}};
+const live = {
+  tagName: 'DIV', editor, getClientRects: () => [{}],
+  querySelectorAll: () => doc.content.flatMap(p => p.content || [])
+    .filter(n => n.type === 'mention' && n.attrs.mentionType === 'skill')
+    .map(n => ({innerText: n.attrs.label})),
+  cloneNode: () => ({querySelectorAll: () => [], get textContent() {
+    return doc.content.flatMap(p => p.content || []).filter(n => n.type === 'text').map(n => n.text).join('');
+  }})
+};
+const stale = {tagName: 'TEXTAREA', value: 'wrong draft', getClientRects: () => [{}]};
+if (preceding === 'hidden-textarea') stale.getClientRects = () => [];
+if (preceding === 'destroyed-editor') stale.editor = {...editor, isDestroyed: true,
+  commands: {setContent: () => assert.fail('destroyed editor was changed')}};
+global.document = {querySelectorAll: () => [stale, live]};
+const call = (name, args) => eval('(' + scripts[name] + ')')(args);
+const selector = 'textarea, [contenteditable="true"]';
+const reference = {id: 'doubao-creative-video', skillId: 'doubao-creative-video',
+  mentionType: 'skill', label: '创意视频', external_skill_id: 'official-id', type: 2};
+assert.equal(call('EDITOR_READY_JS', selector), true);
+assert.equal(call('COMPOSER_TEXT_JS', selector), 'example prompt');
+assert.equal(call('SELECT_SKILL_JS', {selector, reference}), true);
+assert.equal(call('SELECTED_SKILLS_JS', selector), '创意视频');
+assert.equal(call('REPLACE_DRAFT_JS', {selector, text: 'current task prompt'}), true);
+assert.equal(call('COMPOSER_TEXT_JS', selector).trim(), 'current task prompt');
+const mentions = doc.content.flatMap(p => p.content || []).filter(n => n.type === 'mention');
+assert.equal(mentions.length, 2);
+assert(mentions.some(n => n.attrs.id === 'image'));
+assert(mentions.some(n => n.attrs.skillId === 'doubao-creative-video'));
+assert.equal(stale.value, 'wrong draft');
+'''
+    result = subprocess.run([node, '-e', source],
+                            input=json.dumps({'scripts': scripts, 'preceding': preceding_node}),
+                            text=True, encoding='utf-8', capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize('code,success', [(0, True), (710022002, False)])

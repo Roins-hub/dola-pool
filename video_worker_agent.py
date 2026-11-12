@@ -54,6 +54,7 @@ SKILL_RE = re.compile(r"^(?!.*(?:analysis|analy[sz]|分析))[^\r\n]*"
 WORK_TAB_RE = re.compile(r"^(ワーク|工作|Work)$")
 UPLOAD_ITEM_RE = re.compile(r"ファイルまたは画像|上传文件|Upload file", re.I)
 COMPOSER = 'textarea, [contenteditable="true"]'
+VISIBLE_COMPOSER = 'textarea:visible, [contenteditable="true"]:visible'
 CONFIRM_OPTION_RE = re.compile(r"^\s*(?:确认|確認|開始|开始)(?:生成|视频生成)?[。！!]?\s*$")
 POLL_SECONDS = 10
 # 回复写完后等这么多轮还没动静，才算助手在等回答
@@ -80,8 +81,14 @@ CLOSE_SECONDS = 30
 LIMIT_RE = re.compile(r"(今日|本日|今天).{0,12}(额度|額度|次数|回数|上限).{0,12}(用完|用尽|已满|達し|到达|上限)|1日あたりの上限")
 THROTTLE_NOTE = "710022002 工作模式请求被 dola 拒绝，页面随后要退出登录（已拦下）"
 
+COMPOSER_NODE_JS = r"""
+  const boxes = [...document.querySelectorAll(selector)].filter(node =>
+    node.getClientRects().length && !node.editor?.isDestroyed);
+  const box = boxes.find(node => node.editor?.getJSON && node.editor?.commands?.setContent) || boxes[0];
+"""
+
 COMPOSER_TEXT_JS = r"""(selector) => {
-  const box = document.querySelector(selector);
+""" + COMPOSER_NODE_JS + r"""
   if (!box) return '';
   if (box.tagName === 'TEXTAREA') return box.value || '';
   const copy = box.cloneNode(true);
@@ -90,7 +97,8 @@ COMPOSER_TEXT_JS = r"""(selector) => {
 }"""
 
 REPLACE_DRAFT_JS = r"""({selector, text}) => {
-  const editor = document.querySelector(selector)?.editor;
+""" + COMPOSER_NODE_JS + r"""
+  const editor = box?.editor;
   if (!editor?.getJSON || !editor?.commands?.setContent) return false;
   const mentions = [];
   const walk = node => {
@@ -107,7 +115,8 @@ REPLACE_DRAFT_JS = r"""({selector, text}) => {
 }"""
 
 SELECT_SKILL_JS = r"""({selector, reference}) => {
-  const editor = document.querySelector(selector)?.editor;
+""" + COMPOSER_NODE_JS + r"""
+  const editor = box?.editor;
   if (!editor?.getJSON || !editor?.commands?.setContent) return false;
   const references = [];
   const walk = node => {
@@ -123,12 +132,12 @@ SELECT_SKILL_JS = r"""({selector, reference}) => {
 }"""
 
 SELECTED_SKILLS_JS = r"""(selector) => {
-  const box = document.querySelector(selector);
+""" + COMPOSER_NODE_JS + r"""
   return box ? [...box.querySelectorAll('.node-mention')].map(el => el.innerText || '').join('\n') : '';
 }"""
 
 EDITOR_READY_JS = r"""(selector) => [...document.querySelectorAll(selector)].some(box =>
-  box.getClientRects().length && box.editor?.getJSON && box.editor?.commands?.setContent)
+  box.getClientRects().length && !box.editor?.isDestroyed && box.editor?.getJSON && box.editor?.commands?.setContent)
 """
 
 # 只看当前会话那一行：别的旧会话也可能挂着「一時停止中」
@@ -138,18 +147,20 @@ PAUSED_JS = r"""(conversationId) => {
 }"""
 
 QUESTION_JS = r"""(selector) => {
-  let node = document.querySelector(selector);
+""" + COMPOSER_NODE_JS + r"""
+  let node = box;
   for (let i = 0; node && i < 6; i++) node = node.parentElement;
   return node ? node.innerText.slice(0, 1500) : '';
 }"""
 
 PASTE_JS = r"""async ({selector, files}) => {
+""" + COMPOSER_NODE_JS + r"""
   const data = new DataTransfer();
   for (const f of files) {
     const bytes = Uint8Array.from(atob(f.data), c => c.charCodeAt(0));
     data.items.add(new File([bytes], f.name, {type: f.type}));
   }
-  const target = document.querySelector(selector);
+  const target = box;
   if (!target) return false;
   target.focus();
   target.dispatchEvent(new ClipboardEvent('paste', {bubbles: true, cancelable: true, clipboardData: data}));
@@ -356,7 +367,9 @@ class _WorkSession:
         labels = video_skill_labels(data, self.site)
         if labels:
             self.skill_labels = labels
-        self.skill_reference = video_skill_reference(data, self.site)
+        reference = video_skill_reference(data, self.site)
+        if reference:
+            self.skill_reference = reference
 
     async def read_send_response(self, response):
         """提交被 HTTP 或 JSON 明确拒绝时立即报告，流式成功响应交给原会话轮询。"""
@@ -439,7 +452,7 @@ class _WorkSession:
             await page.goto(self.base + "/chat/", timeout=120000, wait_until="domcontentloaded")
             for _ in range(45):
                 raise_if_region_restricted(page, self.account)
-                if await page.locator(COMPOSER).count():
+                if await page.locator(VISIBLE_COMPOSER).count():
                     break
                 await page.wait_for_timeout(1000)
             else:
@@ -463,7 +476,7 @@ class _WorkSession:
                 if urlsplit(self.page.url).path.rstrip("/") != "/chat/new-thread":
                     emit_feedback(self.on_poll, progress="豆包工作模式：初始化工作对话")
                     await self.page.goto(self.base + "/chat/new-thread", timeout=120000, wait_until="domcontentloaded")
-                await self.page.locator(COMPOSER).first.wait_for(state="visible", timeout=45000)
+                await self.page.locator(VISIBLE_COMPOSER).first.wait_for(state="visible", timeout=45000)
                 await self.page.wait_for_function(EDITOR_READY_JS, arg=COMPOSER, timeout=45000)
                 await self.raise_if_blocked()
                 return
@@ -551,35 +564,40 @@ class _WorkSession:
         if await self.skill_selected():
             return
         if self.site == sites.DOUBAO:
+            status, code = None, None
             for attempt in range(3):
-                if self.skill_reference:
-                    break
-                # 独立“豆包工作”工作区没有技能按钮；直接读取浏览器自己的官方技能列表。
-                result = await page.evaluate(SKILLS_JS, {"query": await self.chain_query()})
-                if result.get("status") == 200:
-                    try:
-                        data = json.loads(result.get("text") or "{}")
-                    except ValueError:
-                        data = {}
-                    if isinstance(data, dict) and data.get("code") in (0, "0", 2000, "2000"):
-                        self.remember_skill_listing(data)
-                    elif isinstance(data, dict) and data.get("code") is not None:
-                        break
-                if not self.skill_reference and attempt < 2:
+                if not self.skill_reference:
+                    # 独立工作区没有技能按钮，读取当前账号的官方列表。
+                    result = await page.evaluate(SKILLS_JS, {"query": await self.chain_query()})
+                    status = result.get("status")
+                    if status == 200:
+                        try:
+                            data = json.loads(result.get("text") or "{}")
+                        except ValueError:
+                            data = {}
+                        code = data.get("code") if isinstance(data, dict) else None
+                        if code in (0, "0", 2000, "2000"):
+                            self.remember_skill_listing(data)
+                        elif code is not None:
+                            break
+                if self.skill_reference and await page.evaluate(SELECT_SKILL_JS,
+                        {"selector": COMPOSER, "reference": self.skill_reference}):
+                    await page.wait_for_timeout(1500)
+                    if await self.skill_selected():
+                        return
+                if attempt < 2:
                     await self.raise_if_blocked()
-                    emit_feedback(self.on_poll, progress="豆包工作模式：等待视频技能加载")
+                    emit_feedback(self.on_poll, progress="豆包工作模式：等待视频技能编辑器就绪")
                     await page.wait_for_timeout(2000)
-            if (not self.skill_reference or not await page.evaluate(SELECT_SKILL_JS,
-                    {"selector": COMPOSER, "reference": self.skill_reference})):
-                await self.raise_if_blocked()
-                raise PreSubmissionParametersError(f"{self.account} 无法加载账号的视频技能引用，尚未发送生成")
-            await page.wait_for_timeout(1500)
-            if not await self.skill_selected():
-                raise PreSubmissionParametersError(f"{self.account} 视频技能没有进入输入框，尚未发送生成")
-            return
+            await self.raise_if_blocked()
+            detail = "技能编辑器未就绪" if self.skill_reference else "官方列表未返回技能"
+            codes = f"，HTTP {status}" if isinstance(status, int) else ""
+            if isinstance(code, (int, str)) and re.fullmatch(r"\d{1,12}", str(code)):
+                codes += f"，code={code}"
+            raise PreSubmissionParametersError(f"{self.account} 无法加载账号的视频技能引用（{detail}{codes}），尚未发送生成")
         found = False
         for _ in range(3):
-            await page.locator(COMPOSER).first.click(timeout=8000)
+            await page.locator(VISIBLE_COMPOSER).first.click(timeout=8000)
             await page.keyboard.type("/", delay=120)
             await page.wait_for_timeout(3000)
             # 它排在菜单下方的分组里，列表没加载完就找不到；输入名字让菜单筛选出来
@@ -648,7 +666,7 @@ class _WorkSession:
                         or not await page.evaluate(REPLACE_DRAFT_JS, {"selector": COMPOSER, "text": text})):
                     raise PreSubmissionParametersError(f"{self.account} 工作模式输入框包含非本次任务内容，尚未发送生成")
             else:
-                await page.locator(COMPOSER).first.click(timeout=8000)
+                await page.locator(VISIBLE_COMPOSER).first.click(timeout=8000)
                 await page.keyboard.insert_text(text)
             await page.wait_for_timeout(1500)
             current = re.sub(r"\s+", "", await self.composer_text())
@@ -709,7 +727,7 @@ class _WorkSession:
             return
         if await self.page.get_by_text(WORK_TAB_RE).count():
             await self.enter_work_mode()
-        elif not await self.page.locator(COMPOSER).count():
+        elif not await self.page.locator(VISIBLE_COMPOSER).count():
             await self.raise_if_blocked()
             raise PreSubmissionParametersError(f"{self.account} 工作模式输入框不见了")
         await self.choose_skill()
@@ -831,7 +849,7 @@ class _WorkSession:
         """打字回复。选择题卡片有自己的输入框（「または、自分の回答を入力してください」）时填那里。"""
         page = self.page
         box = page.get_by_placeholder(ASK_INPUT_RE)
-        target = box.last if await box.count() else page.locator(COMPOSER).first
+        target = box.last if await box.count() else page.locator(VISIBLE_COMPOSER).first
         await target.click(timeout=8000)
         await page.keyboard.insert_text(reply)
         await page.wait_for_timeout(1000)
