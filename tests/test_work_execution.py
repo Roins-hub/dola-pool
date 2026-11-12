@@ -62,6 +62,32 @@ def test_doubao_uses_its_own_page_query_and_requested_ai_parameters(monkeypatch)
     assert item.page_query.startswith(item.base)
 
 
+@pytest.mark.parametrize('label,logged_out', [('登录', True), ('登录 / 注册', True), ('登录/注册', True),
+                                           ('登录 ／ 注册', True), ('工作', False)])
+def test_doubao_login_selector_avoids_unescaped_regex_delimiter(monkeypatch,label,logged_out):
+    agent = load_agent(monkeypatch)
+    page = Page([])
+
+    class Button:
+        first = None
+
+        def __init__(self,count):
+            self.value=count
+            self.first=self
+
+        async def count(self):return self.value
+        async def is_visible(self):return True
+
+    def by_role(role,name):
+        # CloakBrowser serializes the regex in a /.../ selector without escaping /.
+        assert '/' not in name.pattern
+        return Button(int(bool(name.fullmatch(label))))
+
+    page.get_by_role=by_role
+    item=agent._WorkSession('db',page,None,model='doubao-seedance-2.0-fast')
+    assert _run(item.logged_out()) is logged_out
+
+
 def test_native_thirty_dispatch_uses_one_account_without_pair(tmp_path, monkeypatch):
     bp_module, pool = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
     monkeypatch.setattr(bp_module, "ensure_web_playable", lambda p: p)

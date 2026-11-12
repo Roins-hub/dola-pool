@@ -340,7 +340,7 @@ class _WorkSession:
         if await is_logged_out(self.page):
             return True
         if self.site == sites.DOUBAO:
-            button = self.page.get_by_role("button", name=re.compile(r"^(登录|登录 / 注册|登录/注册)$"))
+            button = self.page.get_by_role("button", name=re.compile(r"^登录(?:\s*.?\s*注册)?$"))
             return bool(await button.count() and await button.first.is_visible())
         return False
 
