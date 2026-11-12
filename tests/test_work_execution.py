@@ -88,6 +88,33 @@ def test_doubao_login_selector_avoids_unescaped_regex_delimiter(monkeypatch,labe
     assert _run(item.logged_out()) is logged_out
 
 
+def test_doubao_enters_visible_work_button_instead_of_hidden_matching_text(monkeypatch):
+    agent = load_agent(monkeypatch)
+    page = Page([])
+    calls = []
+
+    class Control:
+        first = None
+
+        def __init__(self):self.first=self
+        async def count(self):return 1
+        async def click(self,**kwargs):calls.append('clicked')
+        async def wait_for(self,**kwargs):calls.append('ready')
+
+    def by_role(role,name,exact):
+        assert (role,name,exact)==('button','工作',True)
+        return Control()
+
+    page.get_by_role=by_role
+    page.get_by_text=lambda *a,**k: pytest.fail('hidden text locator must not be used')
+    page.locator=lambda selector:Control()
+    item=agent._WorkSession('db',page,None,model='doubao-seedance-2.0-fast')
+    async def allowed():pass
+    item.raise_if_blocked=allowed
+    _run(item.enter_work_mode())
+    assert calls==['clicked','ready']
+
+
 def test_native_thirty_dispatch_uses_one_account_without_pair(tmp_path, monkeypatch):
     bp_module, pool = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
     monkeypatch.setattr(bp_module, "ensure_web_playable", lambda p: p)

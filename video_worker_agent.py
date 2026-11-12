@@ -377,7 +377,8 @@ class _WorkSession:
         await dismiss_popups(page)
 
     async def enter_work_mode(self):
-        tab = self.page.get_by_text(WORK_TAB_RE)
+        tab = (self.page.get_by_role("button", name="工作", exact=True) if self.site == sites.DOUBAO
+               else self.page.get_by_text(WORK_TAB_RE))
         if not await tab.count():
             await self.raise_if_blocked()
             raise PreSubmissionParametersError(f"{self.account} 页面上没有工作模式入口")
