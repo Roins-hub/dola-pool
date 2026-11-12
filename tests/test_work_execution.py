@@ -96,8 +96,8 @@ def test_doubao_enters_visible_work_button_instead_of_hidden_matching_text(monke
     class Control:
         first = None
 
-        def __init__(self):self.first=self
-        async def count(self):return 1
+        def __init__(self,count=1):self.first,self.value=self,count
+        async def count(self):return self.value
         async def click(self,**kwargs):calls.append('clicked')
         async def wait_for(self,**kwargs):calls.append('ready')
 
@@ -107,12 +107,33 @@ def test_doubao_enters_visible_work_button_instead_of_hidden_matching_text(monke
 
     page.get_by_role=by_role
     page.get_by_text=lambda *a,**k: pytest.fail('hidden text locator must not be used')
-    page.locator=lambda selector:Control()
+    page.locator=lambda selector:Control(0 if 'workspace-switch-chip' in selector else 1)
     item=agent._WorkSession('db',page,None,model='doubao-seedance-2.0-fast')
     async def allowed():pass
     item.raise_if_blocked=allowed
     _run(item.enter_work_mode())
     assert calls==['clicked','ready']
+
+
+def test_doubao_work_workspace_is_already_in_work_mode_without_a_toggle(monkeypatch):
+    agent=load_agent(monkeypatch)
+    page=Page([])
+    calls=[]
+
+    class Control:
+        first=None
+        def __init__(self):self.first=self
+        async def count(self):return 1
+        async def inner_text(self):return '豆包\n工作'
+        async def wait_for(self,**kwargs):calls.append('editor_ready')
+
+    page.locator=lambda selector:Control()
+    page.get_by_role=lambda *a,**k:pytest.fail('already in work workspace; no toggle exists')
+    item=agent._WorkSession('db',page,None,model='doubao-seedance-2.0-fast')
+    async def allowed():calls.append('checked')
+    item.raise_if_blocked=allowed
+    _run(item.enter_work_mode())
+    assert calls==['editor_ready','checked']
 
 
 def test_native_thirty_dispatch_uses_one_account_without_pair(tmp_path, monkeypatch):

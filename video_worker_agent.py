@@ -377,6 +377,13 @@ class _WorkSession:
         await dismiss_popups(page)
 
     async def enter_work_mode(self):
+        if self.site == sites.DOUBAO:
+            workspace = self.page.locator('[data-testid="workspace-switch-chip"]')
+            if await workspace.count() and re.search(r"豆包\s*工作", await workspace.first.inner_text()):
+                # 部分账号直接打开独立的「豆包工作」工作区，没有对话/工作切换按钮。
+                await self.page.locator(COMPOSER).first.wait_for(state="visible", timeout=45000)
+                await self.raise_if_blocked()
+                return
         tab = (self.page.get_by_role("button", name="工作", exact=True) if self.site == sites.DOUBAO
                else self.page.get_by_text(WORK_TAB_RE))
         if not await tab.count():
