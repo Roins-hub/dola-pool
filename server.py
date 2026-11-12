@@ -1801,9 +1801,18 @@ def _check_doubao_model(model, duration) -> str:
     return sites.canonical_doubao_model(model)
 
 
+def _check_prompt_encoding(prompt):
+    """拦截客户端编码损坏后的问号串，保留正常问句、中文和英文提示词。"""
+    text = str(prompt or "").strip()
+    damaged = text.count('?') + text.count('？') + text.count('\ufffd')
+    if damaged >= 6 and damaged > len(text) * .6 and sum(c.isalnum() for c in text) <= 8:
+        raise HTTPException(422, "提示词疑似编码损坏（大部分字符已变成问号）；请使用 UTF-8 JSON 文件或 UTF-8 字节提交，检查脚本读取文件和请求正文的编码")
+
+
 async def _submit_task(client, model, prompt, ratio, duration, reference_images,
                        reference_source=None, resolution=None, size=None):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
+    _check_prompt_encoding(prompt)
     if reference_source is None:
         reference_source = config.DEFAULT_REFERENCE_SOURCE if reference_images else "unspecified"
     try:
@@ -3406,6 +3415,7 @@ async def admin_test_generate(name: str, body: TestGenRequest,
                               x_admin_key: str | None = Header(default=None)):
     """账号级测试生成：用指定账号跑一条真实出片，返回 task_id（异步轮询结果）。"""
     _admin_auth(x_admin_key)
+    _check_prompt_encoding(body.prompt)
     if name not in pool.accounts:
         raise HTTPException(404, "account not found")
     if JOBS.get(name, {}).get("status") == "running":

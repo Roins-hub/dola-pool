@@ -5,11 +5,11 @@ import proxy_store
 import socks_relay
 
 
-def redact_error(error):
+def redact_error(error, *, limit=1500):
     text = str(error)
     text = re.sub(r'https?://[^\s<>\"\x27]+|socks5h?://[^\s<>\"\x27]+', '[URL]', text)
     return re.sub(r'(?i)(authorization|token|password|cookie|signature)([=: ]+)[^ ,;]+',
-                  r'\1\2[REDACTED]', text)[:1500]
+                  r'\1\2[REDACTED]', text)[:limit]
 
 
 def http_proxy(account):

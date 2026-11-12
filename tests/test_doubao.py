@@ -101,6 +101,7 @@ def test_doubao_protocol_instance_is_isolated():
     ability = json.loads(payload["chat_ability"]["ability_param"])
     assert ability["model"] == "seedance_v2.0_mini" and ability["duration"] == 7
     assert ability["ratio"] == "16:9"
+    assert ability["resolution"] == "720p"
     assert ability["input_box_content"]["user_input_content"] == "一只橘猫"
     # 比例「自动」不写进文字
     payload, _, _ = db.build_payload([], "一只橘猫", ctx, 5, "seedance_v2.0_mini", "auto")
@@ -108,6 +109,7 @@ def test_doubao_protocol_instance_is_isolated():
     # dola 不受影响：30 秒照旧强制 2.5，提示词照旧带比例
     payload, _, _ = dola.build_payload([], "一只橘猫", ctx, 30, "seedance_v2.0", "16:9")
     assert json.loads(payload["chat_ability"]["ability_param"])["model"] == "seedance_v2.5"
+    assert "resolution" not in json.loads(payload["chat_ability"]["ability_param"])
     assert payload["messages"][-1]["content_block"][0]["content"]["text_block"]["text"] == "生成视频：一只橘猫，16:9"
 
 
@@ -260,7 +262,8 @@ def test_confirm_taken_by_plain_chat_ends_without_waiting(monkeypatch, tmp_path)
     plain = {"agent_name": "豆包", "agent_intention": "seed_main"}
     dp = _FakeDP([(0, CONFIRM, [], {"agent_name": "Agent-Creation", "use_creation": "1"}),
                   (1, "好的，已确认，开始生成这个视频，稍等片刻，视频很快就出来啦。", [], plain)])
-    with pytest.raises(doubao_gen.PureApiError, match="普通对话"):
+    from generation_errors import UpstreamReplyError
+    with pytest.raises(UpstreamReplyError, match="普通对话"):
         _gen(monkeypatch, tmp_path, dp)
     assert dp.replies == ["确认生成"]
 

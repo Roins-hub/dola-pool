@@ -1822,6 +1822,7 @@ def build_ability(model: str, duration: int, ratio: str | None, prompt: str = ""
             "ratio": normalize_ratio(ratio) or "auto",
             "model": model,
             "duration": int(duration),
+            "resolution": "720p",
             "input_box_content": {"user_input_content": prompt or "", "reply_message_format": "生成视频：%s"},
         }
         return {"ability_type": 17, "ability_param": compact_json(param)}

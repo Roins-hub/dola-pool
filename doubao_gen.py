@@ -126,7 +126,8 @@ def _messages(chain: Any) -> list[dict]:
             "finished": finished and str(ext.get("is_finish", "1")).lower() in {"1", "true"},
             # 哪个智能体回的：视频创作是 Agent-Creation（带 use_creation），普通对话是 seed_main
             "agent_intention": str(ext.get("agent_intention") or ""),
-            "creation": bool(ext.get("use_creation") or ext.get("has_video_gen")
+            "agent_name": str(ext.get("agent_name") or ""),
+            "creation": bool(str(ext.get("use_creation") or "") == "1" or str(ext.get("has_video_gen") or "") == "1"
                              or str(ext.get("agent_name") or "") == "Agent-Creation"),
             "generating": generating or str(ext.get("has_video_gen") or "") == "1",
         })
@@ -171,6 +172,13 @@ def _compact(text: str) -> str:
 def looks_like_model_locked(text: str) -> bool:
     c = _compact(text)
     return "无法使用" in c and ("模型" in c or "seedance" in c.lower())
+
+
+def plain_chat_reply(message: dict) -> bool:
+    """普通助手的最终文字没有调用视频技能，权限和等待话术均不作创作回执。"""
+    return bool(message.get("finished") and message.get("text") and not message.get("creation")
+                and not message.get("generating") and (message.get("agent_name") == "豆包"
+                    or message.get("agent_intention") == "seed_main"))
 
 
 def looks_like_plan_unavailable(text: str) -> bool:
@@ -491,7 +499,8 @@ def generate_doubao_video(
                         vid = m["vids"][0]
                 if vid:
                     break
-                accepted = accepted or any(m["bot"] and (m["generating"] or looks_like_accepted(m["text"])) for m in msgs)
+                accepted = accepted or any(m["bot"] and (m["generating"] or
+                    not plain_chat_reply(m) and looks_like_accepted(m["text"])) for m in msgs)
                 latest = next((m for m in reversed(msgs) if m["bot"]), None)
                 if latest and latest["index"] <= max((m["index"] for m in msgs if not m["bot"]), default=-1):
                     latest = None
@@ -503,6 +512,10 @@ def generate_doubao_video(
                     text = m["text"]
                     seen_texts.append(text)
                     _emit_upstream_note(on_poll, dp, [text])
+                    if not accepted and plain_chat_reply(m):
+                        raise UpstreamReplyError("视频技能未生效",
+                            f"{account} 豆包由普通对话助手回复，未进入视频创作；请核对视频技能请求参数。上游原文：{text[:1000]}",
+                            generation_started=False, allow_account_retry=False)
                     if looks_like_plan_unavailable(text):
                         raise DoubaoPlanUnavailableError(f"{account} 豆包套餐不支持创作：{text[:300]}")
                     if looks_like_model_locked(text):
@@ -621,8 +634,12 @@ def fetch_conversation_video(cookie_state_path, conversation_id: str, *, proxy: 
         latest = next((m for m in reversed(msgs) if m["bot"]), {})
         last = latest.get("text", "")
         plan_unavailable = bool(latest.get("finished") and looks_like_plan_unavailable(last))
+        plain_chat = plain_chat_reply(latest) and not any(m['bot'] and (m['generating'] or
+            not plain_chat_reply(m) and looks_like_accepted(m['text'])) for m in msgs)
+        if plain_chat:
+            plan_unavailable = False
         # 停在确认 / 付费追问 / 模型锁 / 额度 / 拒稿上：没人回话就永远不会出片（也没扣额度），不用再盯
-        final = bool(last) and (plan_unavailable or looks_like_model_locked(last) or looks_like_quota_exhausted(last)
+        final = bool(last) and (plain_chat or plan_unavailable or looks_like_model_locked(last) or looks_like_quota_exhausted(last)
                                 or looks_like_paid_prompt(last) or dp.looks_like_content_refusal(last)
                                 or (looks_like_confirm_request(last) and not looks_like_accepted(last)))
         return {"status": "failed" if final else "pending", "local_path": "", "final": final,
