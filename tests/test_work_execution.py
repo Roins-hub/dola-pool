@@ -415,3 +415,32 @@ def test_batch_second_download_failure_keeps_first_file_and_does_not_generate_ag
     result=_run(item.deliver_all(['first','second'],'original'))
     assert len(result['videos'])==1 and Path(result['local_path']).read_bytes()==b'first'
     assert '第 2 条交付失败' in result['duration_error'] and calls==['first','second']
+
+
+def test_doubao_uses_send_button_without_accepting_an_enter_suggestion(monkeypatch):
+    from test_work_session import send_session
+    _,item,page=send_session(monkeypatch,button_sends=False)
+    item.site=sites.DOUBAO
+    assert _run(item.press_send()) is True
+    assert page.clicks==1 and page.enters==0
+    assert item.went_out() is True
+
+
+def test_full_prompt_check_rejects_a_skill_example_containing_the_requested_text(monkeypatch):
+    from test_work_session import send_session
+    agent,item,page=send_session(monkeypatch)
+    prompt='清晨湖面薄雾缓缓散开，一只白鹭贴着水面飞过'
+    page.text='Creative video 使用 Seedance 2.5 生成婚礼回顾。'+prompt+'先确认背景音乐。'
+    with pytest.raises(agent.PreSubmissionParametersError,match='非本次任务内容'):
+        _run(item.fill_prompt(prompt))
+    assert page.clicks==0 and page.enters==0 and not item.sent
+
+
+def test_changed_text_after_insertion_is_rejected_before_send(monkeypatch):
+    from test_work_session import send_session
+    agent,item,page=send_session(monkeypatch)
+    async def mixed(text):page.text='Creative video 婚礼示例'+text
+    page.insert_text=mixed
+    with pytest.raises(agent.PreSubmissionParametersError,match='内容与本次任务不一致'):
+        _run(item.fill_prompt('清晨湖面白鹭'))
+    assert not page.enters and not item.sent

@@ -80,7 +80,11 @@ THROTTLE_NOTE = "710022002 工作模式请求被 dola 拒绝，页面随后要�
 
 COMPOSER_TEXT_JS = r"""(selector) => {
   const box = document.querySelector(selector);
-  return box ? (box.value || box.innerText || '') : '';
+  if (!box) return '';
+  if (box.tagName === 'TEXTAREA') return box.value || '';
+  const copy = box.cloneNode(true);
+  copy.querySelectorAll('.node-mention').forEach(node => node.remove());
+  return copy.textContent || '';
 }"""
 
 SELECTED_SKILLS_JS = r"""(selector) => {
@@ -229,6 +233,7 @@ class _WorkSession:
         self.tried: list[str] = []
         self.logouts: list[str] = []
         self.sent: list[str] = []
+        self.submit_clicked = False
         self.page_query = ""
         self.upload_actions: list[str] = []
         self.send_error = ""
@@ -523,22 +528,29 @@ class _WorkSession:
 
     async def fill_prompt(self, text: str) -> None:
         """切模式、选技能后输入框可能重绘，文字写进去要读回来确认。"""
-        page, marker = self.page, text[:12]
+        page = self.page
+        wanted = re.sub(r"\s+", "", text)
         for _ in range(3):
-            if marker in await self.composer_text():
+            current = re.sub(r"\s+", "", await self.composer_text())
+            if current == wanted:
                 return
+            if current:
+                raise PreSubmissionParametersError(f"{self.account} 工作模式输入框包含非本次任务内容，尚未发送生成")
             await page.locator(COMPOSER).first.click(timeout=8000)
             await page.keyboard.insert_text(text)
             await page.wait_for_timeout(1500)
-            if marker in await self.composer_text():
+            current = re.sub(r"\s+", "", await self.composer_text())
+            if current == wanted:
                 return
+            if current:
+                raise PreSubmissionParametersError(f"{self.account} 工作模式输入框内容与本次任务不一致，尚未发送生成")
             await page.wait_for_timeout(2000)
         raise PreSubmissionParametersError(f"{self.account} 工作模式提示词没有写进输入框")
 
     def went_out(self) -> bool:
-        """看到请求，或页面跳到了新会话（local_ 开头是还没拿到真实 id）。"""
+        """已点击豆包发送、看到请求或页面进入新会话；结果不明时不重新提交。"""
         url = self.page.url
-        return bool(self.sent) or (url != self.url_before and bool(re.search(r"/chat/(local_|\d)", url)))
+        return self.submit_clicked or bool(self.sent) or (url != self.url_before and bool(re.search(r"/chat/(local_|\d)", url)))
 
     async def wait_sent(self, seconds: int) -> bool:
         for _ in range(seconds):
@@ -548,9 +560,17 @@ class _WorkSession:
         return self.went_out()
 
     async def press_send(self) -> bool:
-        """回车，没发出去再点发送按钮。按钮灰着说明输入框空了，点也没用，交给上层重来。"""
+        """豆包点击发送按钮；Dola沿用回车和按钮兜底。禁用的按钮不点击。"""
         page = self.page
         self.url_before = page.url
+        if self.site == sites.DOUBAO:
+            # 工作输入框的回车可能接受技能示例。明确点发送，点击后只查原会话，不重新填写。
+            button = page.locator('[data-testid="chat_input_send_button"]:visible')
+            if not await button.count() or not await button.first.is_enabled():
+                return False
+            self.submit_clicked = True
+            await button.first.click(timeout=4000)
+            return True
         await page.keyboard.press("Enter")
         if await self.wait_sent(8):
             return True

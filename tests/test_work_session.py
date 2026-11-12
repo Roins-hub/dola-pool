@@ -434,6 +434,8 @@ class SendPage(Page):
             self.go_out()
 
     async def evaluate(self, script, args):
+        if 'cloneNode' in script:
+            return self.text.removeprefix('Creative video ')
         if 'node-mention' in script:
             return "Creative video" if self.text.startswith("Creative video ") else ""
         return self.text
@@ -684,7 +686,7 @@ def test_restore_without_the_work_tab_just_picks_the_skill_again(monkeypatch):
 def test_giving_up_says_what_was_left_in_the_composer(monkeypatch):
     agent, item, page = send_session(monkeypatch, enter_sends=False, button_sends=False)
     page.text = "Creative video "
-    with pytest.raises(agent.PreSubmissionParametersError, match="输入框内容：Creative video"):
+    with pytest.raises(agent.PreSubmissionParametersError, match="输入框内容：一只橘猫"):
         _run(item.send(PROMPT))
     assert page.enters == 3
 
