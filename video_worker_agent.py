@@ -52,7 +52,7 @@ SKILL_RE = re.compile(r"^(?!.*(?:analysis|analy[sz]|分析))[^\r\n]*"
 WORK_TAB_RE = re.compile(r"^(ワーク|工作|Work)$")
 UPLOAD_ITEM_RE = re.compile(r"ファイルまたは画像|上传文件|Upload file", re.I)
 COMPOSER = 'textarea, [contenteditable="true"]'
-CONFIRM_OPTION_RE = re.compile(r"确认|確認|開始|开始")
+CONFIRM_OPTION_RE = re.compile(r"^\s*(?:确认|確認|開始|开始)(?:生成|视频生成)?[。！!]?\s*$")
 POLL_SECONDS = 10
 # 回复写完后等这么多轮还没动静，才算助手在等回答
 QUIET_POLLS = 2
@@ -637,7 +637,11 @@ class _WorkSession:
 
     def check_confirmation(self, text: str):
         from doubao_gen import confirm_mismatch, looks_like_paid_prompt
-        if looks_like_paid_prompt(text):
+        positive = re.sub(r"不(?:使用|需|用)?付费|无需付费|不购买|不升级", "", text)
+        paid = re.search(r"(?:是否|请|需要|必须|确认|同意|继续|将).{0,16}"
+                         r"(?:付费|支付|购买|充值|升级.{0,8}(?:套餐|会员)|有料)|"
+                         r"(?:confirm|continue|proceed).{0,20}(?:paid|purchase|subscribe)", positive, re.I)
+        if looks_like_paid_prompt(text) or paid:
             raise UpstreamReplyError("需要付费确认", text[-1200:], generation_started=False, allow_account_retry=False)
         if asks_to_confirm(text):
             mismatch = confirm_mismatch(text, duration=self.duration, model_display=model_label(self.model))

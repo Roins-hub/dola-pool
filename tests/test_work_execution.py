@@ -140,7 +140,7 @@ def test_paid_or_wrong_duration_confirmation_stops_before_reply(monkeypatch):
     agent = load_agent(monkeypatch)
     item = agent._WorkSession("acc", Page([]), None, duration=30, model="seedance-2.0-fast")
     from generation_errors import UpstreamReplyError
-    for text in ("请确认：时长：15秒，模型：Seedance 2.0 Fast", "是否继续使用付费额度？"):
+    for text in ("请确认：时长：15秒，模型：Seedance 2.0 Fast", "是否继续使用付费额度？", "请确认升级会员后生成"):
         with pytest.raises(UpstreamReplyError) as caught:
             _run(item.next_answer(text))
         assert caught.value.allow_account_retry is False
