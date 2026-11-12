@@ -39,6 +39,9 @@ class Target:
     async def is_enabled(self):
         return True
 
+    async def is_visible(self):
+        return True
+
 
 class Context:
     async def cookies(self, url):

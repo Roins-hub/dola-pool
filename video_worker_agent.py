@@ -465,6 +465,8 @@ class _WorkSession:
 
     async def choose_skill(self):
         page = self.page
+        if await self.skill_selected():
+            return
         found = False
         for _ in range(3):
             await page.locator(COMPOSER).first.click(timeout=8000)
@@ -481,9 +483,21 @@ class _WorkSession:
                     await page.keyboard.press("Backspace")
                     await page.keyboard.type("/" + query, delay=80)
                 skill = page.get_by_text(self.skill_pattern())
-                if await skill.count():
+                target = None
+                for index in range(await skill.count()):
+                    candidate = skill.first if index == 0 else skill.nth(index)
+                    if await candidate.is_visible():
+                        target = candidate
+                        break
+                if target is not None:
                     found = True
-                    await skill.first.click(timeout=5000)
+                    try:
+                        await target.click(timeout=5000)
+                    except Exception as exc:
+                        if not browser_error(exc):
+                            raise
+                        # 技能菜单异步重绘时重新搜索；生成尚未发送，沿用最多三轮的上限。
+                        break
                     await page.wait_for_timeout(1500)
                     if await self.skill_selected():
                         return

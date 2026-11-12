@@ -75,6 +75,56 @@ def test_malformed_listing_does_not_interrupt_the_browser(monkeypatch):
     assert item.skill_labels == []
 
 
+def test_menu_click_timeout_retries_only_the_presubmission_selection(monkeypatch):
+    page=SkillPage('创意视频')
+    _,item=session(monkeypatch,page)
+    item.skill_labels=['创意视频']
+    original=page.get_by_text
+    clicks=[]
+    def get(pattern):
+        target=original(pattern)
+        click=target.click
+        async def attempt(**kwargs):
+            clicks.append('click')
+            if len(clicks)==1:
+                raise PlaywrightLike('Locator.click: Timeout 5000ms exceeded.')
+            await click(**kwargs)
+        target.click=attempt
+        return target
+    page.get_by_text=get
+    _run(item.choose_skill())
+    assert clicks==['click','click'] and page.selected=='创意视频'
+    assert item.sent==[]
+
+
+def test_hidden_duplicate_label_does_not_capture_skill_click(monkeypatch):
+    page=SkillPage('创意视频')
+    _,item=session(monkeypatch,page)
+    item.skill_labels=['创意视频']
+    original=page.get_by_text
+    def get(pattern):
+        visible=original(pattern)
+        hidden=Target()
+        async def count():return 2 if '创意视频' in page.keys else 0
+        async def no():return False
+        async def wrong(**kwargs):pytest.fail('hidden duplicate was clicked')
+        hidden.count,hidden.is_visible,hidden.click=count,no,wrong
+        hidden.nth=lambda index:visible
+        return hidden
+    page.get_by_text=get
+    _run(item.choose_skill())
+    assert page.selected=='创意视频' and item.sent==[]
+
+
+def test_already_selected_skill_is_kept_without_opening_the_menu(monkeypatch):
+    page=SkillPage('创意视频')
+    page.selected='创意视频'
+    _,item=session(monkeypatch,page)
+    item.skill_labels=['创意视频']
+    _run(item.choose_skill())
+    assert not page.keys and not page.clicked
+
+
 def test_response_listener_loads_the_live_skill_label(monkeypatch):
     page, listeners = SkillPage('Movie Studio'), []
     page.on = lambda event, callback: listeners.append(callback) if event == 'response' else None
