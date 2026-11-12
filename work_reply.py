@@ -255,6 +255,32 @@ def background_task_pending(message: dict) -> bool:
                for block in message.get("content_block") or [])
 
 
+def work_thread_ids(chain) -> list[str]:
+    """主会话引用的后台线程；线程里的视频和失败回执需要单独读取。"""
+    threads = []
+    for message in chain_messages(chain):
+        for block in message.get("content_block") or []:
+            task = (block.get("content") or {}).get("complex_task_block") or {}
+            thread = task.get("thread_id")
+            if isinstance(thread, (str, int)) and str(thread):
+                threads.append(str(thread))
+    return list(dict.fromkeys(threads))
+
+
+def video_creation_records(message: dict) -> list[dict]:
+    """解析视频工具的业务结果；工具卡片标题在失败时也可能显示“已生成视频”。"""
+    records = (message.get("ext") or {}).get("ai_creation_tool_list") or []
+    if isinstance(records, str):
+        try:
+            records = json.loads(records)
+        except ValueError:
+            return []
+    if not isinstance(records, list):
+        return []
+    return [record for record in records if isinstance(record, dict)
+            and record.get("file_type") == "video" and VIDEO_TOOL_RE.search(str(record.get("tool_name") or ""))]
+
+
 def asks_to_confirm(text: str) -> bool:
     return bool(CONFIRM_RE.search(text or ""))
 

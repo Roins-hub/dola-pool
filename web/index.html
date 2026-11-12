@@ -3794,7 +3794,7 @@ function foldText(k,label,text,limit){
   return '<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
     +'<summary>'+label+noTr(text.slice(0,limit))+'<span class="ell">…</span></summary>'+noTr(text.slice(limit))+'</details>';
 }
-/** dola 回执原话：当前号的在前（长了折叠），前面换过的号收进「前面 N 个号的回复」。
+/** 上游回执原话：当前号的在前（长了折叠），前面换过的号收进「前面 N 个号的回复」。
     失败时报错里已经带了同一句原话就不重复。 */
 function upstreamNote(t){
   let notes=[];
@@ -3802,14 +3802,17 @@ function upstreamNote(t){
   if(!notes.length&&t.upstream_note)notes=[{account:t.account||'',note:t.upstream_note}];
   if(!notes.length)return '';
   const cur=notes[notes.length-1],prev=notes.slice(0,-1);
+  const rawSite=String(t.site||'').toLowerCase();
+  const site=(rawSite==='doubao'||rawSite==='豆包')?'豆包'
+    :(rawSite==='dola'?'dola':(String(t.model||'').toLowerCase().startsWith('doubao-')?'豆包':'dola'));
   let html='';
   const dup=t.status==='failed'&&t.error&&t.error.indexOf(String(cur.note).slice(0,12))>=0;
-  if(!dup)html+=foldText(t.id+':cur',(cur.account?noTr(cur.account)+' · ':'')+'dola：',cur.note,60);
+  if(!dup)html+=foldText(t.id+':cur',(cur.account?noTr(cur.account)+' · ':'')+site+'：',cur.note,60);
   if(prev.length){
     const k=t.id+':prev';
     html+='<details class="tiny note-line" data-k="'+esc(k)+'" ontoggle="noteToggle(this)"'+(OPEN_NOTES.has(k)?' open':'')+'>'
       +'<summary>前面 '+prev.length+' 个号的回复</summary>'
-      +prev.map(n=>'<div>'+noTr(n.account||'?')+'：'+noTr(String(n.note||'').replace(/\*\*/g,''))+'</div>').join('')+'</details>';
+      +prev.map(n=>'<div>'+noTr(n.account||'?')+' · '+site+'：'+noTr(String(n.note||'').replace(/\*\*/g,''))+'</div>').join('')+'</details>';
   }
   return html;
 }
@@ -3938,8 +3941,29 @@ function taskVideoCell(t){
   if(!videos.length&&t.video_url)videos=[{video_url:t.video_url}];
   return videos.length?videos.map((v,i)=>'<div class="video-wrap"><a href="'+esc(v.video_url)+'" target="_blank">打开'+(videos.length>1?' '+(i+1):'')+'</a><button class="btn" onclick="playVideo(&quot;'+esc(v.video_url)+'&quot;)">预览</button></div>').join('')+upscaleCell(t):'—';
 }
-function playVideo(url){q('#videoEl').src=url;show('videoModal');}
-function closeVideo(){q('#videoEl').pause();q('#videoEl').src='';hide('videoModal');}
+function videoRelayUrl(url){
+  try{
+    const parsed=new URL(url,location.origin);
+    if(parsed.origin!==location.origin||!/^\/v\/[^/]+\.mp4$/.test(parsed.pathname))return '';
+    parsed.searchParams.set('relay','1');
+    return parsed.href;
+  }catch(e){return '';}
+}
+function playVideo(url){
+  const video=q('#videoEl');
+  video.dataset.relayFallback='';
+  video.onerror=()=>{
+    if(video.dataset.relayFallback==='1')return;
+    const fallback=videoRelayUrl(url);
+    if(!fallback||video.currentSrc===fallback)return;
+    video.dataset.relayFallback='1';
+    video.src=fallback;
+    video.load();
+  };
+  video.src=url;
+  show('videoModal');
+}
+function closeVideo(){const video=q('#videoEl');video.pause();video.onerror=null;video.src='';hide('videoModal');}
 
 /* ---- 视频管理 ---- */
 let selVideos=new Set();

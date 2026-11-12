@@ -141,11 +141,19 @@ def test_doubao_work_workspace_is_already_in_work_mode_without_a_toggle(monkeypa
 
     page.locator=lambda selector:Control()
     page.get_by_role=lambda *a,**k:pytest.fail('already in work workspace; no toggle exists')
+    async def goto(url, **kwargs):
+        calls.append('new_work_conversation')
+        assert url == 'https://www.doubao.com/chat/new-thread'
+        page.url = url
+    async def hydrated(script, **kwargs):
+        calls.append('editor_hydrated')
+        assert 'box.editor' in script
+    page.goto, page.wait_for_function = goto, hydrated
     item=agent._WorkSession('db',page,None,model='doubao-seedance-2.0-fast')
     async def allowed():calls.append('checked')
     item.raise_if_blocked=allowed
     _run(item.enter_work_mode())
-    assert calls==['editor_ready','checked']
+    assert calls==['new_work_conversation','editor_ready','editor_hydrated','checked']
 
 
 @pytest.mark.parametrize('ready_on_navigation,expected_navigations', [(1, 1), (2, 2), (None, 2)])

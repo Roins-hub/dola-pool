@@ -26,7 +26,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from compress import GzipTextMiddleware
 from pydantic import BaseModel, Field
@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 import config
 import cred_store
 import failure_text
-from account_transport import redact_error
+from account_transport import http_proxy, redact_error
 import proxy_store
 import sites
 import updater
@@ -1985,12 +1985,55 @@ def _upscale_note(plan_or_row: dict) -> str | None:
         state, f"出片后自动超分到 {requested}")
 
 
+async def _relay_video_link(row: dict, link: str, request: Request):
+    try:
+        proxy = http_proxy(row.get("account") or "")
+    except Exception as exc:
+        raise HTTPException(502, "账号代理不可用，视频中转已停止") from exc
+    timeout = aiohttp.ClientTimeout(total=None, connect=20, sock_read=90)
+    session = aiohttp.ClientSession(timeout=timeout, trust_env=False)
+    headers = {name: request.headers[name] for name in ("Range", "If-Range") if name in request.headers}
+    try:
+        upstream = await session.request(
+            request.method, link, headers=headers, proxy=proxy, allow_redirects=True)
+    except asyncio.CancelledError:
+        await session.close()
+        raise
+    except Exception as exc:
+        await session.close()
+        raise HTTPException(502, "视频源连接失败，已通过账号代理中止中转") from exc
+    if upstream.status not in (200, 206, 416):
+        upstream.release()
+        await session.close()
+        raise HTTPException(502, f"视频源返回 HTTP {upstream.status}")
+    response_headers = {
+        name: upstream.headers[name]
+        for name in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified")
+        if name in upstream.headers
+    }
+    response_headers["Cache-Control"] = "private, no-store"
+    if request.method == "HEAD":
+        upstream.release()
+        await session.close()
+        return Response(status_code=upstream.status, headers=response_headers)
+
+    async def stream():
+        try:
+            async for chunk in upstream.content.iter_chunked(256 * 1024):
+                yield chunk
+        finally:
+            upstream.release()
+            await session.close()
+
+    return StreamingResponse(stream(), status_code=upstream.status, headers=response_headers)
+
+
 # HEAD 也要接：不少客户端 / 播放器先 HEAD 探链接，只注册 GET 时 HEAD 会落到静态目录变成 404
 @app.api_route("/v/{name}", methods=["GET", "HEAD"])
-async def video_short_link(name: str):
-    """Link-delivered video: 302 to the upstream CDN, re-signed shortly before it expires.
+async def video_short_link(name: str, request: Request, relay: bool = False):
+    """Serve a fresh CDN redirect, or relay media through the account proxy when requested.
 
-    Public like /videos/<file>: the unguessable task id is the capability. No bytes pass through.
+    Public like /videos/<file>: the unguessable task id is the capability.
     `<task>-1080p.mp4`（或 -2k / -4k）是超分结果。
     """
     task_id = name[:-4] if name.endswith(".mp4") else name
@@ -2003,6 +2046,8 @@ async def video_short_link(name: str):
     link = await video_link.current_link(row, store)
     if not link:
         raise HTTPException(502, "upstream video link unavailable")
+    if relay:
+        return await _relay_video_link(row, link, request)
     return RedirectResponse(link, status_code=302, headers={"Cache-Control": "private, max-age=60"})
 
 
@@ -4366,6 +4411,17 @@ async def admin_tasks(limit: int = 50, q: str = "", x_admin_key: str | None = He
     # q：面板搜索，查整个历史（不止最近 50 条）
     tasks = store.search_tasks(q, limit) if q.strip() else store.recent_tasks(limit)
     for t in tasks:
+        # 任务列表显示实际账号所属站点。历史任务里模型名可能仍是 seedance-*，
+        # 仅看模型前缀会把豆包 Cookie 任务误标成 dola。
+        account = str(t.get("account") or "").strip()
+        if account:
+            try:
+                task_site = pool.site_of(account)
+            except Exception:
+                task_site = ""
+        else:
+            task_site = ""
+        t["site"] = task_site if task_site in (sites.DOLA, sites.DOUBAO) else sites.site_for_model(t.get("model"))
         t.pop("video_model", None)   # 续签用的上游元数据，面板用不到且体积大
         t.pop("upscale_job", None)
         t["upscale_public_url"] = _upscale_public_url(t)

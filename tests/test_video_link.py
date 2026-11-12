@@ -115,6 +115,81 @@ def test_short_link_route_redirects_without_proxying(tmp_path, monkeypatch):
     assert client.get("/v/missing.mp4", follow_redirects=False).status_code == 404
 
 
+@pytest.mark.parametrize("method,status", [("GET", 206), ("HEAD", 206), ("GET", 416)])
+def test_relay_route_preserves_range_and_uses_the_account_proxy(tmp_path, monkeypatch, method, status):
+    import server
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(server, "store", __import__("store").TaskStore(str(tmp_path / "tasks.db")))
+    link = SIGNED.format(int(time.time()) + 5 * 3600)
+    server.store.create("video_relay1", "doubao-seedance-2.0-fast", "p", "16:9", 15,
+                        account="acc154")
+    server.store.update("video_relay1", status="completed", video_url="http://x/v/video_relay1.mp4",
+                        video_link=link, video_link_expires_at=video_link.link_expiry(link),
+                        video_model=VIDEO_MODEL)
+    accounts = []
+
+    def account_proxy(account):
+        accounts.append(account)
+        return "http://account-proxy"
+
+    monkeypatch.setattr(server, "http_proxy", account_proxy)
+    calls = []
+
+    class Content:
+        async def iter_chunked(self, _size):
+            yield b"test"
+
+    class Upstream:
+        headers = {"Content-Type": "video/mp4", "Content-Length": "4",
+                   "Content-Range": "bytes 0-3/2048", "Accept-Ranges": "bytes"}
+        content = Content()
+
+        def __init__(self):
+            self.status = status
+
+        def release(self):
+            pass
+
+    class Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def request(self, method, url, *, headers, proxy, allow_redirects):
+            calls.append((method, headers, proxy, allow_redirects))
+            return Upstream()
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(server.aiohttp, "ClientSession", Session)
+    response = TestClient(server.app).request(
+        method, "/v/video_relay1.mp4?relay=1",
+        headers={"Range": "bytes=0-3", "If-Range": "video-etag"}, follow_redirects=False)
+    assert response.status_code == status
+    assert response.headers["content-type"] == "video/mp4"
+    assert response.headers["content-range"] == "bytes 0-3/2048"
+    assert response.content == (b"" if method == "HEAD" else b"test")
+    assert accounts == ["acc154"]
+    assert calls == [(method, {"Range": "bytes=0-3", "If-Range": "video-etag"}, "http://account-proxy", True)]
+
+
+def test_relay_stops_before_connecting_when_account_proxy_is_unavailable(monkeypatch):
+    import server
+    from fastapi import HTTPException
+
+    def unavailable(_account):
+        raise RuntimeError("proxy unavailable")
+
+    def must_not_connect(**_kwargs):
+        raise AssertionError("must not connect without the account proxy")
+
+    monkeypatch.setattr(server, "http_proxy", unavailable)
+    monkeypatch.setattr(server.aiohttp, "ClientSession", must_not_connect)
+    with pytest.raises(HTTPException) as caught:
+        _run(server._relay_video_link({"account": "acc154"}, "unused", None))
+    assert caught.value.status_code == 502
+
+
 def test_link_delivery_returns_without_downloading(monkeypatch):
     from browser_feedback import emit
     from test_task_ui_regressions import load_worker_function

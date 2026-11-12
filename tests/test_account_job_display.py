@@ -1,3 +1,4 @@
+import asyncio
 import re
 import shutil
 import subprocess
@@ -90,3 +91,82 @@ syncTestGenDurations();
 assert(mode.value==='auto'&&option.disabled);
 """
     subprocess.run([node],input=script,text=True,encoding='utf8',capture_output=True,check=True,timeout=15)
+
+
+def test_video_preview_falls_back_to_same_origin_relay():
+    node=shutil.which('node')
+    if not node: pytest.skip('node required')
+    html=(Path(__file__).resolve().parents[1]/'web/index.html').read_text(encoding='utf8')
+    start=html.index('function videoRelayUrl(url)')
+    end=html.index('/* ---- 视频管理 ---- */',start)
+    code=html[start:end]
+    script=r"""
+const assert=require('assert');
+const location={origin:'https://pool.example'};
+const video={dataset:{},currentSrc:'',src:'',load(){}};
+const q=()=>video;
+const show=()=>{},hide=()=>{};
+"""+code+r"""
+assert(videoRelayUrl('https://pool.example/v/task.mp4')==='https://pool.example/v/task.mp4?relay=1');
+assert(videoRelayUrl('https://pool.example/videos/local.mp4')==='');
+assert(videoRelayUrl('https://cdn.example/video.mp4')==='');
+playVideo('https://pool.example/v/task.mp4');
+assert(video.src==='https://pool.example/v/task.mp4');
+video.onerror();
+assert(video.src==='https://pool.example/v/task.mp4?relay=1');
+assert(video.dataset.relayFallback==='1');
+"""
+    subprocess.run([node],input=script,text=True,encoding='utf8',capture_output=True,check=True,timeout=15)
+
+
+def test_upstream_notes_label_doubao_and_dola_separately():
+    node=shutil.which('node')
+    if not node: pytest.skip('node required')
+    html=(Path(__file__).resolve().parents[1]/'web/index.html').read_text(encoding='utf8')
+    start=html.index('function upstreamNote(t)')
+    end=html.index('function attemptHistory(t)',start)
+    code=html[start:end]
+    script=r"""
+const assert=require('assert'),OPEN_NOTES=new Set();
+const noTr=s=>String(s),foldText=(_k,label,text)=>label+text;
+const esc=s=>String(s);
+"""+code+r"""
+const note='任务处理中';
+const doubao=upstreamNote({id:'d1',model:'doubao-seedance-2.0-fast',status:'processing',
+  account:'acc154',upstream_notes:JSON.stringify([{account:'acc153',note:'上一轮回复'},{account:'acc154',note}])});
+const doubaoLegacyModel=upstreamNote({id:'d1b',model:'seedance-2.0-fast',site:'doubao',status:'processing',
+  account:'acc154',upstream_note:note});
+const dola=upstreamNote({id:'d2',model:'seedance-2.0-fast',status:'processing',
+  account:'acc1',upstream_notes:JSON.stringify([{account:'acc2',note:'上一轮回复'},{account:'acc1',note}])});
+assert(doubao.includes('acc154 · 豆包：'));
+assert(doubao.includes('acc153 · 豆包：'));
+assert(!doubao.includes('dola：'));
+assert(doubaoLegacyModel.includes('acc154 · 豆包：'));
+assert(dola.includes('acc1 · dola：'));
+assert(dola.includes('acc2 · dola：'));
+assert(upstreamNote({id:'d3',model:'doubao-seedance-2.5',account:'acc154',upstream_note:note}).includes('acc154 · 豆包：'));
+"""
+    subprocess.run([node],input=script,text=True,encoding='utf8',capture_output=True,check=True,timeout=15)
+
+
+def test_admin_task_source_comes_from_account_site(tmp_path, monkeypatch):
+    import server
+    import sites
+    import store
+
+    task_store = store.TaskStore(str(tmp_path / "tasks.db"))
+    task_store.create("doubao_note", "seedance-2.0-fast", "p", "16:9", 15, account="acc154")
+    task_store.update("doubao_note", status="failed")
+    monkeypatch.setattr(server, "store", task_store)
+    monkeypatch.setattr(server, "_admin_auth", lambda *_args: None)
+    monkeypatch.setattr(server, "_upscale_public_url", lambda _row: "")
+    monkeypatch.setattr(server.pool, "site_of", lambda account: sites.DOUBAO if account == "acc154" else sites.DOLA)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        response = loop.run_until_complete(server.admin_tasks(limit=50, q="", x_admin_key="test"))
+    finally:
+        loop.close()
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    assert response["tasks"][0]["site"] == sites.DOUBAO

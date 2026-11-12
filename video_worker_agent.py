@@ -46,6 +46,7 @@ from work_reply import (
     WORK_DURATION, WORK_LIMIT_RE, ask_summary, asks_to_confirm, background_task_pending, build_prompt, chain_messages, choose_options,
     generation_started, pending_ask, recent_conversations, reply_finished, reply_text, session_cookies, tools_ran,
     upload_wait_seconds, uploads_committed, video_models, video_skill_labels, video_skill_reference, work_limit_until, model_label,
+    video_creation_records, work_thread_ids,
 )
 
 SKILL_RE = re.compile(r"^(?!.*(?:analysis|analy[sz]|分析))[^\r\n]*"
@@ -73,6 +74,7 @@ SETTLED_POLLS = 6
 SLOT_NOTE_SECONDS = 30
 # 发出后等会话 id：带参考图时助手起步慢，代理差时更慢
 CONVERSATION_WAIT_SECONDS = 120
+DOUBAO_PREPARE_SECONDS = 60
 # 关浏览器最多等这么久：卡住时不能一直占着名额
 CLOSE_SECONDS = 30
 LIMIT_RE = re.compile(r"(今日|本日|今天).{0,12}(额度|額度|次数|回数|上限).{0,12}(用完|用尽|已满|達し|到达|上限)|1日あたりの上限")
@@ -125,6 +127,10 @@ SELECTED_SKILLS_JS = r"""(selector) => {
   return box ? [...box.querySelectorAll('.node-mention')].map(el => el.innerText || '').join('\n') : '';
 }"""
 
+EDITOR_READY_JS = r"""(selector) => [...document.querySelectorAll(selector)].some(box =>
+  box.getClientRects().length && box.editor?.getJSON && box.editor?.commands?.setContent)
+"""
+
 # 只看当前会话那一行：别的旧会话也可能挂着「一時停止中」
 PAUSED_JS = r"""(conversationId) => {
   const row = document.querySelector(`a[href*="/chat/${conversationId}"]`);
@@ -174,6 +180,18 @@ CHAIN_JS = r"""async ({query, conversationId}) => {
   } catch (e) { return {status: 0, text: String(e)}; }
 }"""
 
+THREAD_JS = r"""async ({query, threadId}) => {
+  try {
+    const r = await fetch('/im/chain/thread_message?' + query, {method: 'POST', credentials: 'include',
+      headers: {'Content-Type': 'application/json; encoding=utf-8', 'agw-js-conv': 'str', 'Accept': '*/*'},
+      signal: AbortSignal.timeout(20000),
+      body: JSON.stringify({cmd: 3102, uplink_body: {pull_thread_message_chain_uplink_body: {
+        thread_id: threadId, limit: 20, direction: 3, anchor_index: 0, ext: {}}},
+        sequence_id: crypto.randomUUID(), channel: 2, version: '1'})});
+    return {status: r.status, text: await r.text()};
+  } catch (e) { return {status: 0, text: String(e)}; }
+}"""
+
 RESOURCE_JS = r"""async ({query, vid}) => {
   const r = await fetch('/creativity/resource/get_without_watermark?' + query, {
     method: 'POST', credentials: 'include',
@@ -187,7 +205,9 @@ SKILLS_JS = r"""async ({query}) => {
   try {
     const r = await fetch('/alice/office/skills/list_user_and_featured?' + query, {
       method: 'POST', credentials: 'include',
-      headers: {'Content-Type': 'application/json', 'agw-js-conv': 'str'}, body: '{}'
+      signal: AbortSignal.timeout(15000),
+      headers: {'Content-Type': 'application/json', 'agw-js-conv': 'str'},
+      body: JSON.stringify({runtime_type: 1})
     });
     return {status: r.status, text: await r.text()};
   } catch (e) { return {status: 0, text: String(e)}; }
@@ -293,6 +313,7 @@ class _WorkSession:
         self.upload_error = None
         self.skill_labels = []
         self.skill_reference = None
+        self.thread_chains = {}
 
     def watch(self):
         def on_request(request):
@@ -438,8 +459,12 @@ class _WorkSession:
         if self.site == sites.DOUBAO:
             workspace = self.page.locator('[data-testid="workspace-switch-chip"]')
             if await workspace.count() and re.search(r"豆包\s*工作", await workspace.first.inner_text()):
-                # 部分账号直接打开独立的「豆包工作」工作区，没有对话/工作切换按钮。
+                # 独立工作区的首页能先显示输入框，但提交组件尚未挂载；使用官方新对话入口初始化。
+                if urlsplit(self.page.url).path.rstrip("/") != "/chat/new-thread":
+                    emit_feedback(self.on_poll, progress="豆包工作模式：初始化工作对话")
+                    await self.page.goto(self.base + "/chat/new-thread", timeout=120000, wait_until="domcontentloaded")
                 await self.page.locator(COMPOSER).first.wait_for(state="visible", timeout=45000)
+                await self.page.wait_for_function(EDITOR_READY_JS, arg=COMPOSER, timeout=45000)
                 await self.raise_if_blocked()
                 return
         tab = (self.page.get_by_role("button", name="工作", exact=True) if self.site == sites.DOUBAO
@@ -526,7 +551,9 @@ class _WorkSession:
         if await self.skill_selected():
             return
         if self.site == sites.DOUBAO:
-            if not self.skill_reference:
+            for attempt in range(3):
+                if self.skill_reference:
+                    break
                 # 独立“豆包工作”工作区没有技能按钮；直接读取浏览器自己的官方技能列表。
                 result = await page.evaluate(SKILLS_JS, {"query": await self.chain_query()})
                 if result.get("status") == 200:
@@ -536,6 +563,12 @@ class _WorkSession:
                         data = {}
                     if isinstance(data, dict) and data.get("code") in (0, "0", 2000, "2000"):
                         self.remember_skill_listing(data)
+                    elif isinstance(data, dict) and data.get("code") is not None:
+                        break
+                if not self.skill_reference and attempt < 2:
+                    await self.raise_if_blocked()
+                    emit_feedback(self.on_poll, progress="豆包工作模式：等待视频技能加载")
+                    await page.wait_for_timeout(2000)
             if (not self.skill_reference or not await page.evaluate(SELECT_SKILL_JS,
                     {"selector": COMPOSER, "reference": self.skill_reference})):
                 await self.raise_if_blocked()
@@ -632,9 +665,12 @@ class _WorkSession:
         return bool(self.sent) or (url != self.url_before and bool(re.search(r"/chat/(local_|\d)", url)))
 
     async def wait_sent(self, seconds: int) -> bool:
-        for _ in range(seconds):
+        for elapsed in range(seconds):
             if self.went_out():
                 return True
+            self.raise_if_rejected()
+            if self.site == sites.DOUBAO and self.submit_clicked and elapsed % 10 == 0:
+                emit_feedback(self.on_poll, progress="豆包工作模式：正在准备提交，等待网页发送请求")
             await self.page.wait_for_timeout(1000)
         return self.went_out()
 
@@ -702,15 +738,20 @@ class _WorkSession:
             left = (await self.composer_text()).strip()[:40]
             raise PreSubmissionParametersError(f"{self.account} 工作模式请求没有发出去（输入框内容：{left or '空'}）")
         if self.site == sites.DOUBAO and self.submit_clicked and not self.went_out():
-            if not await self.wait_sent(15):
+            if not await self.wait_sent(DOUBAO_PREPARE_SECONDS):
                 self.raise_if_send_failed()
                 self.raise_if_rejected()
                 known, conversation = await self.find_conversation(sent_at)
                 if conversation:
                     return conversation
+                button = page.locator('[data-testid="chat_input_send_button"]:visible')
+                preparing = await button.count() and not await button.first.is_enabled()
+                if preparing:
+                    raise TimeoutError(
+                        f"{self.account} 网页仍在准备提交，尚未取得请求或会话状态；结果不明，不换号重提")
                 if known:
                     raise PreSubmissionParametersError(
-                        f"{self.account} 点击发送后未产生提交请求或新会话，尚未提交生成")
+                        f"{self.account} 网页提交准备失败，未产生提交请求或新会话，尚未提交生成")
                 raise TimeoutError(
                     f"{self.account} 点击发送后未取得请求或会话状态，结果不明，不换号重提")
         for _ in range(CONVERSATION_WAIT_SECONDS):
@@ -903,15 +944,41 @@ class _WorkSession:
         if result["status"] != 200:
             return None
         try:
-            return json.loads(result["text"])
+            chain = json.loads(result["text"])
         except ValueError:
             return None
+        if self.site == sites.DOUBAO:
+            await self.read_threads(query, chain)
+        return chain
+
+    async def read_threads(self, query: str, chain):
+        for thread in work_thread_ids(chain):
+            self.thread_chains.setdefault(thread, None)
+        for thread in self.thread_chains:
+            try:
+                result = await self.page.evaluate(THREAD_JS, {"query": query, "threadId": thread})
+                if result.get("status") != 200:
+                    continue
+                data = json.loads(result.get("text") or "{}")
+                if isinstance(data, dict) and data.get("status_code") in (None, 0, "0", 2000, "2000"):
+                    self.thread_chains[thread] = data
+            except Exception as exc:
+                if not isinstance(exc, ValueError) and (not browser_error(exc) or self.page.is_closed()):
+                    raise
+                print(f"[{self.account}] 工作模式读后台线程失败，下一轮再读：{short_error(exc)}", flush=True)
+
+    def thread_messages(self) -> list[dict]:
+        return [message for chain in self.thread_chains.values() for message in chain_messages(chain)
+                if str(message.get("user_type")) == "2"]
 
     def find_videos(self, chain) -> list[str]:
-        found = video_models(chain)
-        if not found and self.site == sites.DOUBAO:
-            from doubao_gen import _messages
-            found = [json.dumps({"vid": vid}) for message in _messages(chain) if message["bot"] for vid in message["vids"]]
+        found = []
+        for source in [chain, *self.thread_chains.values()]:
+            videos = video_models(source)
+            if not videos and source is not None and self.site == sites.DOUBAO:
+                from doubao_gen import _messages
+                videos = [json.dumps({"vid": vid}) for message in _messages(source) if message["bot"] for vid in message["vids"]]
+            found.extend(videos)
         unique = {}
         for item in found:
             value = json.loads(item)
@@ -928,6 +995,26 @@ class _WorkSession:
             if looks_like_quota_exhausted(text):
                 return DoubaoQuotaError(text[-1200:])
         return failure_from_reply(self.account, text, ran_tools=ran_tools)
+
+    def creation_failure(self, messages: list[dict]):
+        if self.site != sites.DOUBAO:
+            return None
+        for message in reversed(messages):
+            records = video_creation_records(message)
+            if not records:
+                continue
+            if str(records[-1].get("status")) != "5":
+                return None
+            reason = redact_error(records[-1].get("failure_reason") or "上游未提供原因", limit=160)
+            detail = reply_text(message)[-1500:]
+            if reason == "cta_limit":
+                from doubao_gen import DoubaoQuotaError, looks_like_quota_exhausted
+                detail = next((reply_text(m)[-1500:] for m in reversed(messages)
+                               if looks_like_quota_exhausted(reply_text(m))), "豆包视频生成额度已用完（cta_limit）")
+                return DoubaoQuotaError(detail)
+            return (self.reply_failure(detail, ran_tools=True)
+                    or UpstreamReplyError("生成失败", f"豆包视频工具失败（{reason}）：{detail}", generation_started=True))
+        return None
 
     async def deliver(self, vm_str, conversation_id):
         if self.site == sites.DOUBAO:
@@ -1013,13 +1100,14 @@ class _WorkSession:
             if len(found) >= self.video_count:
                 return found[0]
             bots = [m for m in chain_messages(chain) if str(m.get("user_type")) == "2"]
-            signature = json.dumps([(m.get("index_in_conv"), len(reply_text(m))) for m in bots])
+            all_bots = [*bots, *self.thread_messages()]
+            signature = json.dumps([(m.get("message_id"), len(reply_text(m)), video_creation_records(m)) for m in all_bots])
             stable = stable + 1 if signature == last else 0
             last = signature
             since_answer += 1
             latest = bots[-1] if bots else None
             if latest and signature != getattr(self, "noted_signature", ""):
-                text = reply_text(latest)
+                text = reply_text(all_bots[-1]) or reply_text(latest)
                 if text:
                     emit_feedback(self.on_poll, note=redact_error(text, limit=6000))
                 self.noted_signature = signature
@@ -1032,6 +1120,12 @@ class _WorkSession:
                                         + reply_text(latest)[-1000:])
                     return self.found_videos[0]
                 continue
+            failure = self.creation_failure(all_bots)
+            if failure:
+                raise failure
+            if delegated:
+                emit_feedback(self.on_poll, progress="豆包工作模式：后台任务处理中，正在检查视频结果"
+                              if self.site == sites.DOUBAO else "工作模式：后台任务处理中")
             if finished and any(tools_ran(m) for m in bots) and not delegated:
                 if stable >= SETTLED_POLLS:
                     reply = reply_text(latest)[-300:]
@@ -1243,12 +1337,14 @@ async def fetch_work_conversation_video(account: str, conversation_id: str, *, o
                 return pending
             return {**await session.deliver_all(found, conversation_id),
                     "status": "succeeded", "final": False}
-        if latest and reply_finished(latest):
+        failure = (session.creation_failure([*bots, *session.thread_messages()])
+                   if sites.is_doubao_model(model) else None)
+        if not failure and latest and reply_finished(latest):
             failure = session.reply_failure(reply_text(latest), ran_tools=any(generation_started(m) for m in bots))
-            if failure:
-                return {"status": "failed", "local_path": "", "final": True,
-                        "detail": str(failure), "work_limit_until": getattr(failure, "until", None),
-                        "work_quota_blocked": isinstance(failure, WorkQuotaError),
-                        "doubao_quota_blocked": type(failure).__name__ == "DoubaoQuotaError",
-                        "doubao_plan_unavailable": type(failure).__name__ == "DoubaoPlanUnavailableError"}
+        if failure:
+            return {"status": "failed", "local_path": "", "final": True,
+                    "detail": str(failure), "work_limit_until": getattr(failure, "until", None),
+                    "work_quota_blocked": isinstance(failure, WorkQuotaError),
+                    "doubao_quota_blocked": type(failure).__name__ == "DoubaoQuotaError",
+                    "doubao_plan_unavailable": type(failure).__name__ == "DoubaoPlanUnavailableError"}
         return pending
