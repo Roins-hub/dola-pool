@@ -148,6 +148,36 @@ def test_doubao_work_workspace_is_already_in_work_mode_without_a_toggle(monkeypa
     assert calls==['editor_ready','checked']
 
 
+@pytest.mark.parametrize('ready_on_navigation,expected_navigations', [(1, 1), (2, 2), (None, 2)])
+def test_work_page_reopens_once_when_the_editor_does_not_load(monkeypatch, ready_on_navigation, expected_navigations):
+    agent = load_agent(monkeypatch)
+    page = Page([])
+    navigations, notes = [], []
+
+    async def goto(url, **kwargs):
+        navigations.append(url)
+
+    class Editor:
+        async def count(self):
+            return int(ready_on_navigation is not None and len(navigations) >= ready_on_navigation)
+
+    async def dismiss(page):
+        pass
+
+    page.goto = goto
+    page.locator = lambda selector: Editor()
+    monkeypatch.setattr(agent, 'dismiss_popups', dismiss)
+    item = agent._WorkSession('db', page, lambda *args, **fields: notes.append(fields), model='doubao-seedance-2.0-fast')
+    if ready_on_navigation is None:
+        with pytest.raises(agent.PreSubmissionParametersError, match='输入框没有加载'):
+            _run(item.open_chat())
+    else:
+        _run(item.open_chat())
+    assert navigations == ['https://www.doubao.com/chat/'] * expected_navigations
+    assert sum('重新打开页面' in note.get('progress', '') for note in notes) == int(expected_navigations == 2)
+    assert item.sent == [] and page.typed == [] and not item.submit_clicked
+
+
 def test_native_thirty_dispatch_uses_one_account_without_pair(tmp_path, monkeypatch):
     bp_module, pool = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
     monkeypatch.setattr(bp_module, "ensure_web_playable", lambda p: p)

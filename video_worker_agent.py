@@ -366,14 +366,19 @@ class _WorkSession:
 
     async def open_chat(self):
         page = self.page
-        await page.goto(self.base + "/chat/", timeout=120000, wait_until="domcontentloaded")
-        for _ in range(45):
-            raise_if_region_restricted(page, self.account)
-            if await page.locator(COMPOSER).count():
-                break
-            await page.wait_for_timeout(1000)
-        else:
-            raise PreSubmissionParametersError(f"{self.account} 工作模式输入框没有加载出来")
+        for attempt in range(2):
+            await page.goto(self.base + "/chat/", timeout=120000, wait_until="domcontentloaded")
+            for _ in range(45):
+                raise_if_region_restricted(page, self.account)
+                if await page.locator(COMPOSER).count():
+                    break
+                await page.wait_for_timeout(1000)
+            else:
+                if attempt:
+                    raise PreSubmissionParametersError(f"{self.account} 工作模式输入框没有加载出来")
+                emit_feedback(self.on_poll, progress="工作模式：页面加载未完成，重新打开页面")
+                continue
+            break
         # 账号语言和页面语言不一致时页面会重载一次，等它稳定再操作
         await page.wait_for_timeout(15000)
         raise_if_region_restricted(page, self.account)
