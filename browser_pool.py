@@ -1959,7 +1959,7 @@ class BrowserPool:
     def claim_recovered(self, account: str, model: str, duration: int | None,
                         result: dict | None = None) -> int:
         """取回成功按正常出片记账（上游已经扣了这个号的额度）。事件循环线程里调用。"""
-        if is_work_request(model, duration):
+        if not sites.is_doubao_model(model) and is_work_request(model, duration, (result or {}).get("execution_mode", "auto")):
             submitted = float((result or {}).get("submitted_at") or time.time())
             meta = self._meta(account)
             until = max(submitted + WORK_QUOTA_SECONDS, float(meta["work_blocked_until"] or 0) if meta else 0)
@@ -1968,13 +1968,15 @@ class BrowserPool:
         cost = self._duration_cost(model or "", int(duration or 0))
         return self._claim_for(account, cost, result or {})
 
-    async def fetch_work_conversation_video(self, account: str, conversation_id: str) -> dict:
+    async def fetch_work_conversation_video(self, account: str, conversation_id: str, *,
+                                            model="seedance-2.0", duration=WORK_DURATION) -> dict:
         """恢复查询与生成共用全局并发和账号锁，浏览器名额由 worker 管理。"""
         from video_worker_agent import fetch_work_conversation_video
         async with self.semaphore:
             async with self._use_account(account, "recovering"):
                 self._phases[account] = "只读检查超时原会话"
-                return await self._web_playable(await fetch_work_conversation_video(account, conversation_id))
+                return await self._web_playable(await fetch_work_conversation_video(
+                    account, conversation_id, model=model, duration=duration))
 
     def is_pure_account(self, name: str) -> bool:
         """这个号能不能走纯 API（cookie 来源 + 有 cookie_state.json）。
@@ -2015,34 +2017,41 @@ class BrowserPool:
 
         pure_state = self._pure_state(account)
         site = self.site_of(account)
+        work_mode = work_mode or uses_work_mode(model, duration)
         if site == sites.DOUBAO or sites.is_doubao_model(model):
             if site != sites.DOUBAO or not sites.is_doubao_model(model):
                 raise RuntimeError(f"{account} 是 {sites.SITE_LABELS[site]} 号，接不了模型 {model}")
-            if pure_state is None:
-                raise RuntimeError(f"{account} 缺少 cookie_state.json，豆包号只能走纯 API")
-            from doubao_gen import generate_doubao_video
-            result = await asyncio.to_thread(
-                generate_doubao_video,
-                account=account, prompt=prompt, ratio=ratio, duration=duration,
-                model=model, cookie_state_path=pure_state,
-                proxy=self._proxy_url_for(account),
-                on_conversation_id=on_conversation_id, on_poll=on_poll,
-                on_balance=on_balance,
-                reference_image_paths=reference_image_paths,
-            )
-            return await self._web_playable(result)
+            if pure_state is None and not (work_mode and (Path(self.accounts_dir) / account / "cookie_state.json").is_file()):
+                raise RuntimeError(f"{account} 缺少可用的 cookie_state.json")
+            if not work_mode:
+                from doubao_gen import generate_doubao_video
+                result = await asyncio.to_thread(
+                    generate_doubao_video,
+                    account=account, prompt=prompt, ratio=ratio, duration=duration,
+                    model=model, cookie_state_path=pure_state,
+                    proxy=self._proxy_url_for(account),
+                    on_conversation_id=on_conversation_id, on_poll=on_poll,
+                    on_balance=on_balance,
+                    reference_image_paths=reference_image_paths,
+                )
+                return await self._web_playable(result)
         pure_cookie = (pure_state is not None and self._is_cookie_source(account)
                        and not is_cloak_cookie_account(account))
-        work_mode = work_mode or uses_work_mode(model, duration)
-        if work_mode and pure_cookie:
+        if work_mode and pure_cookie and site != sites.DOUBAO:
             raise PreSubmissionParametersError(f"{account} 是纯 API 号，跑不了工作模式")
         if work_mode:
-            # 工作模式使用独立的 7 天额度。
+            # Dola 工作模式使用独立的 7 天额度；豆包沿用自己的套餐和额度。
             from video_worker_agent import generate_work_video
             result = await generate_work_video(
                 account, prompt, ratio, on_conversation_id=on_conversation_id, on_poll=on_poll,
-                reference_image_paths=reference_image_paths)
-            self._mark_work_blocked(account, None, WORK_QUOTA_NOTE)
+                reference_image_paths=reference_image_paths, duration=duration, model=model)
+            if site == sites.DOLA:
+                self._mark_work_blocked(account, None, WORK_QUOTA_NOTE)
+            if result.get("duration_error"):
+                if site == sites.DOUBAO:
+                    self._claim_for(account, self._duration_cost(model, duration), result)
+                from generation_errors import WorkVideoMismatchError
+                raise WorkVideoMismatchError(result["duration_error"], result)
             return await self._web_playable(result)
         if pure_cookie:
             # cookie 号：纯 API 出片；失败抛真实错误，不再回退浏览器
@@ -2076,7 +2085,8 @@ class BrowserPool:
             result["local_path"] = str(await asyncio.to_thread(ensure_web_playable, local))
         return result
 
-    def test_generate_warnings(self, account: str, model: str = "", duration: int = 0) -> list[str]:
+    def test_generate_warnings(self, account: str, model: str = "", duration: int = 0,
+                                execution_mode="auto") -> list[str]:
         """「测试生成」会强制用这个号真出片（不看分组/暂停/额度）。这些情况下大概率白撞，先提醒：
 
         风控 / 异常（含限流暂停）/ 出口正被限流 / 没绑代理走直连 / 今日额度不够。
@@ -2104,10 +2114,15 @@ class BrowserPool:
             proxied = bool(self._proxy_url_for(account))
         except Exception:  # noqa: BLE001
             proxied = True
-        if not proxied and row.get("site") != sites.DOUBAO:
+        if not proxied and uses_work_mode(model, duration, execution_mode):
+            out.append("工作模式需要绑定启用的账号代理，缺少代理时不会提交")
+        elif not proxied and row.get("site") != sites.DOUBAO:
             out.append("该号没绑代理，会用服务器本机 IP 直连；服务器不在日本/韩国时 dola 会拒绝"
                        "（710022002 或地区限制）")
-        need = start_need(model or "", int(duration or 0)) if model else 0
+        weekly = not sites.is_doubao_model(model) and uses_work_mode(model, duration, execution_mode)
+        need = start_need(model or "", int(duration or 0)) if model and not weekly else 0
+        if weekly and float(row.get("work_blocked_until") or 0) > now:
+            out.append("该号的工作模式免费额度尚未恢复")
         remaining = int(row.get("remaining") or 0)
         if need and remaining < need:
             out.append(f"该号今日额度不够（剩 {remaining} 点，这条至少要 {need} 点）")
@@ -2115,7 +2130,7 @@ class BrowserPool:
 
     async def test_generate(self, account: str, prompt: str, ratio: str | None = None,
                             duration: int = 10, model: str = "seedance-2.0-fast",
-                            on_poll=None, on_conversation_id=None) -> dict:
+                            on_poll=None, on_conversation_id=None, execution_mode="auto") -> dict:
         """账号级测试出片：强制用指定账号生成一条，返回成功/失败与成品 URL。
 
         不经过号池选号调度（跳过 _schedulable / 每日上限等），只验证该号本身能否出片。
@@ -2123,11 +2138,13 @@ class BrowserPool:
         """
         if account not in self.accounts:
             raise FileNotFoundError(f"profile 不存在: {account}")
-        if self.site_of(account) == sites.DOUBAO and not sites.is_doubao_model(model):
+        if execution_mode == "auto" and self.site_of(account) == sites.DOUBAO and not sites.is_doubao_model(model):
             # 面板「测试生成」默认是 dola 模型：豆包号换成免费号也能用的 Mini（时长夹到 15 秒内）
             model = "doubao-seedance-2.0-mini"
             duration = max(sites.DOUBAO_MIN_DURATION, min(15, int(duration or 5)))
         lock = self._locks.setdefault(account, asyncio.Lock())
+        using_work = uses_work_mode(model, duration, execution_mode)
+        weekly = using_work and not sites.is_doubao_model(model)
         async with self.semaphore, self._use_account(account, "generating"):
             cost = self._duration_cost(model, duration)
 
@@ -2139,12 +2156,13 @@ class BrowserPool:
                     account, prompt, ratio, duration, model,
                     on_conversation_id=on_conversation_id, on_poll=on_poll, on_balance=on_balance,
                     reference_image_paths=[],
+                    work_mode=using_work,
                 )
                 local = result.get("local_path")
                 linked = result.get("delivery") == "link" and result.get("video_url")
                 if not linked and (not local or not Path(local).exists()):
                     raise RuntimeError("出片未产出本地视频文件")
-                if not uses_work_mode(model, duration):
+                if not weekly:
                     self._claim_for(account, cost, result)
                 self._conn.execute(
                     "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
@@ -2155,6 +2173,7 @@ class BrowserPool:
                 if linked:
                     return {"ok": True, "account": account, **result}
                 return {
+                    **result,
                     "ok": True,
                     "account": account,
                     "local_path": str(local),
@@ -2164,7 +2183,7 @@ class BrowserPool:
             except (PreSubmissionUploadError, PreSubmissionParametersError) as exc:
                 return {"ok": False, "account": account, "error": str(exc)}   # 没发出去，不是超时
             except TimeoutError as exc:
-                if uses_work_mode(model, duration):
+                if weekly:
                     self.note_work_suspect(account)
                 return {"ok": False, "account": account, "error": f"生成超时: {exc}", "recoverable": True}
             except ShortClipError as exc:
@@ -2188,6 +2207,12 @@ class BrowserPool:
                 self._mark_daily_limit(account, str(exc), until=quota_recover_at(str(exc)))
                 return {"ok": False, "account": account, "error": str(exc)[:300]}
             except Exception as exc:
+                from generation_errors import WorkVideoMismatchError
+                if isinstance(exc, WorkVideoMismatchError):
+                    result = exc.result
+                    local = result.get("local_path")
+                    return {**result, "ok": False, "account": account, "error": str(exc),
+                            "video_url": f"{config.PUBLIC_BASE}/videos/{Path(local).name}" if local else ""}
                 if "登录态失效" in str(exc):
                     self._set_risk(account, str(exc))
                 else:
@@ -2471,7 +2496,7 @@ class BrowserPool:
                              attempt_timeout: float | None = None, on_dispatch=None,
                              on_attempt_end=None, on_pair_state=None, pair_state=None,
                              excluded_accounts: set[str] | None = None, work_context=False,
-                             _ai_retry_state=None, _on_ai_switch=None) -> dict:
+                             _ai_retry_state=None, _on_ai_switch=None, execution_mode="auto") -> dict:
         """挑一个可调度且空闲的号出片；失败自动换号重试（最多 max_attempts 次）。
 
         2.0 的 30 秒（工作模式开着时）交给 generate_work_pair：两段 15 秒各走一遍这里。
@@ -2488,7 +2513,7 @@ class BrowserPool:
         - max_attempts <= 0 表示不限次数：在 deadline（任务总时限）之前一轮轮换号重试，
           到点仍未出片才判失败。
         """
-        if uses_work_pair(model, duration) or pair_state and is_work_request(model, duration) and int(duration) == 30:
+        if uses_work_pair(model, duration, execution_mode) or pair_state and is_work_request(model, duration, execution_mode) and int(duration) == 30:
             return await self.generate_work_pair(
                 prompt, ratio, model, on_conversation_id=on_conversation_id, on_poll=on_poll,
                 on_balance=on_balance, reference_image_paths=reference_image_paths,
@@ -2507,13 +2532,14 @@ class BrowserPool:
             need = start_need(model, duration)      # 派号门槛（2.0 只要还有额度）；记账仍按 cost
             allowed_groups = self._allowed_quota_groups(model, duration)
             # 工作模式有自己的 7 天额度：不看、也不扣每日聊天额度
-            work_job = uses_work_mode(model, duration) or work_context and is_work_request(model, duration)
+            browser_work = uses_work_mode(model, duration, execution_mode) or work_context and is_work_request(model, duration)
+            work_job = browser_work and not sites.is_doubao_model(model)
             if work_job:
                 need, allowed_groups = 0, (GROUP_FULL, GROUP_HALF, GROUP_COOLING)
             want_site = sites.site_for_model(model)
             member_only = sites.doubao_member_only(model)
             # 豆包 2.5 原生 30 秒：不走 dola 的两段拼接
-            pair_job = self._is_pair_job(duration) and want_site == sites.DOLA
+            pair_job = self._is_pair_job(duration) and want_site == sites.DOLA and not browser_work
             if want_site == sites.DOUBAO:
                 allowed_groups = (GROUP_FULL, GROUP_HALF)
                 rows = [a for a in self.list_accounts() if a.get("site") == sites.DOUBAO]
@@ -2649,7 +2675,7 @@ class BrowserPool:
                         if not dispatched:
                             dispatched = True
                             if attempt_timeout is not None:
-                                window = max(attempt_timeout, config.WORK_RETRY_SECONDS) if work_job else attempt_timeout
+                                window = max(attempt_timeout, config.WORK_RETRY_SECONDS) if browser_work else attempt_timeout
                                 deadline = time.time() + window
                             if on_dispatch:
                                 on_dispatch()
@@ -2717,7 +2743,7 @@ class BrowserPool:
                                         on_conversation_id=acknowledged, on_poll=on_poll,
                                         on_balance=on_balance,
                                         reference_image_paths=reference_image_paths,
-                                        on_retry=restarted, work_mode=work_job)
+                                        on_retry=restarted, work_mode=browser_work)
                             except TimeoutError:
                                 if preparation.expired():
                                     raise TimeoutError(

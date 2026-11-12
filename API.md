@@ -42,6 +42,20 @@ curl -s "$BASE/v1/videos/video_xxx/content" -H "Authorization: Bearer $KEY" -o o
 
 要点：**提交是异步的**（立刻返回 `queued`），出片要轮询；`video_url` 是本服务转存后的稳定地址，不是 dola 的临时 CDN 链接。
 
+### 指定工作模式
+
+JSON、multipart 和 Ark 接口支持 `execution_mode`：`auto`（默认，沿用现有流程）或 `work`（通过账号浏览器进入工作模式并选择视频技能）。豆包仍使用 `doubao-` 模型名，例如：
+
+```json
+{"model":"doubao-seedance-2.0-fast","prompt":"白鹭飞过清晨湖面","duration":15,"ratio":"16:9","execution_mode":"work"}
+```
+
+Dola 使用 `seedance-2.0-fast`。显式 `work` 的 30 秒请求尝试**单条原生 30 秒**；上游拒绝或返回短片时记录实际结果，保留已获得的视频，不自动拼接或补做。`auto` 的 Dola 30 秒仍按原有配置使用两段拼接。
+
+工作模式需要安装 CloakBrowser，并为账号绑定启用的代理。两个站点分别使用自己的 Cookie、技能和会话接口，共用全局并发、账号锁及工作模式浏览器名额。Dola 工作模式按每号 7 天一次免费额度记账；豆包沿用自身额度和套餐限制。付费确认会停止，发送后超时只读取原会话，不重复提交。
+
+管理员固定账号测试接口同样接受 `execution_mode`；显式 `work` 允许单账号原生 30 秒尝试。原生 30 秒的可用性以实际回执和成片时长为准。
+
 ### 0.1 排队与进度（`progress`，给客户端显示用）
 
 `POST /v1/videos`（含 `/v1/videos/generations`）与 `GET /v1/videos/{id}` 的响应里都带一个

@@ -381,6 +381,7 @@ class VideoGenRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     size: str | None = None
     ratio: str | None = None
+    execution_mode: Literal["auto", "work"] = "auto"
     duration: int | None = Field(None, ge=4, le=30)
     # 时长别名：new-api 的 sora/vinted 任务插件会把画布传来的 duration 统一改写成
     # `seconds` 再转发到本服务，所以这里必须一起认；否则 30 秒请求会被当成「没带时长」
@@ -405,6 +406,7 @@ class TestGenRequest(BaseModel):
     model: str = "seedance-2.0-fast"
     duration: int = Field(10, ge=4, le=30)
     ratio: str | None = None
+    execution_mode: Literal["auto", "work"] = "auto"
     # 号处于风控/限流暂停/没绑代理等状态时，先返回提醒；确认后带 force=true 再发
     force: bool = False
 
@@ -751,7 +753,9 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
     acquired = False
     reference_root = None
     try:
-        pair_context = _pair_state(store.get(task_id) or {})
+        task_row = store.get(task_id) or {}
+        execution_mode = task_row.get("execution_mode") or "auto"
+        pair_context = _pair_state(task_row)
         if pair_context.get("pending") or pair_context.get("active"):
             store.update(task_id, status="failed", error="服务中断后正在取回工作模式原会话", finished_at=time.time())
             _maybe_start_recovery(task_id, TimeoutError("工作模式等待超时"))
@@ -893,7 +897,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                     on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
                     attempt_timeout=config.TASK_DEADLINE, on_dispatch=on_dispatch,
                     on_attempt_end=on_attempt_end, on_pair_state=on_pair_state, pair_state=pair_context or None,
-                    on_wait=lambda note: store.set_queue_note(task_id, note))
+                    on_wait=lambda note: store.set_queue_note(task_id, note), execution_mode=execution_mode)
         except TimeoutError:
             # TimeoutError is also raised by upload/navigation/polling. Preserve that
             # stage-specific error unless THIS outer timeout actually expired.
@@ -931,6 +935,9 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                          error="任务被中断（服务重启），已重新排队")
         raise
     except Exception as e:
+        if getattr(e, "result", None):
+            fields = await _completion_fields(task_id, e.result, duration, ratio)
+            store.update(task_id, **fields)
         store.update(task_id, status="failed", error=failure_text.summarize(str(e)),
                      finished_at=time.time())
         try:
@@ -969,10 +976,18 @@ def _is_wait_timeout(exc: BaseException) -> bool:
     return "等待出片超时" in text or "等待出片超过" in text
 
 
+def _is_work_task(row: dict) -> bool:
+    return work_reply.is_work_request(row.get("model"), row.get("duration"), row.get("execution_mode") or "auto")
+
+
+def _is_work_pair_task(row: dict) -> bool:
+    return _is_work_task(row) and row.get("execution_mode") != "work" and int(row.get("duration") or 0) == 30
+
+
 def _maybe_start_recovery(task_id: str, exc: BaseException) -> bool:
     """超时原会话继续取回；工作模式分段重试留下的会话也继续核对额度。"""
     row = store.get(task_id) or {}
-    work = work_reply.is_work_request(row.get("model"), row.get("duration"))
+    work = _is_work_task(row)
     pair = _pair_state(row)
     if config.RECOVER_TIMEOUT_SECONDS <= 0 or not (_is_wait_timeout(exc) or work and pair.get("pending")):
         return False
@@ -984,7 +999,7 @@ def _maybe_start_recovery(task_id: str, exc: BaseException) -> bool:
             store.update(task_id, account=account, conversation_id=conv)
     if not account or not conv or not (work or pool.is_pure_account(account)):
         return False
-    if work and int(row.get("duration") or 0) == 30:
+    if _is_work_pair_task(row):
         pending = pair.setdefault("pending", [])
         target = pair.get("active")
         if not target and not pending:
@@ -1009,7 +1024,7 @@ async def _recover_loop(task_id: str) -> None:
     RECOVERING.add(task_id)
     try:
         initial = store.get(task_id) or {}
-        if work_reply.is_work_request(initial.get("model"), initial.get("duration")):
+        if _is_work_task(initial):
             await _recover_work_loop(task_id)
             return
         while True:
@@ -1142,7 +1157,7 @@ async def _recover_work_loop(task_id: str) -> None:
         row = store.get(task_id)
         if not row or row.get("recover_state") != "watching":
             return
-        pair = int(row.get("duration") or 0) == 30
+        pair = _is_work_pair_task(row)
         state = _pair_state(row)
         if not pair and row.get("status") == "completed":
             store.update(task_id, recover_state="recovered" if row.get("recovered_at") else "checked")
@@ -1166,13 +1181,21 @@ async def _recover_work_loop(task_id: str) -> None:
                 continue
             try:
                 async with asyncio.timeout(max(.1, float(row["recover_until"]) - time.time())):
-                    res = target.get("result") or await pool.fetch_work_conversation_video(account, conv)
+                    res = target.get("result") or await pool.fetch_work_conversation_video(
+                        account, conv, model=row.get("model") or "seedance-2.0",
+                        duration=work_reply.WORK_DURATION if pair else row.get("duration"))
                 if res.get("local_path") or res.get("video_url"):
-                    res.update(account=account, conversation_id=conv, submitted_at=target.get("submitted_at"))
+                    res.update(account=account, conversation_id=conv, submitted_at=target.get("submitted_at"),
+                               execution_mode=row.get("execution_mode") or "auto")
                     if not target.get("quota_claimed"):
                         pool.claim_recovered(account, row.get("model") or "", row.get("duration"), res)
                         _record_work_recovery(task_id, target)
                         target["quota_claimed"] = True
+                    if res.get("duration_error"):
+                        fields = await _completion_fields(task_id, res, row.get("duration"), row.get("ratio"))
+                        store.update(task_id, status="failed", recover_state="gave_up", error=res["duration_error"],
+                                     finished_at=time.time(), **fields)
+                        return
                     if row.get("status") == "completed":
                         if res.get("local_path"):
                             Path(res["local_path"]).unlink(missing_ok=True)
@@ -1207,6 +1230,11 @@ async def _recover_work_loop(task_id: str) -> None:
                 elif res.get("final"):
                     if res.get("work_quota_blocked"):
                         pool._mark_work_blocked(account, res.get("work_limit_until"), res.get("detail") or "")
+                    elif res.get("doubao_quota_blocked"):
+                        from doubao_gen import quota_recover_at
+                        pool._mark_daily_limit(account, res.get("detail") or "", until=quota_recover_at(res.get("detail") or ""))
+                    elif res.get("doubao_plan_unavailable"):
+                        pool._mark_abnormal(account, res.get("detail") or "")
                     pool.clear_work_suspect(account, before=target.get("suspect_at"))
                     _record_work_recovery(task_id, target, final_error=res.get("detail") or "原会话已明确结束，未生成视频")
                     if pair:
@@ -1306,7 +1334,7 @@ async def _resume_task(row: dict):
                         None if row.get("ratio") == "default" else row.get("ratio"), row.get("duration"),
                         _task_reference_images(row.get("reference_images")), _task_client(row))
         return
-    if account and row.get("conversation_id") and work_reply.is_work_request(row.get("model"), row.get("duration")):
+    if account and row.get("conversation_id") and _is_work_task(row):
         store.update(task_id, status="failed", error="服务中断后正在取回工作模式原会话", finished_at=time.time())
         _maybe_start_recovery(task_id, TimeoutError("工作模式等待超时"))
         return
@@ -1681,7 +1709,7 @@ async def create_video(request: Request, authorization: str | None = Header(defa
     _log_request_fields(raw, "openai", resolution, source)
     return await _submit_task(client, req.model, prompt, ratio, duration, refs,
                               reference_source=req.reference_source,
-                              resolution=resolution, size=size)
+                              resolution=resolution, size=size, execution_mode=req.execution_mode)
 
 
 def _data_url_from_upload(filename: str, data: bytes) -> str:
@@ -1702,7 +1730,7 @@ async def _raw_from_multipart(request: Request) -> dict[str, Any]:
     """
     form = await request.form()
     raw: dict[str, Any] = {}
-    for key in ("model", "prompt"):
+    for key in ("model", "prompt", "execution_mode"):
         value = form.get(key)
         if isinstance(value, str) and value.strip():
             raw[key] = value.strip()
@@ -1810,9 +1838,15 @@ def _check_prompt_encoding(prompt):
 
 
 async def _submit_task(client, model, prompt, ratio, duration, reference_images,
-                       reference_source=None, resolution=None, size=None):
+                       reference_source=None, resolution=None, size=None, execution_mode="auto"):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
     _check_prompt_encoding(prompt)
+    if execution_mode not in ("auto", "work"):
+        raise HTTPException(422, "execution_mode 只支持 auto / work")
+    if execution_mode == "work":
+        error = work_reply.work_request_error(model, duration)
+        if error:
+            raise HTTPException(422, error)
     if reference_source is None:
         reference_source = config.DEFAULT_REFERENCE_SOURCE if reference_images else "unspecified"
     try:
@@ -1823,6 +1857,8 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
         raise HTTPException(422, f"提交提示词（含素材来源说明）超过 {config.MAX_PROMPT_CHARS} 字符上限")
     if sites.is_doubao_model(model):
         resolved = _check_doubao_model(model, duration)
+    elif execution_mode == "work":
+        resolved = _model_version(model)
     else:
         _reject_unsupported_long(duration, model)
         resolved = _resolve_model_for_duration(model, duration)
@@ -1861,9 +1897,10 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
         raise HTTPException(422, str(exc)) from exc
     # 账号暂时忙时允许任务进入 queued，由 BrowserPool 的全局并发控制实际排队。
     # 只有明确全部达到每日上限/积分不足时才立即拒绝。
-    if not pool.available and pool.all_accounts_limited:
+    weekly = work_reply.uses_work_mode(model, duration, execution_mode) and not sites.is_doubao_model(model)
+    if not weekly and not pool.available and pool.all_accounts_limited:
         raise HTTPException(429, "账号限流：所有已开启调度的账号均已达到 Dola 每日视频上限，请明天再试")
-    if not pool.available and pool.all_accounts_quota_blocked:
+    if not weekly and not pool.available and pool.all_accounts_quota_blocked:
         raise HTTPException(429, "积分不足：所有已开启调度的账号都没有足够积分，请等待额度刷新")
     if not pool.accounts:
         raise HTTPException(503, "no account in pool")
@@ -1886,6 +1923,7 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
             max_pending=config.MAX_PENDING_TASKS,
             reference_source=reference_source,
             prompt_supplement=supplement,
+            execution_mode=execution_mode,
         )
     except TaskQuotaExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
@@ -2565,13 +2603,23 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
     ratio = _map_ark_ratio(body.get("ratio") or _nested_value(body, ("ratio", "aspect_ratio")))
     if reference_images:
         print(f"[api] Ark 收到参考图 {len(reference_images)} 张: {reference_images[0][:80]}", flush=True)
+    if body.get("execution_mode") == "work":
+        try:
+            seconds = int(body.get("duration") or body.get("seconds") or 15)
+        except (TypeError, ValueError):
+            raise HTTPException(422, "工作模式时长无效")
+        resp = await _submit_task(client, requested_model, prompt, ratio, seconds, reference_images,
+                                  reference_source=body.get("reference_source"), resolution=resolution,
+                                  execution_mode="work")
+        return {"id": resp.id, "status": resp.status}
     if sites.is_doubao_model(requested_model):
         try:
             seconds = int(body.get("duration") or body.get("seconds") or 5)
         except (TypeError, ValueError):
             seconds = 5
         resp = await _submit_task(client, requested_model, prompt, ratio, seconds, reference_images,
-                                  reference_source=body.get("reference_source"), resolution=resolution)
+                                  reference_source=body.get("reference_source"), resolution=resolution,
+                                  execution_mode=body.get("execution_mode", "auto"))
         return {"id": resp.id, "status": resp.status}
     version = _model_version(requested_model)
     if version is not None:
@@ -2598,7 +2646,8 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
             f"seedance-2.0-fast 仅支持 {list(config.V20_DURATIONS)} 秒）",
         )
     resp = await _submit_task(client, model, prompt, ratio, duration, reference_images,
-                              reference_source=body.get("reference_source"), resolution=resolution)
+                              reference_source=body.get("reference_source"), resolution=resolution,
+                              execution_mode=body.get("execution_mode", "auto"))
     return {"id": resp.id, "status": resp.status}
 
 
@@ -3422,15 +3471,21 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         raise HTTPException(409, "该账号正在执行任务，稍后再试")
     # 和客户 API 同一道时长检查：2.0-fast 网页只给 4～10 秒，直接请求 15 秒会被 dola 拒绝（2026-10-30 实测）
     version = _model_version(body.model)
-    if work_reply.uses_work_pair(body.model, body.duration):
+    if body.execution_mode == "work":
+        error = work_reply.work_request_error(body.model, body.duration)
+        if error:
+            raise HTTPException(422, error)
+        if sites.site_for_model(body.model) != pool.site_of(name):
+            raise HTTPException(422, "模型与账号站点不一致；豆包账号请选择 doubao- 开头的模型")
+    if work_reply.uses_work_pair(body.model, body.duration, body.execution_mode):
         raise HTTPException(422, "测试生成只用一个号，跑不了 30 秒拼接（要两个号各出 15 秒）")
     if (version == "seedance-2.0" and not sites.is_doubao_model(body.model)
-            and body.duration not in config.V20_DURATIONS):
+            and body.execution_mode != "work" and body.duration not in config.V20_DURATIONS):
         raise HTTPException(
             422, f"{_public_model(version)} 仅支持 {'/'.join(map(str, config.V20_DURATIONS))} 秒视频"
                  f"（收到 {body.duration} 秒）")
     if not body.force:
-        warnings = pool.test_generate_warnings(name, body.model, body.duration)
+        warnings = pool.test_generate_warnings(name, body.model, body.duration, execution_mode=body.execution_mode)
         if warnings:
             # 前端认 TEST_GEN_WARN: 前缀，弹确认框列出原因，确认后带 force=true 重发
             raise HTTPException(409, "TEST_GEN_WARN:" + "\n".join(warnings))
@@ -3441,21 +3496,22 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         "model": body.model,
         "duration": body.duration,
         "ratio": body.ratio,
+        "execution_mode": body.execution_mode,
         "status": "running",
         "started_at": time.time(),
         "result": None,
         "error": "",
     }
     asyncio.create_task(_run_test_generate(
-        task_id, name, body.prompt, body.ratio, body.duration, body.model))
+        task_id, name, body.prompt, body.ratio, body.duration, body.model, body.execution_mode))
     return {"task_id": task_id, "account": name}
 
 
 async def _run_test_generate(task_id: str, name: str, prompt: str,
-                             ratio: str | None, duration: int, model: str) -> None:
+                             ratio: str | None, duration: int, model: str, execution_mode="auto") -> None:
     try:
         # 测试生成同样消耗账号额度，因此写入正式任务库，便于在任务列表追踪结果。
-        store.create(task_id, model, prompt, ratio, duration, account=name)
+        store.create(task_id, model, prompt, ratio, duration, account=name, execution_mode=execution_mode)
         started = time.time()
         attempt = {"account": name, "attempt": 1, "started_at": started,
                    "stage": "准备生成", "outcome": "running", "stages": []}
@@ -3486,7 +3542,7 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
             store.update(task_id, **fields)
 
         result = await pool.test_generate(name, prompt, ratio, duration, model, on_poll=on_poll,
-                                          on_conversation_id=on_conversation_id)
+                                          on_conversation_id=on_conversation_id, execution_mode=execution_mode)
         TEST_JOBS[task_id]["result"] = result
         TEST_JOBS[task_id]["status"] = "done"
         err = result.get("error", "") if not result.get("ok") else ""
@@ -3506,6 +3562,8 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
                 TEST_JOBS[task_id]["result"] = {**result, "video_url": fields["video_url"]}
         else:
             status = "风控" if _is_risk_error(err) else "failed"
+            if result.get("local_path"):
+                store.update(task_id, **await _completion_fields(task_id, result, duration, ratio))
             store.update(task_id, status=status, error=failure_text.summarize(err),
                          finished_at=time.time())
             if result.get("recoverable"):

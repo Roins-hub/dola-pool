@@ -152,7 +152,7 @@ class WorkPool(FakePool):
         super().__init__(results, pure=False)
         self.cleared, self.discarded, self.continued, self.merged = [], [], [], []
 
-    async def fetch_work_conversation_video(self, account, conv):
+    async def fetch_work_conversation_video(self, account, conv, **kwargs):
         return self.fetch_conversation_video(account, conv)
 
     def clear_work_suspect(self, account, **kwargs):
@@ -220,7 +220,7 @@ def test_account_test_persists_conversation_and_recovers_without_resubmission(tm
     monkeypatch.setattr(server, "_admin_auth", lambda key: "owner")
     submitted = []
 
-    async def generate(account, *args, on_conversation_id, on_poll):
+    async def generate(account, *args, on_conversation_id, on_poll, **kwargs):
         submitted.append(account)
         on_poll(time.time(), progress="工作模式：发送请求")
         on_conversation_id(account, "original-conv", time.time() + 60)
@@ -403,7 +403,7 @@ def test_pool_recovery_respects_global_and_account_locks(tmp_path, monkeypatch):
     pool.set_max_concurrency(1)
     calls = []
 
-    async def fetch(account, conv):
+    async def fetch(account, conv, **kwargs):
         calls.append(account)
         assert pool._activities[account] == "recovering"
         return {"local_path": "", "final": False}
@@ -486,7 +486,7 @@ def test_readonly_worker_fetch_never_sends_or_answers(monkeypatch):
     calls = []
 
     @asynccontextmanager
-    async def browser(account, on_poll=None):
+    async def browser(account, on_poll=None, **kwargs):
         async def query():
             return "signed-query"
 
@@ -494,7 +494,8 @@ def test_readonly_worker_fetch_never_sends_or_answers(monkeypatch):
             calls.append(conv)
             return video()
 
-        yield SimpleNamespace(chain_query=query, read_chain=read)
+        yield SimpleNamespace(chain_query=query, read_chain=read, find_videos=agent.video_models,
+                              deliver=lambda vm, conv: deliver(account, vm, conv, on_poll))
 
     async def deliver(account, vm, conv, poll):
         return {"account": account, "conversation_id": conv, "local_path": "late.mp4"}

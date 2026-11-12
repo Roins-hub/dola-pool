@@ -76,6 +76,7 @@ class TaskStore:
                 ("reference_thumbs", "TEXT"),
                 ("reference_source", "TEXT DEFAULT 'unspecified'"),
                 ("prompt_supplement", "TEXT DEFAULT ''"),
+                ("execution_mode", "TEXT DEFAULT 'auto'"),
                 ("api_key_hash", "TEXT"),
                 ("api_key_name", "TEXT"),
                 ("started_at", "REAL"),
@@ -238,6 +239,7 @@ class TaskStore:
         max_pending=0,
         reference_source="unspecified",
         prompt_supplement="",
+        execution_mode="auto",
     ):
         now = time.time()
         clamped = self._clamp_fields({
@@ -274,8 +276,8 @@ class TaskStore:
                 "id,model,prompt,ratio,duration,status,account,created_at,updated_at,"
                 "conversation_id,deadline_at,last_poll_at,failure_code,reference_images,"
                 "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,"
-                "reference_source,prompt_supplement"
-                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?)",
+                "reference_source,prompt_supplement,execution_mode"
+                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?,?)",
                 (
                     task_id,
                     clamped["model"],
@@ -293,6 +295,7 @@ class TaskStore:
                     max(0, int(concurrency_limit or 0)),
                     clamped["reference_source"],
                     clamped["prompt_supplement"],
+                    execution_mode,
                 ),
             )
             self._conn.commit()
@@ -452,7 +455,7 @@ class TaskStore:
         with _LOCK:
             rows = self._conn.execute(
                 "SELECT model, account, status, error, started_at, created_at, attempt_history FROM tasks "
-                "WHERE duration IN (15, 30) AND created_at>=?", (since,)).fetchall()
+                "WHERE (duration IN (15, 30) OR execution_mode='work') AND created_at>=?", (since,)).fetchall()
         out = []
         for r in rows:
             model = str(r["model"] or "").lower().replace("_", "-")

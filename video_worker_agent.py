@@ -1,4 +1,4 @@
-"""Seedance 2.0 15 秒：走 Dola 工作模式（Agent-GeneralTask + Creative video 技能）。
+"""Dola / 豆包工作模式：独立浏览器进入工作模式并选择对应站点的视频技能。
 
 普通聊天里 2.0 只出 5/10 秒，工作模式能一次出 15 秒。2026-11-07 实测：
 - 同一个号在 patchright 浏览器里被 710022002 拒绝，放进 CloakBrowser 就能过，所以这里
@@ -28,6 +28,7 @@ from account_transport import http_proxy, redact_error
 import config
 import dola_responder
 import failure_text
+import sites
 from browser import cloak_proxy_settings, cookie_value, launch_account_context
 from browser_feedback import emit as emit_feedback
 from generation_errors import (
@@ -43,7 +44,7 @@ from video_worker_ui import (
 from work_reply import (
     WORK_DURATION, WORK_LIMIT_RE, ask_summary, asks_to_confirm, build_prompt, chain_messages, choose_options,
     generation_started, pending_ask, recent_conversations, reply_finished, reply_text, session_cookies, tools_ran,
-    upload_wait_seconds, uploads_committed, video_models, video_skill_labels, work_limit_until,
+    upload_wait_seconds, uploads_committed, video_models, video_skill_labels, work_limit_until, model_label,
 )
 
 SKILL_RE = re.compile(r"^(?!.*(?:analysis|analy[sz]|分析))[^\r\n]*"
@@ -135,6 +136,15 @@ CHAIN_JS = r"""async ({query, conversationId}) => {
   } catch (e) { return {status: 0, text: String(e)}; }
 }"""
 
+RESOURCE_JS = r"""async ({query, vid}) => {
+  const r = await fetch('/creativity/resource/get_without_watermark?' + query, {
+    method: 'POST', credentials: 'include',
+    headers: {'Content-Type': 'application/json', 'agw-js-conv': 'str'}, body: JSON.stringify({vid: [vid]})});
+  if (!r.ok) return null;
+  const data = await r.json();
+  return (((data.data || {}).download_video || {})[vid] || {}).download_url || null;
+}"""
+
 # 同一时间只开这么多 CloakBrowser：有头运行，一单要占约 6 分钟
 _slots: asyncio.Semaphore | None = None
 _slots_size = 0
@@ -202,9 +212,13 @@ async def _work_slot(on_poll):
 class _WorkSession:
     """一次工作模式出片：打开页面、发送、确认、等视频。"""
 
-    def __init__(self, account, page, on_poll, *, ratio=None, attachments=0, prompt=""):
+    def __init__(self, account, page, on_poll, *, ratio=None, attachments=0, prompt="",
+                 duration=WORK_DURATION, model="seedance-2.0"):
         self.account, self.page, self.on_poll = account, page, on_poll
         self.ratio, self.attachments = ratio, attachments
+        self.duration, self.model = int(duration or WORK_DURATION), model
+        self.site = sites.site_for_model(model)
+        self.base = "https://www.doubao.com" if self.site == sites.DOUBAO else "https://www.dola.com"
         self.confirmed = False
         self.nudges = 0
         self.ai_note = ""
@@ -221,8 +235,8 @@ class _WorkSession:
         self.prompt = prompt
         self.choice_answers = {}
         self.responder = dola_responder.DialogueResponder(
-            prompt=prompt, ratio=ratio, duration=WORK_DURATION, attachments=self.attachments,
-            model="Seedance 2.0")
+            prompt=prompt, ratio=ratio, duration=self.duration, attachments=self.attachments,
+            model=model_label(model), site=sites.SITE_LABELS[self.site])
         self.uploading = False
         self.upload_error = None
         self.skill_labels = []
@@ -230,7 +244,7 @@ class _WorkSession:
     def watch(self):
         def on_request(request):
             parts = urlsplit(request.url)
-            if parts.netloc == "www.dola.com" and "device_id=" in request.url and "aid=" in request.url:
+            if parts.hostname == urlsplit(self.base).hostname and "device_id=" in request.url and "aid=" in request.url:
                 self.page_query = request.url
             if parts.path.endswith("/chat/completion"):
                 self.sent.append(request.url)
@@ -254,7 +268,7 @@ class _WorkSession:
 
     async def read_skill_response(self, response):
         parts = urlsplit(response.url)
-        if (parts.hostname not in ("dola.com", "www.dola.com")
+        if (parts.hostname != urlsplit(self.base).hostname
                 or parts.path != "/alice/office/skills/list_user_and_featured" or response.status != 200):
             return
         try:
@@ -262,7 +276,7 @@ class _WorkSession:
         except Exception:
             return
         if isinstance(data, dict) and data.get("code") in (None, 0, "0", 2000, "2000"):
-            labels = video_skill_labels(data)
+            labels = video_skill_labels(data, self.site)
             if labels:
                 self.skill_labels = labels
 
@@ -315,8 +329,16 @@ class _WorkSession:
         """找不到按钮、菜单时先看是不是掉线或地区受限，别报成页面元素的问题。"""
         self.raise_if_rejected()
         raise_if_region_restricted(self.page, self.account)
-        if await is_logged_out(self.page):
+        if await self.logged_out():
             raise LoginExpiredError(f"{self.account} 登录态失效，工作模式未发送")
+
+    async def logged_out(self):
+        if await is_logged_out(self.page):
+            return True
+        if self.site == sites.DOUBAO:
+            button = self.page.get_by_role("button", name=re.compile(r"^(登录|登录 / 注册|登录/注册)$"))
+            return bool(await button.count() and await button.first.is_visible())
+        return False
 
     async def solve_captcha(self):
         frame = find_captcha_frame(self.page)
@@ -335,7 +357,7 @@ class _WorkSession:
 
     async def open_chat(self):
         page = self.page
-        await page.goto("https://www.dola.com/chat", timeout=120000, wait_until="domcontentloaded")
+        await page.goto(self.base + "/chat/", timeout=120000, wait_until="domcontentloaded")
         for _ in range(45):
             raise_if_region_restricted(page, self.account)
             if await page.locator(COMPOSER).count():
@@ -346,7 +368,7 @@ class _WorkSession:
         # 账号语言和页面语言不一致时页面会重载一次，等它稳定再操作
         await page.wait_for_timeout(15000)
         raise_if_region_restricted(page, self.account)
-        if await is_logged_out(page):
+        if await self.logged_out():
             raise LoginExpiredError(f"{self.account} 登录态失效，工作模式未发送")
         await dismiss_popups(page)
 
@@ -365,6 +387,9 @@ class _WorkSession:
                 # 桌面应用推广可能在初始弹层清理后才出现，挡住模式切换。
                 await dismiss_popups(self.page)
         await self.page.wait_for_timeout(8000)
+        if self.site == sites.DOUBAO:
+            # 豆包先显示临时 textarea，再挂载技能输入框；等技能按钮出现后再输入，避免草稿被重绘清空。
+            await self.page.locator('[data-testid="general-agent-skill-button"]').wait_for(state="visible", timeout=45000)
         await self.raise_if_blocked()
 
     async def _pick_files(self, paths: list[str]) -> bool:
@@ -434,7 +459,7 @@ class _WorkSession:
             await page.keyboard.type("/", delay=120)
             await page.wait_for_timeout(3000)
             # 它排在菜单下方的分组里，列表没加载完就找不到；输入名字让菜单筛选出来
-            query = self.skill_labels[0] if self.skill_labels else "Creative"
+            query = self.skill_labels[0] if self.skill_labels else ("创意视频" if self.site == sites.DOUBAO else "Creative")
             await page.keyboard.type(query, delay=80)
             for _ in range(10):
                 await page.wait_for_timeout(1000)
@@ -580,7 +605,7 @@ class _WorkSession:
         return True, fresh[0] if fresh else None
 
     async def chain_query(self) -> str:
-        cookies = await self.page.context.cookies("https://www.dola.com")
+        cookies = await self.page.context.cookies(self.base)
         source = self.page_query or (self.sent[0] if self.sent else "")
         if not source:
             raise PreSubmissionParametersError(f"{self.account} 页面签名参数尚未就绪")
@@ -591,6 +616,7 @@ class _WorkSession:
 
     async def next_answer(self, question: str) -> tuple[str | None, str]:
         """确认走规则，未知回复交给 AI 判断；失败时使用有上限的通用回复。"""
+        self.check_confirmation(question)
         if not self.confirmed and asks_to_confirm(question):
             self.confirmed = True
             return "确认", "确认"
@@ -603,11 +629,21 @@ class _WorkSession:
                 return reply, "AI 等待" if decision["action"] == "wait" else "AI 代答"
             self.ai_note = self.responder.last_error
         if self.nudges < dola_responder.GENERIC_LIMIT:
-            reply = dola_responder.generic_reply(self.ratio, WORK_DURATION, self.attachments,
+            reply = dola_responder.generic_reply(self.ratio, self.duration, self.attachments,
                                                  self.nudges, question)
             self.nudges += 1
             return reply, "通用回复"
         return None, ""
+
+    def check_confirmation(self, text: str):
+        from doubao_gen import confirm_mismatch, looks_like_paid_prompt
+        if looks_like_paid_prompt(text):
+            raise UpstreamReplyError("需要付费确认", text[-1200:], generation_started=False, allow_account_retry=False)
+        if asks_to_confirm(text):
+            mismatch = confirm_mismatch(text, duration=self.duration, model_display=model_label(self.model))
+            if mismatch:
+                raise UpstreamReplyError("上游参数不符", mismatch + "；" + text[-1000:],
+                                         generation_started=False, allow_account_retry=False)
 
     async def type_reply(self, reply: str):
         """打字回复。选择题卡片有自己的输入框（「または、自分の回答を入力してください」）时填那里。"""
@@ -620,6 +656,23 @@ class _WorkSession:
         await page.keyboard.press("Enter")
 
     async def choice_labels(self, questions: list[dict]) -> list[str]:
+        # 不确认付费、换模型、缩短时长或拆段的选项；无匹配方案时交付原拒绝原因。
+        filtered = []
+        for question in questions:
+            options = []
+            for option in question.get("options") or []:
+                seconds = [int(m) for m in re.findall(r"(?<!\d)(\d{1,2})\s*(?:秒|s\b|seconds?)", option, re.I)]
+                positive = re.sub(r"不(?:使用|需|用)?付费|无需付费|不购买|不升级", "", option)
+                forbidden = re.search(r"付费|购买|升级|充值|有料|purchase|paid|两[条段]|2[条段]|拆[成为段]|split", positive, re.I)
+                named = re.search(r"Seedance\s*[\d.]+(?:\s*(?:Mini|Fast))?", option, re.I)
+                other_model = named and re.sub(r"\s+", "", named.group()).lower() != re.sub(r"\s+", "", model_label(self.model)).lower()
+                if not forbidden and not other_model and (not seconds or self.duration in seconds):
+                    options.append(option)
+            if question.get("options") and not options:
+                raise UpstreamReplyError("上游参数不符", ask_summary([question])[-1200:],
+                                         generation_started=False, allow_account_retry=False)
+            filtered.append({**question, "options": options})
+        questions = filtered
         key = json.dumps(questions, ensure_ascii=False, sort_keys=True)
         if key in self.choice_answers:
             return self.choice_answers[key]
@@ -636,7 +689,7 @@ class _WorkSession:
                         + "\n请选最符合原始要求的一个选项，只回复该选项的完整原文，不加解释。")
                 try:
                     reply, _why = await dola_responder.ai_reply_detail(
-                        text, self.ratio, WORK_DURATION, self.attachments)
+                        text, self.ratio, self.duration, self.attachments)
                 except Exception as exc:
                     print(f"[{self.account}] 工作模式 AI 选项请求失败：{short_error(exc)}", flush=True)
                     reply = None
@@ -711,6 +764,48 @@ class _WorkSession:
         except ValueError:
             return None
 
+    def find_videos(self, chain) -> list[str]:
+        found = video_models(chain)
+        if found or self.site != sites.DOUBAO:
+            return found
+        from doubao_gen import _messages
+        return [json.dumps({"vid": vid}) for message in _messages(chain) if message["bot"] for vid in message["vids"]]
+
+    def reply_failure(self, text, *, ran_tools=False):
+        if self.site == sites.DOUBAO:
+            from doubao_gen import (DoubaoPlanUnavailableError, DoubaoQuotaError, looks_like_plan_unavailable,
+                                    looks_like_quota_exhausted)
+            if looks_like_plan_unavailable(text):
+                return DoubaoPlanUnavailableError(text[-1200:])
+            if looks_like_quota_exhausted(text):
+                return DoubaoQuotaError(text[-1200:])
+        return failure_from_reply(self.account, text, ran_tools=ran_tools)
+
+    async def deliver(self, vm_str, conversation_id):
+        if self.site == sites.DOUBAO:
+            try:
+                vm = json.loads(vm_str)
+                vid = vm.get("vid") or vm.get("video_id")
+                url = await self.page.evaluate(RESOURCE_JS, {"query": await self.chain_query(), "vid": vid}) if vid else None
+            except Exception:
+                url = None
+            if not url:
+                raise UpstreamReplyError("网络失败", "豆包工作模式已出片，未取得官方视频下载地址；已保留原会话",
+                                         generation_started=True, allow_account_retry=False)
+            emit_feedback(self.on_poll, progress="豆包工作模式：视频已生成，正在下载到服务器")
+            result = {"local_path": str(await _download(url, self.account)), "conversation_id": conversation_id,
+                      "account": self.account, "video_url": url}
+        else:
+            result = await _deliver(self.account, vm_str, conversation_id, self.on_poll, force_download=self.duration > 15)
+        if result.get("local_path"):
+            from pure_api_gen import _media_duration, clip_is_short
+            actual = await asyncio.to_thread(_media_duration, Path(result["local_path"]))
+            if actual:
+                result["video_duration"] = actual
+                if clip_is_short(actual, self.duration):
+                    result["duration_error"] = f"工作模式实际生成 {actual:.1f} 秒（请求原生 {self.duration} 秒），已保留成片，未拼接或补做"
+        return result
+
     async def wait_for_video(self, conversation_id: str, deadline: float) -> str:
         self.conversation_id = conversation_id
         query_text = await self.chain_query()
@@ -720,7 +815,7 @@ class _WorkSession:
             await self.page.wait_for_timeout(POLL_SECONDS * 1000)
             self.raise_if_rejected()
             await self.solve_captcha()
-            if await is_logged_out(self.page):
+            if await self.logged_out():
                 raise LoginExpiredError(f"{self.account} 工作模式生成中登录态失效")
             chain = await self.read_chain(query_text, conversation_id)
             if chain is None:
@@ -730,7 +825,7 @@ class _WorkSession:
                 continue
             unread = 0
             emit_feedback(self.on_poll, progress="工作模式：助手处理中")
-            found = video_models(chain)
+            found = self.find_videos(chain)
             if found:
                 return found[0]
             bots = [m for m in chain_messages(chain) if str(m.get("user_type")) == "2"]
@@ -739,15 +834,20 @@ class _WorkSession:
             last = signature
             since_answer += 1
             latest = bots[-1] if bots else None
+            if latest and signature != getattr(self, "noted_signature", ""):
+                text = reply_text(latest)
+                if text:
+                    emit_feedback(self.on_poll, note=redact_error(text, limit=6000))
+                self.noted_signature = signature
             finished = bool(latest) and reply_finished(latest)
             if finished and any(tools_ran(m) for m in bots):
                 if stable >= SETTLED_POLLS:
                     reply = reply_text(latest)[-300:]
-                    raise (failure_from_reply(self.account, reply, ran_tools=True)
+                    raise (self.reply_failure(reply, ran_tools=True)
                            or UpstreamReplyError("生成失败", reply, generation_started=True))
                 continue
             if finished and stable >= QUIET_POLLS:
-                failure = failure_from_reply(self.account, reply_text(latest), ran_tools=False)
+                failure = self.reply_failure(reply_text(latest), ran_tools=False)
                 if failure:
                     raise failure
             making = any(generation_started(m) for m in bots)
@@ -793,7 +893,7 @@ class _WorkSession:
         raise TimeoutError(f"{self.account} 工作模式等待超时，可能仍在生成，不换号重提")
 
 
-async def _deliver(account: str, vm_str: str, conversation_id: str, on_poll) -> dict:
+async def _deliver(account: str, vm_str: str, conversation_id: str, on_poll, *, force_download=False) -> dict:
     url = None
     for attempt in range(3):
         url = await fetch_higher_bitrate_url(vm_str, account)
@@ -804,7 +904,7 @@ async def _deliver(account: str, vm_str: str, conversation_id: str, on_poll) -> 
         raise UpstreamReplyError("网络失败", "工作模式已出片，但没有拿到无水印地址；已保留原会话",
                                  generation_started=True)
     import video_link
-    if video_link.enabled():
+    if video_link.enabled() and not force_download:
         probe = await asyncio.to_thread(video_link.probe_direct, url)
         if probe:
             emit_feedback(on_poll, progress="视频已生成，直链交付（不经服务器下载）")
@@ -818,6 +918,18 @@ async def _deliver(account: str, vm_str: str, conversation_id: str, on_poll) -> 
 
 
 async def _copied_session(p, account: str) -> list[dict]:
+    state_path = Path("accounts") / account / "cookie_state.json"
+    if sites.site_of_state_file(state_path) == sites.DOUBAO:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        raw = state.get("cookies_list") or [dict(v, name=k) for k, v in (state.get("cookies") or {}).items()]
+        cookies = []
+        for c in session_cookies(raw, sites.DOUBAO):
+            item = {k: c[k] for k in ("name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite") if k in c}
+            item.setdefault("path", "/")
+            cookies.append(item)
+        if not any(c.get("name") in ("sessionid", "sessionid_ss") and c.get("value") for c in cookies):
+            raise LoginExpiredError(f"{account} 没有可用的豆包登录态，工作模式未发送")
+        return cookies
     source = await launch_account_context(p, account, headless=True)
     try:
         cookies = session_cookies(await source.cookies())
@@ -837,16 +949,18 @@ async def _launch_cloak(account: str, profile: str, extension_paths: list[str] |
     proxy = http_proxy(account)
     if not proxy:
         raise PreSubmissionParametersError(f"{account} 没有绑定代理，工作模式不走直连")
+    doubao = sites.site_of_state_file(Path("accounts") / account / "cookie_state.json") == sites.DOUBAO
     return await launch_persistent_context_async(
         profile, headless=config.CLOAK_HEADLESS, proxy=cloak_proxy_settings(proxy),
-        locale="ja-JP", timezone="Asia/Tokyo",
+        locale="zh-CN" if doubao else "ja-JP", timezone="Asia/Shanghai" if doubao else "Asia/Tokyo",
         geoip=config.CLOAK_GEOIP, humanize=config.CLOAK_HUMANIZE,
         extension_paths=extension_paths or None,
         license_key=config.CLOAK_LICENSE_KEY or None)
 
 
 @asynccontextmanager
-async def _work_browser(account: str, on_poll=None, *, ratio=None, attachments=0, prompt=""):
+async def _work_browser(account: str, on_poll=None, *, ratio=None, attachments=0, prompt="",
+                        duration=WORK_DURATION, model="seedance-2.0"):
     """生成和只读取回共用浏览器名额、独立临时目录、绑定代理与退出登录拦截。"""
     async with _work_slot(on_poll):
         profile = tempfile.mkdtemp(prefix="dola-work-")
@@ -859,7 +973,7 @@ async def _work_browser(account: str, on_poll=None, *, ratio=None, attachments=0
             await context.add_cookies(cookies)
             page = context.pages[0] if context.pages else await context.new_page()
             session = _WorkSession(account, page, on_poll, ratio=ratio,
-                                   attachments=attachments, prompt=prompt)
+                                   attachments=attachments, prompt=prompt, duration=duration, model=model)
 
             async def stop_logout(route):
                 request = route.request
@@ -895,11 +1009,12 @@ def _stage(account, on_poll, text):
 
 async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
                               on_conversation_id=None, on_poll=None,
-                              reference_image_paths: list[str] | None = None) -> dict:
-    """工作模式出一条 15 秒；已发送超时由任务恢复器接着读原会话。"""
-    text = build_prompt(prompt, ratio)
+                              reference_image_paths: list[str] | None = None,
+                              duration: int = WORK_DURATION, model: str = "seedance-2.0") -> dict:
+    """工作模式生成一条原生视频；已发送超时由任务恢复器接着读原会话。"""
+    text = build_prompt(prompt, ratio, duration, model)
     async with _work_browser(account, on_poll, ratio=ratio, prompt=prompt,
-                             attachments=len(reference_image_paths or [])) as session:
+                             attachments=len(reference_image_paths or []), duration=duration, model=model) as session:
         _stage(account, on_poll, "工作模式：切换到工作模式")
         await session.enter_work_mode()
         if reference_image_paths:
@@ -915,29 +1030,31 @@ async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
         _stage(account, on_poll, "工作模式：请求已提交，等待原会话出片")
         vm_str = await session.wait_for_video(conversation_id, deadline)
         _stage(account, on_poll, "工作模式：已读到视频结果")
-        return await _deliver(account, vm_str, conversation_id, on_poll)
+        return await session.deliver(vm_str, conversation_id)
 
 
-async def fetch_work_conversation_video(account: str, conversation_id: str, *, on_poll=None) -> dict:
+async def fetch_work_conversation_video(account: str, conversation_id: str, *, on_poll=None,
+                                        duration=WORK_DURATION, model="seedance-2.0") -> dict:
     """只读已有会话，不发送提示词、不代答、不创建新会话。"""
-    async with _work_browser(account, on_poll) as session:
+    async with _work_browser(account, on_poll, duration=duration, model=model) as session:
         _stage(account, on_poll, "工作模式：只读检查超时原会话")
         session.conversation_id = conversation_id
         chain = await session.read_chain(await session.chain_query(), conversation_id)
         pending = {"status": "pending", "local_path": "", "final": False}
         if chain is None:
             return pending
-        found = video_models(chain)
+        found = session.find_videos(chain)
         if found:
-            return {**await _deliver(account, found[0], conversation_id, on_poll),
+            return {**await session.deliver(found[0], conversation_id),
                     "status": "succeeded", "final": False}
         bots = [m for m in chain_messages(chain) if str(m.get("user_type")) == "2"]
         latest = bots[-1] if bots else None
         if latest and reply_finished(latest):
-            failure = failure_from_reply(account, reply_text(latest),
-                                         ran_tools=any(generation_started(m) for m in bots))
+            failure = session.reply_failure(reply_text(latest), ran_tools=any(generation_started(m) for m in bots))
             if failure:
                 return {"status": "failed", "local_path": "", "final": True,
                         "detail": str(failure), "work_limit_until": getattr(failure, "until", None),
-                        "work_quota_blocked": isinstance(failure, WorkQuotaError)}
+                        "work_quota_blocked": isinstance(failure, WorkQuotaError),
+                        "doubao_quota_blocked": type(failure).__name__ == "DoubaoQuotaError",
+                        "doubao_plan_unavailable": type(failure).__name__ == "DoubaoPlanUnavailableError"}
         return pending

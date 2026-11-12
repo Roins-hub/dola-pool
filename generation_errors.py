@@ -56,6 +56,13 @@ class AIAccountUnavailableError(UpstreamReplyError):
         super().__init__(category, reply, generation_started=False)
 
 
+class WorkVideoMismatchError(UpstreamReplyError):
+    """工作模式已经产出视频，但实际时长不符；保留成片，停止补做与换号。"""
+    def __init__(self, reply, result):
+        self.result = result
+        super().__init__("成片时长不符", reply, generation_started=True, allow_account_retry=False)
+
+
 def portrait_refusal(error) -> bool:
     """dola 以「肖像保护」拒绝、且确认还没开始生成：可以换号重提（不会重复出片）。"""
     if not isinstance(error, UpstreamReplyError):

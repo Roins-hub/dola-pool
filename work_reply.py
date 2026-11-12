@@ -4,6 +4,7 @@ import json
 import re
 
 import config
+import sites
 
 WORK_DURATION = 15
 MAX_CONCURRENCY = 5
@@ -40,8 +41,10 @@ def apply_saved(saved: str | None, concurrency: str | None = None) -> dict:
     return settings_view()
 
 
-def uses_work_mode(model: str, duration) -> bool:
+def uses_work_mode(model: str, duration, execution_mode: str = "auto") -> bool:
     """这一单是否走工作模式：开关打开、Dola 的 2.0、15 秒。"""
+    if execution_mode == "work":
+        return not work_request_error(model, duration)
     if not config.WORK_15S_ENABLED:
         return False
     try:
@@ -53,8 +56,10 @@ def uses_work_mode(model: str, duration) -> bool:
     return ("2.0" in text or "2-0" in text) and "doubao" not in text
 
 
-def is_work_request(model: str, duration) -> bool:
+def is_work_request(model: str, duration, execution_mode: str = "auto") -> bool:
     """已提交任务的类型不随面板开关改变，供恢复和记账使用。"""
+    if execution_mode == "work":
+        return not work_request_error(model, duration)
     try:
         seconds = int(duration or 0)
     except (TypeError, ValueError):
@@ -63,14 +68,38 @@ def is_work_request(model: str, duration) -> bool:
     return seconds in (15, 30) and ("2.0" in text or "2-0" in text) and "doubao" not in text
 
 
-def uses_work_pair(model: str, duration) -> bool:
+def uses_work_pair(model: str, duration, execution_mode: str = "auto") -> bool:
     """这一单是否是两段工作模式拼成的 30 秒：开关打开、Dola 的 2.0、30 秒。"""
+    if execution_mode == "work":
+        return False
     try:
         if int(duration or 0) != 2 * WORK_DURATION:
             return False
     except (TypeError, ValueError):
         return False
     return uses_work_mode(model, WORK_DURATION)
+
+
+def work_request_error(model: str, duration) -> str:
+    """显式工作模式的受理范围；原生时长是否可用由上游决定，不自动拼接。"""
+    try:
+        seconds = int(duration or 0)
+    except (TypeError, ValueError):
+        return "工作模式时长无效"
+    spec = sites.doubao_spec(model)
+    if spec:
+        return "" if sites.DOUBAO_MIN_DURATION <= seconds <= spec[1] else f"{model} 支持 4~{spec[1]} 秒"
+    text = (model or "").lower().replace("_", "-")
+    if ("2.0" in text or "2-0" in text) and "doubao" not in text and seconds in (5, 10, 15, 30):
+        return ""
+    return "Dola 工作模式仅支持 Seedance 2.0 的 5/10/15/30 秒请求；30 秒为原生尝试，上游拒绝时结束"
+
+
+def model_label(model: str) -> str:
+    spec = sites.doubao_spec(model)
+    if spec:
+        return spec[3]
+    return "Seedance 2.0 Fast"
 
 
 LONGER_RE = re.compile(r"(?<![\d.:])(\d{2,3})\s*(?:s\b|秒|sec)", re.I)
@@ -85,33 +114,38 @@ def asks_for_longer(text: str) -> bool:
     return any(int(m.group(1)) > WORK_DURATION for m in LONGER_RE.finditer(text or ""))
 
 
-def build_prompt(prompt: str, ratio: str | None) -> str:
+def build_prompt(prompt: str, ratio: str | None, duration: int = WORK_DURATION, model: str = "") -> str:
     """助手只看文字，时长和比例都要写进去；换行会让输入框提前发送。"""
     text = re.sub(r"\s*[\r\n]+\s*", " ", prompt or "").strip().rstrip("，,。. ")
     if ratio:
         text += f"，画面比例 {ratio}"
-    if asks_for_longer(text):
+    if duration == WORK_DURATION and asks_for_longer(text):
         text += SINGLE_CLIP_NOTE
-    elif not re.search(r"(?<!\d)15\s*(?:s\b|秒)", text, re.I):
-        text += "，15s"
+    elif not re.search(rf"(?<!\d){duration}\s*(?:s\b|秒)", text, re.I):
+        text += f"，{duration}s"
+    if model:
+        text += (f"。仅使用 {model_label(model)} 生成一条原生 {duration} 秒视频，仅使用当前免费额度；"
+                 "若模型、时长或免费额度不可用，请说明原因并停止，不改模型、不缩短时长、不拆段、不购买或升级套餐。")
     return text
 
 
-def session_cookies(cookies: list[dict]) -> list[dict]:
+def session_cookies(cookies: list[dict], site: str = sites.DOLA) -> list[dict]:
     keep = []
     for cookie in cookies:
         host = str(cookie.get("domain") or "").lower().lstrip(".")
-        if host == "dola.com" or host.endswith(".dola.com"):
+        domain = "doubao.com" if site == sites.DOUBAO else "dola.com"
+        if host == domain or host.endswith("." + domain):
             keep.append(cookie)
     return keep
 
 
-def video_skill_labels(data) -> list[str]:
+def video_skill_labels(data, site: str = sites.DOLA) -> list[str]:
     """用稳定技能名读取当前显示名称，界面改名后仍定位同一视频技能。"""
     labels = []
     def walk(node):
         if isinstance(node, dict):
-            if node.get("name") == "dola-creative-video" or node.get("skill_name") == "dola-creative-video":
+            stable = "doubao-creative-video" if site == sites.DOUBAO else "dola-creative-video"
+            if node.get("name") == stable or node.get("skill_name") == stable:
                 label = node.get("display_name")
                 if isinstance(label, str) and label.strip():
                     labels.append(label.strip())

@@ -2358,6 +2358,11 @@ function openTestGen(name){
     <select id="tg_model" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px" onchange="syncTestGenDurations()">
       ${modelOpts}
     </select>
+    <label>执行方式</label>
+    <select id="tg_mode" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px" onchange="syncTestGenDurations()">
+      <option value="auto" selected>自动（现有生成流程）</option>
+      <option value="work">工作模式（单条原生视频）</option>
+    </select>
     <label>时长（秒）</label>
     <select id="tg_duration" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
       ${testGenDurationOptions(isDoubao?'doubao-seedance-2.0-mini':'seedance-2.0-fast')}
@@ -2379,25 +2384,30 @@ function openTestGen(name){
 }
 /** 测试生成的时长档位：seedance-2.0-fast 由后端下发（开了工作模式才有 15 秒）；其它模型保持原有选项。 */
 const TEST_GEN_DURATIONS={'seedance-2.0-fast':[5,10]};
-function testGenDurationOptions(model,current){
-  const list=TEST_GEN_DURATIONS[model]||[5,10,15,30];
+function testGenDurationOptions(model,current,mode='auto'){
+  const list=model.startsWith('doubao-')?(model.endsWith('2.5')?[5,10,15,30]:[5,10,15])
+    :mode==='work'?[5,10,15,30]:TEST_GEN_DURATIONS[model]||[5,10,15,30];
   const pick=list.includes(Number(current))?Number(current):list[0];
   const label=d=>model==='seedance-2.0-fast'&&d===15?'15（工作模式，约 6 分钟）':d;
   return list.map(d=>`<option value="${d}"${d===pick?' selected':''}>${label(d)}</option>`).join('');
 }
-function testGenHint(model){
+function testGenHint(model,mode='auto'){
+  if(mode==='work')return '工作模式需绑定账号代理；30 秒为单条原生请求，上游拒绝或返回短片时停止，不自动拼接。';
   const off=model==='seedance-2.0-fast'&&!TEST_GEN_DURATIONS[model].includes(15);
   return off?'需要 15 秒？<a href="#" onclick="openWork15Settings();return false">去开启</a>':'';
 }
 function syncTestGenDurations(){
   const sel=q('#tg_duration');if(!sel)return;
-  sel.innerHTML=testGenDurationOptions(q('#tg_model').value,sel.value);
-  q('#tg_hint').innerHTML=testGenHint(q('#tg_model').value);
+  const model=q('#tg_model').value,mode=q('#tg_mode');
+  const opt=mode.querySelector('option[value="work"]');opt.disabled=model==='seedance-2.5';
+  if(opt.disabled)mode.value='auto';
+  sel.innerHTML=testGenDurationOptions(model,sel.value,mode.value);
+  q('#tg_hint').innerHTML=testGenHint(model,mode.value);
 }
 async function submitTestGen(name,force){
   const prompt=q('#tg_prompt').value.trim();
   if(!prompt){q('#tg_status').textContent='提示词必填';q('#tg_status').style.color='var(--red)';return;}
-  const body={prompt,model:q('#tg_model').value,duration:Number(q('#tg_duration').value),ratio:q('#tg_ratio').value,force:!!force};
+  const body={prompt,model:q('#tg_model').value,duration:Number(q('#tg_duration').value),ratio:q('#tg_ratio').value,force:!!force,execution_mode:q('#tg_mode').value};
   q('#tg_btn').disabled=true;
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/test-generate',{method:'POST',body});
