@@ -54,6 +54,46 @@ def test_doubao_attaches_the_official_skill_through_the_live_editor(monkeypatch)
     assert not page.keys and not item.sent
 
 
+@pytest.mark.parametrize('code,success', [(0, True), (710022002, False)])
+def test_doubao_work_workspace_reads_its_skill_list_without_a_menu_button(monkeypatch, code, success):
+    import json
+    import sites
+    page = SkillPage('创意视频新版')
+    agent, item = session(monkeypatch, page)
+    item.site = sites.DOUBAO
+    item.base = 'https://www.doubao.com'
+    item.page_query = 'https://www.doubao.com/chat/?device_id=1&aid=497858'
+    original = page.evaluate
+    queries = []
+    listing = {'code':code,'data':{'skills':[{'name':'doubao-creative-video','display_name':'创意视频新版',
+               'external_skill_id':'official-id','type':2}]}}
+
+    async def evaluate(script, args):
+        if script == agent.SKILLS_JS:
+            queries.append(args['query'])
+            return {'status':200,'text':json.dumps(listing)}
+        if script == agent.SELECT_SKILL_JS:
+            assert success
+            page.selected = args['reference']['label']
+            return True
+        return await original(script, args)
+
+    async def allowed():
+        pass
+
+    page.evaluate = evaluate
+    page.locator = lambda selector: pytest.fail('this workspace has no skill-menu button')
+    item.raise_if_blocked = allowed
+    if success:
+        _run(item.choose_skill())
+        assert _run(item.skill_selected())
+    else:
+        with pytest.raises(agent.PreSubmissionParametersError, match='无法加载账号的视频技能引用'):
+            _run(item.choose_skill())
+    assert len(queries) == 1 and 'aid=497858' in queries[0]
+    assert not item.sent and not page.typed
+
+
 def test_renamed_label_is_used_for_both_filter_and_selection(monkeypatch):
     page = SkillPage('Movie Studio')
     _, item = session(monkeypatch, page)

@@ -183,6 +183,16 @@ RESOURCE_JS = r"""async ({query, vid}) => {
   return (((data.data || {}).download_video || {})[vid] || {}).download_url || null;
 }"""
 
+SKILLS_JS = r"""async ({query}) => {
+  try {
+    const r = await fetch('/alice/office/skills/list_user_and_featured?' + query, {
+      method: 'POST', credentials: 'include',
+      headers: {'Content-Type': 'application/json', 'agw-js-conv': 'str'}, body: '{}'
+    });
+    return {status: r.status, text: await r.text()};
+  } catch (e) { return {status: 0, text: String(e)}; }
+}"""
+
 # 同一时间只开这么多 CloakBrowser：有头运行，一单要占约 6 分钟
 _slots: asyncio.Semaphore | None = None
 _slots_size = 0
@@ -319,10 +329,13 @@ class _WorkSession:
         except Exception:
             return
         if isinstance(data, dict) and data.get("code") in (None, 0, "0", 2000, "2000"):
-            labels = video_skill_labels(data, self.site)
-            if labels:
-                self.skill_labels = labels
-            self.skill_reference = video_skill_reference(data, self.site)
+            self.remember_skill_listing(data)
+
+    def remember_skill_listing(self, data):
+        labels = video_skill_labels(data, self.site)
+        if labels:
+            self.skill_labels = labels
+        self.skill_reference = video_skill_reference(data, self.site)
 
     async def read_send_response(self, response):
         """提交被 HTTP 或 JSON 明确拒绝时立即报告，流式成功响应交给原会话轮询。"""
@@ -514,12 +527,15 @@ class _WorkSession:
             return
         if self.site == sites.DOUBAO:
             if not self.skill_reference:
-                await page.locator('[data-testid="general-agent-skill-button"]').click(timeout=8000)
-                for _ in range(10):
-                    if self.skill_reference:
-                        break
-                    await page.wait_for_timeout(1000)
-                await page.keyboard.press("Escape")
+                # 独立“豆包工作”工作区没有技能按钮；直接读取浏览器自己的官方技能列表。
+                result = await page.evaluate(SKILLS_JS, {"query": await self.chain_query()})
+                if result.get("status") == 200:
+                    try:
+                        data = json.loads(result.get("text") or "{}")
+                    except ValueError:
+                        data = {}
+                    if isinstance(data, dict) and data.get("code") in (0, "0", 2000, "2000"):
+                        self.remember_skill_listing(data)
             if (not self.skill_reference or not await page.evaluate(SELECT_SKILL_JS,
                     {"selector": COMPOSER, "reference": self.skill_reference})):
                 await self.raise_if_blocked()
