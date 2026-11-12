@@ -244,8 +244,19 @@ def _video_metadata(local_path: str, duration: int | None, ratio: str | None) ->
     return meta
 
 
+def _task_videos(row: dict) -> list[dict]:
+    try:
+        videos = json.loads(row.get("work_video_results") or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [item for item in videos if isinstance(item, dict) and item.get("video_url")] if isinstance(videos, list) else []
+
+
 async def _completion_fields(task_id: str, result: dict, duration, ratio) -> dict:
     """Completed-task fields: a downloaded file under /videos/, or a /v/ link to the upstream CDN."""
+    if result.get("videos"):
+        videos = [await _completion_fields(task_id, item, duration, ratio) for item in result['videos']]
+        return {**videos[0], "work_video_results": json.dumps(videos, ensure_ascii=False)}
     if result.get("delivery") == "link":
         meta = video_link.meta_from_model(result.get("video_model") or "", result.get("video_size"),
                                           duration, ratio)
@@ -382,6 +393,7 @@ class VideoGenRequest(BaseModel):
     size: str | None = None
     ratio: str | None = None
     execution_mode: Literal["auto", "work"] = "auto"
+    video_count: Literal[1, 2] = 1
     duration: int | None = Field(None, ge=4, le=30)
     # 时长别名：new-api 的 sora/vinted 任务插件会把画布传来的 duration 统一改写成
     # `seconds` 再转发到本服务，所以这里必须一起认；否则 30 秒请求会被当成「没带时长」
@@ -407,6 +419,7 @@ class TestGenRequest(BaseModel):
     duration: int = Field(10, ge=4, le=30)
     ratio: str | None = None
     execution_mode: Literal["auto", "work"] = "auto"
+    video_count: Literal[1, 2] = 1
     # 号处于风控/限流暂停/没绑代理等状态时，先返回提醒；确认后带 force=true 再发
     force: bool = False
 
@@ -417,6 +430,7 @@ class TaskResponse(BaseModel):
     model: str | None = None
     prompt: str | None = None
     video_url: str | None = None
+    videos: list[dict] | None = None
     error: str | None = None
     # 排队/进度说明：客户端可以拿它显示「排队中，预计 N 分钟」。
     # 字段是附加的（老客户端忽略即可，不影响原有 status/video_url 语义）。
@@ -755,6 +769,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
     try:
         task_row = store.get(task_id) or {}
         execution_mode = task_row.get("execution_mode") or "auto"
+        video_count = int(task_row.get("video_count") or 1)
         pair_context = _pair_state(task_row)
         if pair_context.get("pending") or pair_context.get("active"):
             store.update(task_id, status="failed", error="服务中断后正在取回工作模式原会话", finished_at=time.time())
@@ -897,7 +912,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                     on_account_try=on_account_try, max_attempts=VIDEO_MAX_ATTEMPTS,
                     attempt_timeout=config.TASK_DEADLINE, on_dispatch=on_dispatch,
                     on_attempt_end=on_attempt_end, on_pair_state=on_pair_state, pair_state=pair_context or None,
-                    on_wait=lambda note: store.set_queue_note(task_id, note), execution_mode=execution_mode)
+                    on_wait=lambda note: store.set_queue_note(task_id, note), execution_mode=execution_mode,
+                    video_count=video_count)
         except TimeoutError:
             # TimeoutError is also raised by upload/navigation/polling. Preserve that
             # stage-specific error unless THIS outer timeout actually expired.
@@ -1183,7 +1199,8 @@ async def _recover_work_loop(task_id: str) -> None:
                 async with asyncio.timeout(max(.1, float(row["recover_until"]) - time.time())):
                     res = target.get("result") or await pool.fetch_work_conversation_video(
                         account, conv, model=row.get("model") or "seedance-2.0",
-                        duration=work_reply.WORK_DURATION if pair else row.get("duration"))
+                        duration=work_reply.WORK_DURATION if pair else row.get("duration"),
+                        video_count=int(row.get("video_count") or 1))
                 if res.get("local_path") or res.get("video_url"):
                     res.update(account=account, conversation_id=conv, submitted_at=target.get("submitted_at"),
                                execution_mode=row.get("execution_mode") or "auto")
@@ -1651,16 +1668,15 @@ def _maintenance() -> None:
     files = 0
     for row in removed:
         delete_reference_thumbnails(_task_reference_thumbs(row.get("reference_thumbs")))
-        name = (row.get("video_url") or "").rsplit("/", 1)[-1]
-        if not name:
-            continue
-        target = Path(config.DOWNLOAD_DIR) / name
-        try:
-            if target.is_file():
-                target.unlink()
-                files += 1
-        except OSError:
-            continue
+        urls = [row.get("video_url")] + [item["video_url"] for item in _task_videos(row)]
+        for url in set(filter(None, urls)):
+            target = Path(config.DOWNLOAD_DIR) / Path(url).name
+            try:
+                if target.is_file():
+                    target.unlink()
+                    files += 1
+            except OSError:
+                continue
     if removed:
         store.vacuum()
     stats = store.storage_stats()
@@ -1709,7 +1725,7 @@ async def create_video(request: Request, authorization: str | None = Header(defa
     _log_request_fields(raw, "openai", resolution, source)
     return await _submit_task(client, req.model, prompt, ratio, duration, refs,
                               reference_source=req.reference_source,
-                              resolution=resolution, size=size, execution_mode=req.execution_mode)
+                              resolution=resolution, size=size, execution_mode=req.execution_mode, video_count=req.video_count)
 
 
 def _data_url_from_upload(filename: str, data: bytes) -> str:
@@ -1734,7 +1750,7 @@ async def _raw_from_multipart(request: Request) -> dict[str, Any]:
         value = form.get(key)
         if isinstance(value, str) and value.strip():
             raw[key] = value.strip()
-    for key in ("duration", "seconds", "duration_seconds"):
+    for key in ("duration", "seconds", "duration_seconds", "video_count"):
         value = form.get(key)
         if isinstance(value, str) and value.strip():
             try:
@@ -1838,9 +1854,12 @@ def _check_prompt_encoding(prompt):
 
 
 async def _submit_task(client, model, prompt, ratio, duration, reference_images,
-                       reference_source=None, resolution=None, size=None, execution_mode="auto"):
+                       reference_source=None, resolution=None, size=None, execution_mode="auto", video_count=1):
     """公共受理逻辑：校验模型/时长/账号池 -> 入队 -> 后台跑，返回 TaskResponse。"""
     _check_prompt_encoding(prompt)
+    count_error = work_reply.work_count_error(model, duration, execution_mode, video_count)
+    if count_error:
+        raise HTTPException(422, count_error)
     if execution_mode not in ("auto", "work"):
         raise HTTPException(422, "execution_mode 只支持 auto / work")
     if execution_mode == "work":
@@ -1924,6 +1943,7 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
             reference_source=reference_source,
             prompt_supplement=supplement,
             execution_mode=execution_mode,
+            video_count=video_count,
         )
     except TaskQuotaExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
@@ -2407,7 +2427,7 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
     status, video_url, video_url_hd = _client_video(row)
     return TaskResponse(
         id=row["id"], status=status, model=row["model"],
-        prompt=row["prompt"], video_url=video_url, error=row["error"],
+        prompt=row["prompt"], video_url=video_url, error=row["error"], videos=_task_videos(row) or None,
         progress=_progress_payload(status=status, created_at=row["created_at"],
                                    duration=row["duration"]),
         video_url_hd=video_url_hd,
@@ -2610,7 +2630,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
             raise HTTPException(422, "工作模式时长无效")
         resp = await _submit_task(client, requested_model, prompt, ratio, seconds, reference_images,
                                   reference_source=body.get("reference_source"), resolution=resolution,
-                                  execution_mode="work")
+                                  execution_mode="work", video_count=body.get("video_count", 1))
         return {"id": resp.id, "status": resp.status}
     if sites.is_doubao_model(requested_model):
         try:
@@ -2619,7 +2639,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
             seconds = 5
         resp = await _submit_task(client, requested_model, prompt, ratio, seconds, reference_images,
                                   reference_source=body.get("reference_source"), resolution=resolution,
-                                  execution_mode=body.get("execution_mode", "auto"))
+                                  execution_mode=body.get("execution_mode", "auto"), video_count=body.get("video_count", 1))
         return {"id": resp.id, "status": resp.status}
     version = _model_version(requested_model)
     if version is not None:
@@ -2647,7 +2667,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
         )
     resp = await _submit_task(client, model, prompt, ratio, duration, reference_images,
                               reference_source=body.get("reference_source"), resolution=resolution,
-                              execution_mode=body.get("execution_mode", "auto"))
+                              execution_mode=body.get("execution_mode", "auto"), video_count=body.get("video_count", 1))
     return {"id": resp.id, "status": resp.status}
 
 
@@ -2667,6 +2687,8 @@ async def ark_get_task(task_id: str, authorization: str | None = Header(default=
     }
     if status == "completed" and video_url:
         result["content"] = {"video_url": video_url}
+    if _task_videos(row):
+        result["videos"] = _task_videos(row)
     if row.get("error"):
         result["error"] = row["error"]
     if row.get("requested_resolution"):
@@ -3465,6 +3487,9 @@ async def admin_test_generate(name: str, body: TestGenRequest,
     """账号级测试生成：用指定账号跑一条真实出片，返回 task_id（异步轮询结果）。"""
     _admin_auth(x_admin_key)
     _check_prompt_encoding(body.prompt)
+    count_error = work_reply.work_count_error(body.model, body.duration, body.execution_mode, body.video_count)
+    if count_error:
+        raise HTTPException(422, count_error)
     if name not in pool.accounts:
         raise HTTPException(404, "account not found")
     if JOBS.get(name, {}).get("status") == "running":
@@ -3497,21 +3522,22 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         "duration": body.duration,
         "ratio": body.ratio,
         "execution_mode": body.execution_mode,
+        "video_count": body.video_count,
         "status": "running",
         "started_at": time.time(),
         "result": None,
         "error": "",
     }
     asyncio.create_task(_run_test_generate(
-        task_id, name, body.prompt, body.ratio, body.duration, body.model, body.execution_mode))
+        task_id, name, body.prompt, body.ratio, body.duration, body.model, body.execution_mode, body.video_count))
     return {"task_id": task_id, "account": name}
 
 
 async def _run_test_generate(task_id: str, name: str, prompt: str,
-                             ratio: str | None, duration: int, model: str, execution_mode="auto") -> None:
+                             ratio: str | None, duration: int, model: str, execution_mode="auto", video_count=1) -> None:
     try:
         # 测试生成同样消耗账号额度，因此写入正式任务库，便于在任务列表追踪结果。
-        store.create(task_id, model, prompt, ratio, duration, account=name, execution_mode=execution_mode)
+        store.create(task_id, model, prompt, ratio, duration, account=name, execution_mode=execution_mode, video_count=video_count)
         started = time.time()
         attempt = {"account": name, "attempt": 1, "started_at": started,
                    "stage": "准备生成", "outcome": "running", "stages": []}
@@ -3542,8 +3568,11 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
             store.update(task_id, **fields)
 
         result = await pool.test_generate(name, prompt, ratio, duration, model, on_poll=on_poll,
-                                          on_conversation_id=on_conversation_id, execution_mode=execution_mode)
+                                          on_conversation_id=on_conversation_id, execution_mode=execution_mode, video_count=video_count)
         TEST_JOBS[task_id]["result"] = result
+        if result.get("videos"):
+            result["videos"] = [{**item, "video_url": f"{config.PUBLIC_BASE}/videos/{Path(item['local_path']).name}"}
+                                for item in result["videos"]]
         TEST_JOBS[task_id]["status"] = "done"
         err = result.get("error", "") if not result.get("ok") else ""
         attempt.update(outcome="completed" if result.get("ok") else "failed",
@@ -3595,7 +3624,7 @@ async def admin_test_gen_status(task_id: str,
     if row.get("recover_state") == "recovered" and row.get("status") == "completed":
         job.update(status="done", error="", result={"ok": True, "account": row.get("account"),
                    "conversation_id": row.get("conversation_id"), "video_url": row.get("video_url"),
-                   "recovered": True})
+                   "recovered": True, "videos": _task_videos(row)})
     return job
 
 
@@ -4370,8 +4399,8 @@ async def admin_videos(limit: int = 100, q: str = "", x_admin_key: str | None = 
 
 def _delete_task_files_and_record(row: dict) -> None:
     """删一条任务：视频文件 + 参考图缩略图 + 任务记录。"""
-    url = row.get("video_url")
-    if url:
+    urls = [row.get("video_url")] + [item["video_url"] for item in _task_videos(row)]
+    for url in set(filter(None, urls)):
         local = Path(config.DOWNLOAD_DIR) / Path(url).name
         try:
             if local.exists():

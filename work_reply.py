@@ -95,6 +95,14 @@ def work_request_error(model: str, duration) -> str:
     return "Dola 工作模式仅支持 Seedance 2.0 的 5/10/15/30 秒请求；30 秒为原生尝试，上游拒绝时结束"
 
 
+def work_count_error(model, duration, execution_mode, video_count) -> str:
+    if video_count not in (1, 2):
+        return "video_count 只支持 1 / 2"
+    if video_count == 2 and (execution_mode != "work" or sites.is_doubao_model(model) or int(duration or 0) != 15):
+        return "单任务两条视频仅支持显式 Dola 工作模式、每条 15 秒"
+    return ""
+
+
 def model_label(model: str) -> str:
     spec = sites.doubao_spec(model)
     if spec:
@@ -114,17 +122,18 @@ def asks_for_longer(text: str) -> bool:
     return any(int(m.group(1)) > WORK_DURATION for m in LONGER_RE.finditer(text or ""))
 
 
-def build_prompt(prompt: str, ratio: str | None, duration: int = WORK_DURATION, model: str = "") -> str:
+def build_prompt(prompt: str, ratio: str | None, duration: int = WORK_DURATION, model: str = "", video_count: int = 1) -> str:
     """助手只看文字，时长和比例都要写进去；换行会让输入框提前发送。"""
     text = re.sub(r"\s*[\r\n]+\s*", " ", prompt or "").strip().rstrip("，,。. ")
     if ratio:
         text += f"，画面比例 {ratio}"
-    if duration == WORK_DURATION and asks_for_longer(text):
+    if duration == WORK_DURATION and video_count == 1 and asks_for_longer(text):
         text += SINGLE_CLIP_NOTE
     elif not re.search(rf"(?<!\d){duration}\s*(?:s\b|秒)", text, re.I):
         text += f"，{duration}s"
     if model:
-        text += (f"。仅使用 {model_label(model)} 生成一条原生 {duration} 秒视频，仅使用当前免费额度；"
+        count = "一条原生" if video_count == 1 else "两条独立视频文件，每条原生"
+        text += (f"。在这一次工作任务中，仅使用 {model_label(model)} 生成{count} {duration} 秒视频，仅使用当前免费额度；"
                  "若模型、时长或免费额度不可用，请说明原因并停止，不改模型、不缩短时长、不拆段、不购买或升级套餐。")
     return text
 

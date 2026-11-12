@@ -57,10 +57,10 @@ class AIAccountUnavailableError(UpstreamReplyError):
 
 
 class WorkVideoMismatchError(UpstreamReplyError):
-    """工作模式已经产出视频，但实际时长不符；保留成片，停止补做与换号。"""
+    """工作模式已经产出视频，但实际时长或条数不符；保留成片，停止补做与换号。"""
     def __init__(self, reply, result):
         self.result = result
-        super().__init__("成片时长不符", reply, generation_started=True, allow_account_retry=False)
+        super().__init__("成片参数不符", reply, generation_started=True, allow_account_retry=False)
 
 
 def portrait_refusal(error) -> bool:

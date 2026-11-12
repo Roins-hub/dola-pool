@@ -60,7 +60,7 @@ def _pool(tmp_path, monkeypatch, names=("acc1", "acc2")):
 
 def _record(bp, calls):
     async def fake(account, prompt, ratio, duration, model, *, on_conversation_id,
-                   on_poll, on_balance, reference_image_paths, on_retry=None, work_mode=False):
+                   on_poll, on_balance, reference_image_paths, on_retry=None, work_mode=False, video_count=1):
         calls.append((account, model))
         return {"account": account, "local_path": "x.mp4", "conversation_id": "conv"}
 

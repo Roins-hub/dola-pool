@@ -2361,13 +2361,18 @@ function openTestGen(name){
     <label>执行方式</label>
     <select id="tg_mode" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px" onchange="syncTestGenDurations()">
       <option value="auto" selected>自动（现有生成流程）</option>
-      <option value="work">工作模式（单条原生视频）</option>
+      <option value="work">工作模式（原生视频）</option>
     </select>
     <label>时长（秒）</label>
-    <select id="tg_duration" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
+    <select id="tg_duration" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px" onchange="syncTestGenCount()">
       ${testGenDurationOptions(isDoubao?'doubao-seedance-2.0-mini':'seedance-2.0-fast')}
     </select>
     <div id="tg_hint" class="tiny" style="margin-top:6px">${testGenHint(isDoubao?'doubao-seedance-2.0-mini':'seedance-2.0-fast')}</div>
+    <label>本次任务的视频条数</label>
+    <select id="tg_count" disabled style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
+      <option value="1">1 条</option>
+      <option value="2">同一任务 2 条（同账号，各 15 秒）</option>
+    </select>
     <label>尺寸 / 画幅</label>
     <select id="tg_ratio" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
       <option value="16:9" selected>16:9</option>
@@ -2403,11 +2408,17 @@ function syncTestGenDurations(){
   if(opt.disabled)mode.value='auto';
   sel.innerHTML=testGenDurationOptions(model,sel.value,mode.value);
   q('#tg_hint').innerHTML=testGenHint(model,mode.value);
+  syncTestGenCount();
+}
+function syncTestGenCount(){
+  const sel=q('#tg_count');if(!sel)return;
+  sel.disabled=!(q('#tg_mode').value==='work'&&q('#tg_model').value==='seedance-2.0-fast'&&Number(q('#tg_duration').value)===15);
+  if(sel.disabled)sel.value='1';
 }
 async function submitTestGen(name,force){
   const prompt=q('#tg_prompt').value.trim();
   if(!prompt){q('#tg_status').textContent='提示词必填';q('#tg_status').style.color='var(--red)';return;}
-  const body={prompt,model:q('#tg_model').value,duration:Number(q('#tg_duration').value),ratio:q('#tg_ratio').value,force:!!force,execution_mode:q('#tg_mode').value};
+  const body={prompt,model:q('#tg_model').value,duration:Number(q('#tg_duration').value),ratio:q('#tg_ratio').value,force:!!force,execution_mode:q('#tg_mode').value,video_count:Number(q('#tg_count').value)};
   q('#tg_btn').disabled=true;
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/test-generate',{method:'POST',body});
@@ -2433,13 +2444,13 @@ async function pollTestGen(taskId,name){
     const box=q('#tg_status'); 
     if(!box)return;
     if(j.status==='done'){
+      const videos=(j.result&&j.result.videos&&j.result.videos.length)?j.result.videos:(j.result&&j.result.video_url?[j.result]:[]);
+      if(videos.length&&!q('#tg_video')){
+        q('#dlgBox').insertAdjacentHTML('beforeend','<div id="tg_video">'+videos.map(v=>'<video controls src="'+esc(v.video_url)+'" style="max-width:100%;max-height:300px"></video>').join('')+'</div>');
+      }
       if(j.result&&j.result.ok){
         box.textContent='✅ 生成成功：'+(j.result.video_url||'');
         box.style.color='var(--ok)';
-        if(j.result.video_url&&!q('#tg_video')){
-          q('#dlgBox').insertAdjacentHTML('beforeend',
-            '<div id="tg_video"><video controls src="'+j.result.video_url+'" style="max-width:100%;max-height:300px"></video></div>');
-        }
       }else{
         box.textContent='❌ 生成失败：'+(j.error||(j.result&&j.result.error)||'未知错误');
         box.style.color='var(--red)';
@@ -3871,13 +3882,11 @@ async function loadTasks(){
       +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">查看</button>',
     refCell(t)+(t.reference_source==='ai_generated'?'<div class="tiny task-source" title="调用方已声明参考图人物完全由 AI 生成；提交时附加来源说明">AI 素材</div>':''),
     accChain(t),
-    (t.duration||10)+'秒',
+    (t.duration||10)+'秒'+(Number(t.video_count)>1?' × '+t.video_count:''),
     sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
     costCell(t),
     fmt(t.created_at),
-    t.video_url
-      ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">打开</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">预览</button></div>'+upscaleCell(t)
-      :'—',
+    taskVideoCell(t),
     // 报错原文完整展示（含换行）：不再 slice(0,30)，上游「内容审核不合规 / 肖像保护 / 侵权」
     // 这类话术要能一眼看全。
     queueNote(t)+recoverNote(t)+upstreamNote(t)+attemptHistory(t)+(t.error
@@ -3918,6 +3927,11 @@ function copyPrompt(){
        try{document.execCommand('copy');}catch(e){}document.body.removeChild(ta);done();}
 }
 
+function taskVideoCell(t){
+  let videos=[];try{videos=JSON.parse(t.work_video_results||'[]');}catch(e){}
+  if(!videos.length&&t.video_url)videos=[{video_url:t.video_url}];
+  return videos.length?videos.map((v,i)=>'<div class="video-wrap"><a href="'+esc(v.video_url)+'" target="_blank">打开'+(videos.length>1?' '+(i+1):'')+'</a><button class="btn" onclick="playVideo(&quot;'+esc(v.video_url)+'&quot;)">预览</button></div>').join('')+upscaleCell(t):'—';
+}
 function playVideo(url){q('#videoEl').src=url;show('videoModal');}
 function closeVideo(){q('#videoEl').pause();q('#videoEl').src='';hide('videoModal');}
 

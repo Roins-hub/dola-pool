@@ -1969,14 +1969,14 @@ class BrowserPool:
         return self._claim_for(account, cost, result or {})
 
     async def fetch_work_conversation_video(self, account: str, conversation_id: str, *,
-                                            model="seedance-2.0", duration=WORK_DURATION) -> dict:
+                                            model="seedance-2.0", duration=WORK_DURATION, video_count=1) -> dict:
         """恢复查询与生成共用全局并发和账号锁，浏览器名额由 worker 管理。"""
         from video_worker_agent import fetch_work_conversation_video
         async with self.semaphore:
             async with self._use_account(account, "recovering"):
                 self._phases[account] = "只读检查超时原会话"
                 return await self._web_playable(await fetch_work_conversation_video(
-                    account, conversation_id, model=model, duration=duration))
+                    account, conversation_id, model=model, duration=duration, video_count=video_count))
 
     def is_pure_account(self, name: str) -> bool:
         """这个号能不能走纯 API（cookie 来源 + 有 cookie_state.json）。
@@ -1992,7 +1992,7 @@ class BrowserPool:
 
     async def _generate_effective(self, account, prompt, ratio, duration, model, *,
                                   on_conversation_id, on_poll, on_balance,
-                                  reference_image_paths, on_retry=None, work_mode=False):
+                                  reference_image_paths, on_retry=None, work_mode=False, video_count=1):
         """cookie 账号走纯 API；失败直接抛出真实原因（不再回退浏览器）。
 
         浏览器 profile 对 cookie 号不可靠（导入的浏览器会话常显示已登出），
@@ -2044,14 +2044,14 @@ class BrowserPool:
             from video_worker_agent import generate_work_video
             result = await generate_work_video(
                 account, prompt, ratio, on_conversation_id=on_conversation_id, on_poll=on_poll,
-                reference_image_paths=reference_image_paths, duration=duration, model=model)
+                reference_image_paths=reference_image_paths, duration=duration, model=model, video_count=video_count)
             if site == sites.DOLA:
                 self._mark_work_blocked(account, None, WORK_QUOTA_NOTE)
             if result.get("duration_error"):
                 if site == sites.DOUBAO:
                     self._claim_for(account, self._duration_cost(model, duration), result)
                 from generation_errors import WorkVideoMismatchError
-                raise WorkVideoMismatchError(result["duration_error"], result)
+                raise WorkVideoMismatchError(result["duration_error"], await self._web_playable(result))
             return await self._web_playable(result)
         if pure_cookie:
             # cookie 号：纯 API 出片；失败抛真实错误，不再回退浏览器
@@ -2080,9 +2080,13 @@ class BrowserPool:
         事件循环上跑，高并发时每完成一条视频就把整个进程卡住几秒 —— 轮询、
         管理接口、/health 全停，健康看门狗甚至会判死重启。必须放线程池。
         """
-        local = (result or {}).get("local_path")
-        if local and Path(local).exists():
-            result["local_path"] = str(await asyncio.to_thread(ensure_web_playable, local))
+        converted = {}
+        for item in [result] + list((result or {}).get("videos") or []):
+            local = (item or {}).get("local_path")
+            if local and Path(local).exists():
+                if local not in converted:
+                    converted[local] = str(await asyncio.to_thread(ensure_web_playable, local))
+                item["local_path"] = converted[local]
         return result
 
     def test_generate_warnings(self, account: str, model: str = "", duration: int = 0,
@@ -2130,7 +2134,7 @@ class BrowserPool:
 
     async def test_generate(self, account: str, prompt: str, ratio: str | None = None,
                             duration: int = 10, model: str = "seedance-2.0-fast",
-                            on_poll=None, on_conversation_id=None, execution_mode="auto") -> dict:
+                            on_poll=None, on_conversation_id=None, execution_mode="auto", video_count=1) -> dict:
         """账号级测试出片：强制用指定账号生成一条，返回成功/失败与成品 URL。
 
         不经过号池选号调度（跳过 _schedulable / 每日上限等），只验证该号本身能否出片。
@@ -2157,6 +2161,7 @@ class BrowserPool:
                     on_conversation_id=on_conversation_id, on_poll=on_poll, on_balance=on_balance,
                     reference_image_paths=[],
                     work_mode=using_work,
+                    video_count=video_count,
                 )
                 local = result.get("local_path")
                 linked = result.get("delivery") == "link" and result.get("video_url")
@@ -2496,7 +2501,7 @@ class BrowserPool:
                              attempt_timeout: float | None = None, on_dispatch=None,
                              on_attempt_end=None, on_pair_state=None, pair_state=None,
                              excluded_accounts: set[str] | None = None, work_context=False,
-                             _ai_retry_state=None, _on_ai_switch=None, execution_mode="auto") -> dict:
+                             _ai_retry_state=None, _on_ai_switch=None, execution_mode="auto", video_count=1) -> dict:
         """挑一个可调度且空闲的号出片；失败自动换号重试（最多 max_attempts 次）。
 
         2.0 的 30 秒（工作模式开着时）交给 generate_work_pair：两段 15 秒各走一遍这里。
@@ -2743,7 +2748,7 @@ class BrowserPool:
                                         on_conversation_id=acknowledged, on_poll=on_poll,
                                         on_balance=on_balance,
                                         reference_image_paths=reference_image_paths,
-                                        on_retry=restarted, work_mode=browser_work)
+                                        on_retry=restarted, work_mode=browser_work, video_count=video_count)
                             except TimeoutError:
                                 if preparation.expired():
                                     raise TimeoutError(

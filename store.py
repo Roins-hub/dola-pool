@@ -77,6 +77,8 @@ class TaskStore:
                 ("reference_source", "TEXT DEFAULT 'unspecified'"),
                 ("prompt_supplement", "TEXT DEFAULT ''"),
                 ("execution_mode", "TEXT DEFAULT 'auto'"),
+                ("video_count", "INTEGER DEFAULT 1"),
+                ("work_video_results", "TEXT DEFAULT ''"),
                 ("api_key_hash", "TEXT"),
                 ("api_key_name", "TEXT"),
                 ("started_at", "REAL"),
@@ -210,6 +212,7 @@ class TaskStore:
         "ratio": 32,
         "api_key_name": 128,
         "failure_code": 32,
+        "work_video_results": 16384,
     }
 
     @classmethod
@@ -240,6 +243,7 @@ class TaskStore:
         reference_source="unspecified",
         prompt_supplement="",
         execution_mode="auto",
+        video_count=1,
     ):
         now = time.time()
         clamped = self._clamp_fields({
@@ -276,8 +280,8 @@ class TaskStore:
                 "id,model,prompt,ratio,duration,status,account,created_at,updated_at,"
                 "conversation_id,deadline_at,last_poll_at,failure_code,reference_images,"
                 "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,"
-                "reference_source,prompt_supplement,execution_mode"
-                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?,?)",
+                "reference_source,prompt_supplement,execution_mode,video_count"
+                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task_id,
                     clamped["model"],
@@ -296,6 +300,7 @@ class TaskStore:
                     clamped["reference_source"],
                     clamped["prompt_supplement"],
                     execution_mode,
+                    video_count,
                 ),
             )
             self._conn.commit()
@@ -386,7 +391,7 @@ class TaskStore:
         cutoff = time.time() - float(retention_days) * 86400
         with _LOCK:
             rows = self._conn.execute(
-                "SELECT id, video_url, account, reference_thumbs FROM tasks"
+                "SELECT id, video_url, account, reference_thumbs, work_video_results FROM tasks"
                 " WHERE status IN ('completed','failed')"
                 "   AND COALESCE(finished_at, updated_at) < ?"
                 " ORDER BY COALESCE(finished_at, updated_at) ASC",

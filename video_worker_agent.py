@@ -18,6 +18,7 @@ import re
 import shutil
 import tempfile
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
@@ -213,10 +214,13 @@ class _WorkSession:
     """一次工作模式出片：打开页面、发送、确认、等视频。"""
 
     def __init__(self, account, page, on_poll, *, ratio=None, attachments=0, prompt="",
-                 duration=WORK_DURATION, model="seedance-2.0"):
+                 duration=WORK_DURATION, model="seedance-2.0", video_count=1):
         self.account, self.page, self.on_poll = account, page, on_poll
         self.ratio, self.attachments = ratio, attachments
         self.duration, self.model = int(duration or WORK_DURATION), model
+        self.video_count = video_count
+        self.found_videos = []
+        self.batch_error = ""
         self.site = sites.site_for_model(model)
         self.base = "https://www.doubao.com" if self.site == sites.DOUBAO else "https://www.dola.com"
         self.confirmed = False
@@ -232,10 +236,10 @@ class _WorkSession:
         self.url_before = ""
         self.conversation_id = ""
         self.ask_rounds = 0
-        self.prompt = prompt
+        self.prompt = prompt + ("；同一个账号、同一个任务生成两条独立视频，每条15秒" if video_count == 2 else "")
         self.choice_answers = {}
         self.responder = dola_responder.DialogueResponder(
-            prompt=prompt, ratio=ratio, duration=self.duration, attachments=self.attachments,
+            prompt=self.prompt, ratio=ratio, duration=self.duration, attachments=self.attachments,
             model=model_label(model), site=sites.SITE_LABELS[self.site])
         self.uploading = False
         self.upload_error = None
@@ -667,10 +671,12 @@ class _WorkSession:
             for option in question.get("options") or []:
                 seconds = [int(m) for m in re.findall(r"(?<!\d)(\d{1,2})\s*(?:秒|s\b|seconds?)", option, re.I)]
                 positive = re.sub(r"不(?:使用|需|用)?付费|无需付费|不购买|不升级", "", option)
-                forbidden = re.search(r"付费|购买|升级|充值|有料|purchase|paid|两[条段]|2[条段]|拆[成为段]|split", positive, re.I)
+                forbidden = re.search(r"付费|购买|升级|充值|有料|purchase|paid|两段|2段|拆[成为段]|split", positive, re.I)
+                count_mismatch = (re.search(r"两条|2条|two videos", option, re.I) if self.video_count == 1 else
+                                  re.search(r"单条|一条|1条|single video", option, re.I) and not re.search(r"两条|2条|two videos", option, re.I))
                 named = re.search(r"Seedance\s*[\d.]+(?:\s*(?:Mini|Fast))?", option, re.I)
                 other_model = named and re.sub(r"\s+", "", named.group()).lower() != re.sub(r"\s+", "", model_label(self.model)).lower()
-                if not forbidden and not other_model and (not seconds or self.duration in seconds):
+                if not forbidden and not other_model and not count_mismatch and (not seconds or self.duration in seconds):
                     options.append(option)
             if question.get("options") and not options:
                 raise UpstreamReplyError("上游参数不符", ask_summary([question])[-1200:],
@@ -770,10 +776,15 @@ class _WorkSession:
 
     def find_videos(self, chain) -> list[str]:
         found = video_models(chain)
-        if found or self.site != sites.DOUBAO:
-            return found
-        from doubao_gen import _messages
-        return [json.dumps({"vid": vid}) for message in _messages(chain) if message["bot"] for vid in message["vids"]]
+        if not found and self.site == sites.DOUBAO:
+            from doubao_gen import _messages
+            found = [json.dumps({"vid": vid}) for message in _messages(chain) if message["bot"] for vid in message["vids"]]
+        unique = {}
+        for item in found:
+            value = json.loads(item)
+            key = next((value[k] for k in ("vid", "video_id", "VideoID", "videoId") if value.get(k)), item)
+            unique.setdefault(str(key), item)
+        return list(unique.values())
 
     def reply_failure(self, text, *, ran_tools=False):
         if self.site == sites.DOUBAO:
@@ -800,7 +811,8 @@ class _WorkSession:
             result = {"local_path": str(await _download(url, self.account)), "conversation_id": conversation_id,
                       "account": self.account, "video_url": url}
         else:
-            result = await _deliver(self.account, vm_str, conversation_id, self.on_poll, force_download=self.duration > 15)
+            result = await _deliver(self.account, vm_str, conversation_id, self.on_poll,
+                                    force_download=self.duration > 15 or self.video_count > 1)
         if result.get("local_path"):
             from pure_api_gen import _media_duration, clip_is_short
             actual = await asyncio.to_thread(_media_duration, Path(result["local_path"]))
@@ -808,6 +820,31 @@ class _WorkSession:
                 result["video_duration"] = actual
                 if clip_is_short(actual, self.duration):
                     result["duration_error"] = f"工作模式实际生成 {actual:.1f} 秒（请求原生 {self.duration} 秒），已保留成片，未拼接或补做"
+        return result
+
+    async def deliver_all(self, found, conversation_id):
+        if self.video_count == 1:
+            return await self.deliver(found[0], conversation_id)
+        videos = []
+        delivery_error = ""
+        for index, vm in enumerate(found[:self.video_count], 1):
+            try:
+                result = await self.deliver(vm, conversation_id)
+            except Exception as exc:
+                if not videos:
+                    raise
+                delivery_error = f"已取得 {len(videos)}/{self.video_count} 条视频，第 {index} 条交付失败；原会话已保留：{short_error(exc)}"
+                break
+            local = Path(result['local_path'])
+            target = local.with_name(f"{local.stem}_{index}_{uuid.uuid4().hex[:8]}.mp4")
+            local.rename(target)
+            result['local_path'] = str(target)
+            videos.append(result)
+        result = {**videos[0], 'videos': videos, 'requested_video_count': self.video_count}
+        if delivery_error or self.batch_error or len(videos) < self.video_count:
+            result['duration_error'] = delivery_error or self.batch_error or f"同一工作任务实际返回 {len(videos)}/{self.video_count} 条视频，已保留现有成片，未追加生成"
+        elif any(video.get('duration_error') for video in videos):
+            result['duration_error'] = next(video['duration_error'] for video in videos if video.get('duration_error'))
         return result
 
     async def wait_for_video(self, conversation_id: str, deadline: float) -> str:
@@ -831,6 +868,8 @@ class _WorkSession:
             emit_feedback(self.on_poll, progress="工作模式：助手处理中")
             found = self.find_videos(chain)
             if found:
+                self.found_videos = found
+            if len(found) >= self.video_count:
                 return found[0]
             bots = [m for m in chain_messages(chain) if str(m.get("user_type")) == "2"]
             signature = json.dumps([(m.get("index_in_conv"), len(reply_text(m))) for m in bots])
@@ -844,6 +883,13 @@ class _WorkSession:
                     emit_feedback(self.on_poll, note=redact_error(text, limit=6000))
                 self.noted_signature = signature
             finished = bool(latest) and reply_finished(latest)
+            if self.found_videos:
+                emit_feedback(self.on_poll, progress=f"工作模式：已找到 {len(self.found_videos)}/{self.video_count} 条视频，等待本任务剩余结果")
+                if finished and stable >= SETTLED_POLLS:
+                    self.batch_error = (f"同一工作任务只返回 {len(self.found_videos)}/{self.video_count} 条视频；"
+                                        + reply_text(latest)[-1000:])
+                    return self.found_videos[0]
+                continue
             if finished and any(tools_ran(m) for m in bots):
                 if stable >= SETTLED_POLLS:
                     reply = reply_text(latest)[-300:]
@@ -964,7 +1010,7 @@ async def _launch_cloak(account: str, profile: str, extension_paths: list[str] |
 
 @asynccontextmanager
 async def _work_browser(account: str, on_poll=None, *, ratio=None, attachments=0, prompt="",
-                        duration=WORK_DURATION, model="seedance-2.0"):
+                        duration=WORK_DURATION, model="seedance-2.0", video_count=1):
     """生成和只读取回共用浏览器名额、独立临时目录、绑定代理与退出登录拦截。"""
     async with _work_slot(on_poll):
         profile = tempfile.mkdtemp(prefix="dola-work-")
@@ -977,7 +1023,7 @@ async def _work_browser(account: str, on_poll=None, *, ratio=None, attachments=0
             await context.add_cookies(cookies)
             page = context.pages[0] if context.pages else await context.new_page()
             session = _WorkSession(account, page, on_poll, ratio=ratio,
-                                   attachments=attachments, prompt=prompt, duration=duration, model=model)
+                                   attachments=attachments, prompt=prompt, duration=duration, model=model, video_count=video_count)
 
             async def stop_logout(route):
                 request = route.request
@@ -1014,11 +1060,11 @@ def _stage(account, on_poll, text):
 async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
                               on_conversation_id=None, on_poll=None,
                               reference_image_paths: list[str] | None = None,
-                              duration: int = WORK_DURATION, model: str = "seedance-2.0") -> dict:
+                              duration: int = WORK_DURATION, model: str = "seedance-2.0", video_count=1) -> dict:
     """工作模式生成一条原生视频；已发送超时由任务恢复器接着读原会话。"""
-    text = build_prompt(prompt, ratio, duration, model)
+    text = build_prompt(prompt, ratio, duration, model, video_count)
     async with _work_browser(account, on_poll, ratio=ratio, prompt=prompt,
-                             attachments=len(reference_image_paths or []), duration=duration, model=model) as session:
+                             attachments=len(reference_image_paths or []), duration=duration, model=model, video_count=video_count) as session:
         _stage(account, on_poll, "工作模式：切换到工作模式")
         await session.enter_work_mode()
         if reference_image_paths:
@@ -1034,13 +1080,13 @@ async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
         _stage(account, on_poll, "工作模式：请求已提交，等待原会话出片")
         vm_str = await session.wait_for_video(conversation_id, deadline)
         _stage(account, on_poll, "工作模式：已读到视频结果")
-        return await session.deliver(vm_str, conversation_id)
+        return await session.deliver_all(session.found_videos or [vm_str], conversation_id)
 
 
 async def fetch_work_conversation_video(account: str, conversation_id: str, *, on_poll=None,
-                                        duration=WORK_DURATION, model="seedance-2.0") -> dict:
+                                        duration=WORK_DURATION, model="seedance-2.0", video_count=1) -> dict:
     """只读已有会话，不发送提示词、不代答、不创建新会话。"""
-    async with _work_browser(account, on_poll, duration=duration, model=model) as session:
+    async with _work_browser(account, on_poll, duration=duration, model=model, video_count=video_count) as session:
         _stage(account, on_poll, "工作模式：只读检查超时原会话")
         session.conversation_id = conversation_id
         chain = await session.read_chain(await session.chain_query(), conversation_id)
@@ -1048,11 +1094,13 @@ async def fetch_work_conversation_video(account: str, conversation_id: str, *, o
         if chain is None:
             return pending
         found = session.find_videos(chain)
-        if found:
-            return {**await session.deliver(found[0], conversation_id),
-                    "status": "succeeded", "final": False}
         bots = [m for m in chain_messages(chain) if str(m.get("user_type")) == "2"]
         latest = bots[-1] if bots else None
+        if found:
+            if len(found) < video_count and not (latest and reply_finished(latest)):
+                return pending
+            return {**await session.deliver_all(found, conversation_id),
+                    "status": "succeeded", "final": False}
         if latest and reply_finished(latest):
             failure = session.reply_failure(reply_text(latest), ran_tools=any(generation_started(m) for m in bots))
             if failure:
