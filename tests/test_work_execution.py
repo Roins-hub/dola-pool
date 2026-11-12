@@ -35,6 +35,18 @@ def test_native_thirty_prompt_never_inserts_fifteen_seconds():
     assert "Seedance 2.0 Fast" in text and "不拆段" in text and "免费额度" in text
 
 
+@pytest.mark.parametrize('allow_paid', [True, False])
+def test_doubao_work_prompt_honors_existing_membership_policy(monkeypatch, allow_paid):
+    monkeypatch.setattr(config, 'DOUBAO_ALLOW_PAID', allow_paid)
+    text = wr.build_prompt('白鹭飞过湖面', '16:9', 15, 'doubao-seedance-2.5')
+    assert ('免费或会员生成权益' in text) is allow_paid
+    assert ('仅使用当前免费额度' in text) is not allow_paid
+    assert 'Seedance 2.5' in text and '原生 15 秒' in text
+    assert all(rule in text for rule in ('不购买', '不充值', '不升级套餐'))
+    dola = wr.build_prompt('白鹭飞过湖面', '16:9', 15, 'seedance-2.0-fast')
+    assert '仅使用当前免费额度' in dola and '会员生成权益' not in dola
+
+
 def test_skills_and_cookies_are_selected_for_the_correct_site():
     data = [{"name": "dola-creative-video", "display_name": "Creative Videos"},
             {"name": "doubao-creative-video", "display_name": "创意视频"},

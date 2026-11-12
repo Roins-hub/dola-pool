@@ -32,6 +32,9 @@ class Target:
     async def count(self):
         return self._count
 
+    async def evaluate(self, script):
+        return False
+
     async def click(self, **kwargs):
         if self.page is not None:
             self.page.clicked.append(self.label)

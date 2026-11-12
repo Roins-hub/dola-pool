@@ -491,7 +491,8 @@ class _WorkSession:
                 target = None
                 for index in range(await skill.count()):
                     candidate = skill.first if index == 0 else skill.nth(index)
-                    if await candidate.is_visible():
+                    if (await candidate.is_visible()
+                            and not await candidate.evaluate("node => !!node.closest('textarea,[contenteditable=\"true\"]')")):
                         target = candidate
                         break
                 if target is not None:

@@ -133,8 +133,9 @@ def build_prompt(prompt: str, ratio: str | None, duration: int = WORK_DURATION, 
         text += f"，{duration}s"
     if model:
         count = "一条原生" if video_count == 1 else "两条独立视频文件，每条原生"
-        text += (f"。在这一次工作任务中，仅使用 {model_label(model)} 生成{count} {duration} 秒视频，仅使用当前免费额度；"
-                 "若模型、时长或免费额度不可用，请说明原因并停止，不改模型、不缩短时长、不拆段、不购买或升级套餐。")
+        entitlement = "当前账号已有的免费或会员生成权益" if sites.is_doubao_model(model) and config.DOUBAO_ALLOW_PAID else "当前免费额度"
+        text += (f"。在这一次工作任务中，仅使用 {model_label(model)} 生成{count} {duration} 秒视频，仅使用{entitlement}；"
+                 "若模型、时长或上述权益不可用，请说明原因并停止，不改模型、不缩短时长、不拆段、不购买、不充值、不升级套餐。")
     return text
 
 

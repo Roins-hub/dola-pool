@@ -116,6 +116,32 @@ def test_hidden_duplicate_label_does_not_capture_skill_click(monkeypatch):
     assert page.selected=='创意视频' and item.sent==[]
 
 
+def test_composer_search_highlight_does_not_capture_skill_click(monkeypatch):
+    page = SkillPage('创意视频')
+    _, item = session(monkeypatch, page)
+    item.skill_labels = ['创意视频']
+    original = page.get_by_text
+
+    def get(pattern):
+        menu = original(pattern)
+        highlight = Target()
+        async def count():
+            return 2 if '创意视频' in page.keys else 0
+        async def inside_editor(script):
+            return True
+        async def wrong(**kwargs):
+            pytest.fail('composer search text was clicked instead of the skill menu')
+        highlight.count = count
+        highlight.evaluate = inside_editor
+        highlight.click = wrong
+        highlight.nth = lambda index: menu
+        return highlight
+
+    page.get_by_text = get
+    _run(item.choose_skill())
+    assert page.selected == '创意视频' and item.sent == []
+
+
 def test_already_selected_skill_is_kept_without_opening_the_menu(monkeypatch):
     page=SkillPage('创意视频')
     page.selected='创意视频'
