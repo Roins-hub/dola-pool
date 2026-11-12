@@ -169,6 +169,28 @@ def video_skill_labels(data, site: str = sites.DOLA) -> list[str]:
     return list(dict.fromkeys(labels))
 
 
+def video_skill_reference(data, site: str) -> dict | None:
+    """只使用当前账号技能列表返回的稳定身份和官方引用参数。"""
+    stable = "doubao-creative-video" if site == sites.DOUBAO else "dola-creative-video"
+    if isinstance(data, dict):
+        if ((data.get("name") or data.get("skill_name")) == stable
+                and data.get("display_name") and data.get("external_skill_id") and data.get("type") is not None):
+            return {"id": stable, "label": data["display_name"], "mentionSuggestionChar": "@",
+                    "mentionType": "skill", "skillId": stable, "external_skill_id": str(data["external_skill_id"]),
+                    "display_name": data["display_name"], "skill_type": data["type"]}
+        values = data.values()
+    elif isinstance(data, list):
+        values = data
+    else:
+        return None
+    for value in values:
+        if isinstance(value, (dict, list)):
+            found = video_skill_reference(value, site)
+            if found:
+                return found
+    return None
+
+
 def chain_messages(chain) -> list[dict]:
     found = {}
 

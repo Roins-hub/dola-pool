@@ -45,7 +45,7 @@ from video_worker_ui import (
 from work_reply import (
     WORK_DURATION, WORK_LIMIT_RE, ask_summary, asks_to_confirm, background_task_pending, build_prompt, chain_messages, choose_options,
     generation_started, pending_ask, recent_conversations, reply_finished, reply_text, session_cookies, tools_ran,
-    upload_wait_seconds, uploads_committed, video_models, video_skill_labels, work_limit_until, model_label,
+    upload_wait_seconds, uploads_committed, video_models, video_skill_labels, video_skill_reference, work_limit_until, model_label,
 )
 
 SKILL_RE = re.compile(r"^(?!.*(?:analysis|analy[sz]|分析))[^\r\n]*"
@@ -100,6 +100,22 @@ REPLACE_DRAFT_JS = r"""({selector, text}) => {
   const changed = editor.commands.setContent({type: 'doc', content: [
     {type: 'paragraph', content: [...mentions, {type: 'text', text: ' ' + text}]}
   ]}, {emitUpdate: true});
+  editor.commands.focus('end');
+  return changed;
+}"""
+
+SELECT_SKILL_JS = r"""({selector, reference}) => {
+  const editor = document.querySelector(selector)?.editor;
+  if (!editor?.getJSON || !editor?.commands?.setContent) return false;
+  const references = [];
+  const walk = node => {
+    if (node.type === 'mention' && node.attrs?.mentionType !== 'skill') references.push(node);
+    else (node.content || []).forEach(walk);
+  };
+  walk(editor.getJSON());
+  const changed = editor.commands.setContent({type: 'doc', content: [{type: 'paragraph', content: [
+    {type: 'mention', attrs: reference}, ...references
+  ]}]}, {emitUpdate: true});
   editor.commands.focus('end');
   return changed;
 }"""
@@ -266,6 +282,7 @@ class _WorkSession:
         self.uploading = False
         self.upload_error = None
         self.skill_labels = []
+        self.skill_reference = None
 
     def watch(self):
         def on_request(request):
@@ -305,6 +322,7 @@ class _WorkSession:
             labels = video_skill_labels(data, self.site)
             if labels:
                 self.skill_labels = labels
+            self.skill_reference = video_skill_reference(data, self.site)
 
     async def read_send_response(self, response):
         """提交被 HTTP 或 JSON 明确拒绝时立即报告，流式成功响应交给原会话轮询。"""
@@ -493,6 +511,22 @@ class _WorkSession:
     async def choose_skill(self):
         page = self.page
         if await self.skill_selected():
+            return
+        if self.site == sites.DOUBAO:
+            if not self.skill_reference:
+                await page.locator('[data-testid="general-agent-skill-button"]').click(timeout=8000)
+                for _ in range(10):
+                    if self.skill_reference:
+                        break
+                    await page.wait_for_timeout(1000)
+                await page.keyboard.press("Escape")
+            if (not self.skill_reference or not await page.evaluate(SELECT_SKILL_JS,
+                    {"selector": COMPOSER, "reference": self.skill_reference})):
+                await self.raise_if_blocked()
+                raise PreSubmissionParametersError(f"{self.account} 无法加载账号的视频技能引用，尚未发送生成")
+            await page.wait_for_timeout(1500)
+            if not await self.skill_selected():
+                raise PreSubmissionParametersError(f"{self.account} 视频技能没有进入输入框，尚未发送生成")
             return
         found = False
         for _ in range(3):

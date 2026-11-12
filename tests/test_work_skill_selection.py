@@ -5,7 +5,7 @@ import pytest
 
 from test_task_deadline import _run
 from test_work_session import SkillPage, session, Target, PlaywrightLike
-from work_reply import video_skill_labels
+from work_reply import video_skill_labels, video_skill_reference
 
 
 def listing(label="Movie Studio"):
@@ -18,6 +18,40 @@ def test_stable_identity_resolves_a_completely_renamed_video_skill():
     assert video_skill_labels(listing()) == ['Movie Studio']
     assert video_skill_labels({'skills': [{'skill_name': 'dola-creative-video', 'display_name': '视频制作'}]}) == ['视频制作']
     assert video_skill_labels({'name': 'marketing-video-analysis', 'display_name': 'Creative Videos'}) == []
+
+
+def test_doubao_skill_reference_comes_from_the_accounts_authoritative_listing():
+    import sites
+    data = {'skills': [{'name': 'video-analysis', 'display_name': '创意视频', 'external_skill_id': 'wrong', 'type': 2},
+                       {'name': 'doubao-creative-video', 'display_name': '创意视频新版', 'external_skill_id': 'official-id', 'type': 2}]}
+    reference = video_skill_reference(data, sites.DOUBAO)
+    assert reference['id'] == reference['skillId'] == 'doubao-creative-video'
+    assert reference['external_skill_id'] == 'official-id' and reference['label'] == '创意视频新版'
+    assert video_skill_reference({'name': 'doubao-creative-video', 'display_name': '创意视频'}, sites.DOUBAO) is None
+    assert video_skill_reference(data, sites.DOLA) is None
+
+
+def test_doubao_attaches_the_official_skill_through_the_live_editor(monkeypatch):
+    import sites
+    page = SkillPage('创意视频')
+    agent, item = session(monkeypatch, page)
+    item.site = sites.DOUBAO
+    item.skill_labels = ['创意视频']
+    item.skill_reference = video_skill_reference({'name': 'doubao-creative-video', 'display_name': '创意视频',
+                                                'external_skill_id': 'official-id', 'type': 2}, sites.DOUBAO)
+    original = page.evaluate
+    references = []
+    async def evaluate(script, args):
+        if script == agent.SELECT_SKILL_JS:
+            references.append(args['reference'])
+            page.selected = args['reference']['label']
+            return True
+        return await original(script, args)
+    page.evaluate = evaluate
+    page.get_by_text = lambda *args, **kwargs: pytest.fail('broad text matching must not select a Doubao skill')
+    _run(item.choose_skill())
+    assert references == [item.skill_reference] and _run(item.skill_selected())
+    assert not page.keys and not item.sent
 
 
 def test_renamed_label_is_used_for_both_filter_and_selection(monkeypatch):
