@@ -43,7 +43,7 @@ from video_worker_ui import (
     raise_if_region_restricted, solve_slider,
 )
 from work_reply import (
-    WORK_DURATION, WORK_LIMIT_RE, ask_summary, asks_to_confirm, build_prompt, chain_messages, choose_options,
+    WORK_DURATION, WORK_LIMIT_RE, ask_summary, asks_to_confirm, background_task_pending, build_prompt, chain_messages, choose_options,
     generation_started, pending_ask, recent_conversations, reply_finished, reply_text, session_cookies, tools_ran,
     upload_wait_seconds, uploads_committed, video_models, video_skill_labels, work_limit_until, model_label,
 )
@@ -85,6 +85,23 @@ COMPOSER_TEXT_JS = r"""(selector) => {
   const copy = box.cloneNode(true);
   copy.querySelectorAll('.node-mention').forEach(node => node.remove());
   return copy.textContent || '';
+}"""
+
+REPLACE_DRAFT_JS = r"""({selector, text}) => {
+  const editor = document.querySelector(selector)?.editor;
+  if (!editor?.getJSON || !editor?.commands?.setContent) return false;
+  const mentions = [];
+  const walk = node => {
+    if (node.type === 'mention') mentions.push(node);
+    else (node.content || []).forEach(walk);
+  };
+  walk(editor.getJSON());
+  if (!mentions.length) return false;
+  const changed = editor.commands.setContent({type: 'doc', content: [
+    {type: 'paragraph', content: [...mentions, {type: 'text', text: ' ' + text}]}
+  ]}, {emitUpdate: true});
+  editor.commands.focus('end');
+  return changed;
 }"""
 
 SELECTED_SKILLS_JS = r"""(selector) => {
@@ -541,14 +558,20 @@ class _WorkSession:
             if current == wanted:
                 return
             if current:
-                raise PreSubmissionParametersError(f"{self.account} 工作模式输入框包含非本次任务内容，尚未发送生成")
-            await page.locator(COMPOSER).first.click(timeout=8000)
-            await page.keyboard.insert_text(text)
+                if self.submit_clicked or self.sent:
+                    raise TimeoutError(f"{self.account} 工作模式请求可能已提交，保留原会话，不再改写正文")
+                # 豆包选中技能会自动填入示例；通过编辑器事务替换正文并保留技能标签。
+                if (self.site != sites.DOUBAO or not await self.skill_selected()
+                        or not await page.evaluate(REPLACE_DRAFT_JS, {"selector": COMPOSER, "text": text})):
+                    raise PreSubmissionParametersError(f"{self.account} 工作模式输入框包含非本次任务内容，尚未发送生成")
+            else:
+                await page.locator(COMPOSER).first.click(timeout=8000)
+                await page.keyboard.insert_text(text)
             await page.wait_for_timeout(1500)
             current = re.sub(r"\s+", "", await self.composer_text())
             if current == wanted:
                 return
-            if current:
+            if current and self.site != sites.DOUBAO:
                 raise PreSubmissionParametersError(f"{self.account} 工作模式输入框内容与本次任务不一致，尚未发送生成")
             await page.wait_for_timeout(2000)
         raise PreSubmissionParametersError(f"{self.account} 工作模式提示词没有写进输入框")
@@ -931,6 +954,7 @@ class _WorkSession:
                     emit_feedback(self.on_poll, note=redact_error(text, limit=6000))
                 self.noted_signature = signature
             finished = bool(latest) and reply_finished(latest)
+            delegated = any(background_task_pending(m) for m in bots)
             if self.found_videos:
                 emit_feedback(self.on_poll, progress=f"工作模式：已找到 {len(self.found_videos)}/{self.video_count} 条视频，等待本任务剩余结果")
                 if finished and stable >= SETTLED_POLLS:
@@ -938,7 +962,7 @@ class _WorkSession:
                                         + reply_text(latest)[-1000:])
                     return self.found_videos[0]
                 continue
-            if finished and any(tools_ran(m) for m in bots):
+            if finished and any(tools_ran(m) for m in bots) and not delegated:
                 if stable >= SETTLED_POLLS:
                     reply = reply_text(latest)[-300:]
                     raise (self.reply_failure(reply, ran_tools=True)
@@ -948,7 +972,7 @@ class _WorkSession:
                 failure = self.reply_failure(reply_text(latest), ran_tools=False)
                 if failure:
                     raise failure
-            making = any(generation_started(m) for m in bots)
+            making = delegated or any(generation_started(m) for m in bots)
             # 选择题：以会话内容为准（页面侧栏不一定标「一時停止中」）。已经在出片就不插话。
             ask = pending_ask(latest) if latest and not finished and not making else None
             if ask and since_answer >= ANSWER_GAP_POLLS and self.ask_rounds < ASK_ROUNDS:

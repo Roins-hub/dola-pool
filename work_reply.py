@@ -227,6 +227,12 @@ def tools_ran(message: dict) -> bool:
                for block in message.get("content_block") or [])
 
 
+def background_task_pending(message: dict) -> bool:
+    """豆包已委派的子任务：4 为运行中，2 为完成，主助手可先结束回复。"""
+    return any(str(((block.get("content") or {}).get("complex_task_block") or {}).get("status")) == "4"
+               for block in message.get("content_block") or [])
+
+
 def asks_to_confirm(text: str) -> bool:
     return bool(CONFIRM_RE.search(text or ""))
 

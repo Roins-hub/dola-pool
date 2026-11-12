@@ -213,6 +213,40 @@ def test_work_timeout_recovers_with_browser_even_when_work_switch_is_off(tmp_pat
     assert dict(server.store.work_videos_since(0))["acc1"] > 0
 
 
+def test_admin_recovery_delivers_the_original_work_task_and_claims_once(tmp_path, monkeypatch):
+    server, pool = work_server(tmp_path, monkeypatch, [
+        {'local_path': str(tmp_path/'dl'/'late.mp4'), 'status': 'succeeded'}])
+    monkeypatch.setattr(server, '_admin_auth', lambda key: 'owner')
+    server.store.update('video_t1', recover_state='', recover_until=None)
+
+    async def check():
+        first = await server.admin_work_task_recover('video_t1', None)
+        second = await server.admin_work_task_recover('video_t1', None)
+        assert first['recover_state'] == second['recover_state'] == 'watching'
+        for _ in range(30):
+            await asyncio.sleep(.01)
+            if server.store.get('video_t1')['status'] == 'completed':
+                break
+        assert server.store.get('video_t1')['recover_state'] == 'recovered'
+        await server.admin_work_task_recover('video_t1', None)
+
+    _run(check())
+    assert pool.calls == 1 and pool.claimed == [('acc1', 'seedance-2.0', 15)]
+    assert not pool.continued and not pool.merged
+
+
+@pytest.mark.parametrize('updates', [{'status': 'processing'}, {'conversation_id': ''},
+                                   {'model': 'doubao-seedance-2.0-mini', 'duration': 5, 'execution_mode': 'auto'},
+                                   {'duration': 30}])
+def test_admin_recovery_rejects_jobs_that_would_require_submission(tmp_path, monkeypatch, updates):
+    server, pool = work_server(tmp_path, monkeypatch, [])
+    monkeypatch.setattr(server, '_admin_auth', lambda key: 'owner')
+    server.store.update('video_t1', **updates)
+    with pytest.raises(server.HTTPException) as caught:
+        _run(server.admin_work_task_recover('video_t1', None))
+    assert caught.value.status_code == 409 and pool.calls == 0 and not pool.continued
+
+
 def test_account_test_persists_conversation_and_recovers_without_resubmission(tmp_path, monkeypatch):
     server, pool = work_server(tmp_path, monkeypatch, [
         {"local_path": str(tmp_path / "dl" / "late.mp4"), "status": "succeeded"}])

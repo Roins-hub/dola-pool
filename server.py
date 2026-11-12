@@ -3613,6 +3613,25 @@ def _is_risk_error(err: str) -> bool:
     return "登录态失效" in (err or "")
 
 
+@app.post("/api/admin/tasks/{task_id}/recover")
+async def admin_work_task_recover(task_id: str, x_admin_key: str | None = Header(default=None)):
+    """取回失败工作任务的原会话；不提交生成、不继续拼接任务。"""
+    _admin_auth(x_admin_key)
+    row = store.get(task_id)
+    if not row:
+        raise HTTPException(404, "task not found")
+    if row.get("status") == "completed":
+        return {"ok": True, "task_id": task_id, "recover_state": row.get("recover_state") or "completed"}
+    if (row.get("status") != "failed" or not _is_work_task(row) or _is_work_pair_task(row)
+            or not row.get("account") or not row.get("conversation_id")):
+        raise HTTPException(409, "仅支持有原会话的失败工作任务，拼接任务不支持手动取回")
+    if row.get("recover_state") == "watching" and float(row.get("recover_until") or 0) > time.time():
+        return {"ok": True, "task_id": task_id, "recover_state": "watching"}
+    if not _maybe_start_recovery(task_id, TimeoutError("工作模式原会话只读取回")):
+        raise HTTPException(409, "后台取回未启用")
+    return {"ok": True, "task_id": task_id, "recover_state": "watching"}
+
+
 @app.get("/api/admin/test-gen/{task_id}")
 async def admin_test_gen_status(task_id: str,
                                 x_admin_key: str | None = Header(default=None)):

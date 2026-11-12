@@ -178,6 +178,35 @@ def test_work_page_reopens_once_when_the_editor_does_not_load(monkeypatch, ready
     assert item.sent == [] and page.typed == [] and not item.submit_clicked
 
 
+@pytest.mark.parametrize('submitted', [False, True])
+def test_doubao_replaces_skill_examples_only_before_submission(monkeypatch, submitted):
+    from test_work_session import send_session
+    agent, item, page = send_session(monkeypatch)
+    item.site = sites.DOUBAO
+    item.submit_clicked = submitted
+    page.text = 'Creative video 使用 Seedance 2.5 生成：用参考海报制作动态宣传视频'
+    original = page.evaluate
+    edits = []
+
+    async def evaluate(script, args):
+        if script == agent.REPLACE_DRAFT_JS:
+            edits.append(args['text'])
+            page.text = 'Creative video ' + args['text']
+            return True
+        return await original(script, args)
+
+    page.evaluate = evaluate
+    if submitted:
+        with pytest.raises(TimeoutError, match='保留原会话'):
+            _run(item.fill_prompt('白鹭飞过湖面，15秒'))
+        assert not edits and '宣传视频' in page.text
+    else:
+        _run(item.fill_prompt('白鹭飞过湖面，15秒'))
+        assert edits == ['白鹭飞过湖面，15秒']
+        assert _run(item.composer_text()) == '白鹭飞过湖面，15秒'
+        assert _run(item.skill_selected()) and not item.sent
+
+
 def test_native_thirty_dispatch_uses_one_account_without_pair(tmp_path, monkeypatch):
     bp_module, pool = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
     monkeypatch.setattr(bp_module, "ensure_web_playable", lambda p: p)

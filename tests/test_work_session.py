@@ -219,6 +219,21 @@ def test_thinking_or_generating_is_never_answered(monkeypatch):
     assert page.typed == []
 
 
+def test_delegated_video_keeps_waiting_after_a_progress_tool_and_finished_reply(monkeypatch):
+    from work_reply import chain_messages
+    working = bot('收到确认。视频已经在后台生成中，请稍等。', tool=True)
+    message = chain_messages(working)[0]
+    message['content_block'].append({'content': {'complex_task_block': {'thread_id': 'original-thread', 'status': 4}}})
+    for block in message['content_block']:
+        tool = (block.get('content') or {}).get('generic_tool_block')
+        if tool:
+            tool['tool_name'] = 'peek_task_progress'
+    page = Page([working] * 10 + [video()])
+    _, item = session(monkeypatch, page, polls=2)
+    assert json.loads(wait(item))['video_duration'] == 15.1
+    assert page.typed == []
+
+
 def test_unknown_question_gets_ai_reply_once_then_waits_for_the_video(monkeypatch):
     page = Page([bot("你想要什么风格？")] * 9 + [video()])
     agent, item = session(monkeypatch, page)
