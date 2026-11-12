@@ -207,6 +207,22 @@ def test_doubao_replaces_skill_examples_only_before_submission(monkeypatch, subm
         assert _run(item.skill_selected()) and not item.sent
 
 
+def test_doubao_work_generation_can_deliver_a_native_high_bitrate_link(monkeypatch):
+    import video_link
+    agent = load_agent(monkeypatch)
+    item = agent._WorkSession('db', Page([]), None, model='doubao-seedance-2.5', duration=15)
+    async def direct(model, account, conversation_id):
+        return {'delivery':'link','video_url':'https://cdn/high.mp4','local_path':'','video_model':model,
+                'video_duration':15.07,'video_size':19390720,'account':account,'conversation_id':conversation_id}
+    async def unexpected(*args, **kwargs):
+        pytest.fail('direct delivery must not download the low-bitrate source')
+    monkeypatch.setattr(video_link, 'from_model', direct)
+    monkeypatch.setattr(agent, '_download', unexpected)
+    result = _run(item.deliver('{"video_id":"v1","video_duration":15.073}', 'original-conv'))
+    assert result['delivery'] == 'link' and result['account'] == 'db'
+    assert result['conversation_id'] == 'original-conv' and not result.get('duration_error')
+
+
 def test_native_thirty_dispatch_uses_one_account_without_pair(tmp_path, monkeypatch):
     bp_module, pool = _work_pool(tmp_path, monkeypatch, ["acc1", "acc2"])
     monkeypatch.setattr(bp_module, "ensure_web_playable", lambda p: p)

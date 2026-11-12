@@ -243,6 +243,31 @@ def test_flow_confirm_then_paid_then_video(monkeypatch, tmp_path):
     assert dp.downloaded == ["https://cdn/x.mp4"]
 
 
+@pytest.mark.parametrize('available', [True, False])
+def test_doubao_normal_generation_follows_link_delivery_and_download_fallback(monkeypatch, tmp_path, available):
+    import video_link
+    monkeypatch.setattr(config, 'VIDEO_DELIVERY', 'link')
+    dp = _FakeDP([], vid_after=0)
+    original = dp.fetch_single_chain
+    vm = json.dumps({'vid':'v0abc', 'video_duration':5.05})
+    def chain(*args, **kwargs):
+        result = original(*args, **kwargs)
+        result['video_model'] = vm
+        return result
+    dp.fetch_single_chain = chain
+    async def direct(model, account, conversation_id):
+        assert (model, account, conversation_id) == (vm, 'd1', 'conv1')
+        return {'delivery':'link','video_url':'https://cdn/high.mp4','local_path':'','video_model':model,
+                'video_duration':5.05,'video_size':12345,'account':account,'conversation_id':conversation_id} if available else None
+    monkeypatch.setattr(video_link, 'from_model', direct)
+    result = _gen(monkeypatch, tmp_path, dp)
+    assert result['site'] == 'doubao' and result['unwatermarked']
+    if available:
+        assert result['delivery'] == 'link' and result['video_model'] == vm and not dp.downloaded
+    else:
+        assert result['local_path'] and dp.downloaded == ['https://cdn/x.mp4']
+
+
 def test_confirm_reply_goes_to_the_video_skill(monkeypatch, tmp_path):
     # 2026-11-03：不带技能的「确认生成」被普通对话（seed_main）接走，视频创作没开始
     monkeypatch.setattr(config, "DOUBAO_ALLOW_PAID", True)

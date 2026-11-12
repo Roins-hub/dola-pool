@@ -53,6 +53,31 @@ def test_fresh_link_is_served_as_is(monkeypatch):
     assert calls == [] and store.updates == []
 
 
+@pytest.mark.parametrize('reachable', [True, False])
+def test_model_delivery_uses_account_source_and_requires_client_reachability(monkeypatch, reachable):
+    import config
+    monkeypatch.setattr(config, 'VIDEO_DELIVERY', 'link')
+    link = SIGNED.format(int(time.time()) + 3600)
+    calls = _stub_worker(monkeypatch, link)
+    monkeypatch.setattr(video_link, 'probe_direct', lambda url: {'size':12345, 'expires_at':video_link.link_expiry(url)} if reachable else None)
+    result = _run(video_link.from_model(VIDEO_MODEL, 'doubao-account', 'original-conv'))
+    assert calls == [(VIDEO_MODEL, 'doubao-account')]
+    if reachable:
+        assert result['delivery'] == 'link' and not result['local_path']
+        assert result['conversation_id'] == 'original-conv' and result['video_duration'] == 10.08
+        assert result['video_model'] == VIDEO_MODEL and result['video_size'] == 12345
+    else:
+        assert result is None
+
+
+def test_download_setting_skips_direct_source_requests(monkeypatch):
+    import config
+    monkeypatch.setattr(config, 'VIDEO_DELIVERY', 'download')
+    calls = _stub_worker(monkeypatch, 'unused')
+    assert _run(video_link.from_model(VIDEO_MODEL, 'doubao-account', 'conv')) is None
+    assert calls == []
+
+
 def test_link_close_to_expiry_is_re_signed_with_the_stored_model(monkeypatch):
     new = SIGNED.format(int(time.time()) + 6 * 3600)
     calls = _stub_worker(monkeypatch, new)

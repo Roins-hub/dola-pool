@@ -229,7 +229,7 @@ curl -X POST https://your-domain/v1/images/edits -H "Authorization: Bearer sk-yo
 | `DOLA_MAX_CONCURRENCY` | `0` | 全局并发初始值，`0` = 不限；面板里保存的值优先 |
 | `DOLA_MAX_PENDING_TASKS` | `100` | 待处理任务上限，超过返回 429 |
 | `DOLA_30S_MODE` | `reject` | 30 秒请求：`reject` 拒绝 / `pair` 先请求 30 秒，半截时补后半段 |
-| `DOLA_VIDEO_DELIVERY` | `download` | `download` 下载到服务器；`link` 下发短链，302 到上游原片，视频流量不经过服务器 |
+| `DOLA_VIDEO_DELIVERY` | `download` | `download` 下载到服务器；`link` 优先下发高码率 H.264 原片短链，支持 Dola 浏览器路径和豆包普通/工作模式；客户端无法访问直链时转存服务器 |
 | `DOLA_DEFAULT_REFERENCE_SOURCE` | `ai_generated` | 带参考图时默认附加来源说明；`unspecified` = 只对显式标记的任务附加 |
 | `DOLA_UPLOAD_PROXY_BYPASS` | `*.bytevcloudapi.com,*.vodupload.com` | 浏览器上传参考图时直连的域名；留空 = 全部走代理 |
 | `DOLA_STALL_REPLY_SECONDS` | `180` | dola 说完话不开工超过这么久就结束任务（未扣点）；`0` = 关闭 |

@@ -580,6 +580,23 @@ def generate_doubao_video(
                 f"{account} 豆包等待出片超时：已等 {waited} 分钟仍未出片；豆包端可能仍在生成，"
                 f"为避免重复扣额度不自动重提。豆包回执：{' | '.join(seen_texts)[-300:]}")
 
+        import video_link
+        if video_link.enabled():
+            from work_reply import video_models
+            for vm_str in video_models(chain):
+                vm = json.loads(vm_str)
+                if str(vm.get("vid") or vm.get("video_id") or "") != str(vid):
+                    continue
+                linked = asyncio.run(video_link.from_model(vm_str, account, conversation_id))
+                if linked:
+                    if clip_is_short(linked["video_duration"], duration):
+                        raise ShortClipError(f"{account} 豆包只给了 {linked['video_duration']:.1f} 秒成片（目标 {duration} 秒）")
+                    _emit_note_text(on_poll, "豆包：视频已生成，高码率直链交付")
+                    return {**linked, "duration": duration, "model": upstream_model, "pure_api": True,
+                            "site": sites.DOUBAO, "unwatermarked": bool(no_watermark),
+                            "no_watermark_setting": no_watermark, "doubao_paid": paid,
+                            "credits_used": None, "credits_left": None}
+                break
         out_dir = Path(output_dir or config.DOWNLOAD_DIR)
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{account}_{uuid.uuid4().hex[:12]}.mp4"

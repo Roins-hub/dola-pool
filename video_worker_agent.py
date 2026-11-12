@@ -903,6 +903,14 @@ class _WorkSession:
 
     async def deliver(self, vm_str, conversation_id):
         if self.site == sites.DOUBAO:
+            import video_link
+            linked = await video_link.from_model(vm_str, self.account, conversation_id) if self.video_count == 1 else None
+            if linked:
+                emit_feedback(self.on_poll, progress="豆包工作模式：视频已生成，高码率直链交付")
+                from pure_api_gen import clip_is_short
+                if clip_is_short(linked["video_duration"], self.duration):
+                    linked["duration_error"] = f"工作模式实际生成 {linked['video_duration']:.1f} 秒（请求原生 {self.duration} 秒），已保留成片，未拼接或补做"
+                return linked
             try:
                 vm = json.loads(vm_str)
                 vid = vm.get("vid") or vm.get("video_id")

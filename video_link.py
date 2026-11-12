@@ -1,11 +1,8 @@
-"""Deliver finished videos as a stable /v/<task>.mp4 link that redirects to the upstream CDN.
+"""Deliver Dola and Doubao videos as a stable /v/<task>.mp4 link to the upstream CDN.
 
-DOLA_VIDEO_DELIVERY=link: the server no longer downloads the video. The task's video_url is
-PUBLIC_BASE/v/<task_id>.mp4; each request is answered with a 302 to the upstream H.264 file,
-so the bytes go from Dola's CDN to the client. The signed H.264 URL lives about six hours
-(2026-10-29: the expiry is the 8-hex-digit path segment), so the stored video_model is used
-to sign a fresh one shortly before it expires. When no H.264 URL can be obtained or the CDN
-cannot be reached without the account proxy, the worker falls back to downloading.
+DOLA_VIDEO_DELIVERY=link returns PUBLIC_BASE/v/<task_id>.mp4 and redirects clients to
+the upstream H.264 file. The stored video_model refreshes the URL before its CDN expiry.
+When a directly reachable H.264 source is unavailable, the worker downloads the video.
 """
 import asyncio
 import json
@@ -22,6 +19,26 @@ _refresh_locks: dict[str, asyncio.Lock] = {}
 
 def enabled() -> bool:
     return config.VIDEO_DELIVERY == "link"
+
+
+async def from_model(video_model: str, account: str, conversation_id: str) -> dict | None:
+    """取账号代理下的高码率H.264源；客户端可访问时按统一直链协议交付。"""
+    if not enabled():
+        return None
+    from video_worker_ui import fetch_higher_bitrate_url
+    try:
+        url = await fetch_higher_bitrate_url(video_model, account)
+        probe = await asyncio.to_thread(probe_direct, url) if url else None
+    except Exception:
+        return None
+    if not probe:
+        return None
+    metadata = meta_from_model(video_model, probe["size"], None, None)
+    if not metadata.get("video_duration"):
+        return None
+    return {"video_url": url, "local_path": "", "delivery": "link", "video_model": video_model,
+            "video_size": probe["size"], "video_duration": metadata["video_duration"],
+            "link_expires_at": probe["expires_at"], "account": account, "conversation_id": conversation_id}
 
 
 def link_expiry(url: str) -> float | None:

@@ -518,6 +518,8 @@ dola 生成的每条视频，在 dola 服务器上本来就有**两个版本**�
 
 不同类型的账号走不同的出片路径，拿无水印链接的方式也不一样：
 
+设置 `DOLA_VIDEO_DELIVERY=link` 后，Dola 浏览器路径及豆包普通、工作模式优先获取高码率 H.264 无水印源，返回 `/v/<任务ID>.mp4`。访问短链时跳转到上游 CDN；接近过期时通过账号绑定代理刷新签名。拿不到可供客户端访问的直链时，转存到服务器并返回 `/videos/<文件名>.mp4`。
+
 **① 从 dola 返回的数据里直接找（不依赖任何第三方）**
 
 - **浏览器路径**（Google 登录添加的账号）：出片后先调用 dola 自己的播放接口（`fallback_api`），把参数改成 `logo_type=unwatermarked`、`codec_type=8`，拿到无水印的 H.264 高码率版本（约 3 Mbps）。这一步失败时，再读取返回数据里 `video_model.video_list.*.main_url` 字段（base64 编码，解码后就是 `lr=unwatermarked` 链接），取码率最高的一个。代码在 `video_worker_ui.py` 的 `fetch_higher_bitrate_url()` 和 `video_worker.py` 的 `extract_unwatermarked_url()`。
