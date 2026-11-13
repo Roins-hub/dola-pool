@@ -1901,6 +1901,14 @@ def build_payload(
         }
     if need_create:
         option["conversation_init_option"] = {"need_ack_conversation": True}
+    if SITE == "doubao" and video_ability:
+        # Current Doubao web clients set these to route normal chat-mode video
+        # requests to Agent-Creation instead of the plain assistant.
+        option.update({
+            "conversation_mode": 1,
+            "support_lazy_fetch_stream": True,
+            "collect_id": "",
+        })
     option.update({
             "regen_query_id": [], "edit_query_id": [],
             "regen_instruction": "", "no_replace_for_regen": False, "message_from": 0, "shared_app_name": "",
@@ -1908,6 +1916,8 @@ def build_payload(
             "is_old_user": False, "recovery_option": {"is_recovery": False, "req_create_time_sec": now_ms // 1000, "append_sse_event_scene": 0},
             "message_storage_type": 0,
     })
+    if SITE == "doubao" and video_ability:
+        option["is_old_user"] = True
 
     ext: dict[str, Any] = {
         "fp": ctx["fp"],
@@ -1919,6 +1929,12 @@ def build_payload(
             "answer_with_suggest": "0",
             "sub_conv_firstmet_type": "1",
         })
+        if SITE == "doubao":
+            ext.update({
+                "general_task_param": compact_json({"server_do_compare": True}),
+                "is_finish": "1",
+                "collection_id": "",
+            })
         if len(images) > 1:
             ext["multi_image_count"] = str(len(images))
         if need_create:

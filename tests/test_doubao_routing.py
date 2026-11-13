@@ -31,6 +31,30 @@ def test_doubao_video_ability_includes_resolution_for_original_and_followup(mode
         assert payload['client_meta']['conversation_id'] == conv
 
 
+def test_doubao_native_video_payload_includes_current_web_creation_routing_fields():
+    from protocol import dola_pure_api, doubao_site
+
+    dp = doubao_site.load()
+    payload, _, _ = dp.build_payload([], '一只猫微笑', {'fp':'test'}, 10,
+                                     'seedance_v2.0', 'auto')
+    assert payload['client_meta']['bot_id'] == '7338286299411103781'
+    assert payload['chat_ability']['ability_type'] == 17
+    assert payload['option']['conversation_mode'] == 1
+    assert payload['option']['is_old_user'] is True
+    assert payload['option']['support_lazy_fetch_stream'] is True
+    assert payload['option']['collect_id'] == ''
+    assert json.loads(payload['ext']['general_task_param']) == {'server_do_compare': True}
+    assert payload['ext']['is_finish'] == '1' and payload['ext']['collection_id'] == ''
+    ability = json.loads(payload['chat_ability']['ability_param'])
+    assert ability['model'] == 'seedance_v2.0' and ability['duration'] == 10
+    assert ability['ratio'] == 'auto' and ability['resolution'] == '720p'
+
+    dola_payload, _, _ = dola_pure_api.build_payload([], '一只猫微笑', {'fp':'test'}, 10,
+                                                     'seedance_v2.0', '16:9')
+    assert 'conversation_mode' not in dola_payload['option']
+    assert 'general_task_param' not in dola_payload['ext']
+
+
 def test_markdown_removed_from_ai_evidence_is_still_the_same_original_quote():
     text = '很抱歉，我目前**不能直接生成视频文件**，只能提供提示词。'
     data = decision('stop', 'other', text='很抱歉，我目前不能直接生成视频文件')
