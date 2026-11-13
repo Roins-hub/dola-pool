@@ -3856,10 +3856,13 @@ function recoverNote(t){
 function costCell(t){
   const c=t.created_at||0,s=t.started_at||0,f=t.finished_at||0;
   const pg=t.progress||{};
-  // dola 自己报了「预计等待 N 分钟」就按它倒计时，否则用近 3 天同时长的平均耗时
-  const dolaWait=Number(t.upstream_wait||0);
-  const typ=dolaWait||Number(pg.typical_seconds||0);
-  const lab=dolaWait?'dola 预计':'预计';
+  // 上游报了「预计等待 N 分钟」就按它倒计时，否则用近 3 天同时长的平均耗时
+  const upstreamWait=Number(t.upstream_wait||0);
+  const typ=upstreamWait||Number(pg.typical_seconds||0);
+  const rawSite=String(t.site||'').toLowerCase();
+  const isDoubao=rawSite==='doubao'||rawSite==='豆包'
+    ||(rawSite!=='dola'&&String(t.model||'').toLowerCase().startsWith('doubao-'));
+  const lab=upstreamWait?(isDoubao?'豆包 预计':'dola 预计'):'预计';
   if(t.status==='queued'){
     if(!c)return '—';
     // 排队：实时排队时长 + 预计（含前面还有几个）
