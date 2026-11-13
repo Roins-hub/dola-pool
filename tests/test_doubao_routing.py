@@ -116,14 +116,16 @@ def test_ai_receives_the_end_of_a_long_finished_reply_and_detailed_validation_er
     'Seedance 2.5 仅向200元档和500元档会员开放，请升级套餐。',
     '本次使用Seedance生成。以下是最终提示词，要不要中文版？',
 ])
-def test_plain_assistant_stops_without_waiting_or_marking_permissions(tmp_path, monkeypatch, enabled, text):
+def test_plain_assistant_reports_route_failure_without_claiming_quota_or_plan(tmp_path, monkeypatch, enabled, text):
     calls = stub_ai(monkeypatch,decision('switch_account','plan',text))
     monkeypatch.setattr(r,'enabled',lambda:enabled)
     dp = _FakeDP([(0,text,[],{'agent_name':'豆包','use_creation':'0','has_video_gen':'0'})])
     with pytest.raises(UpstreamReplyError) as caught:
         bounded_gen(monkeypatch,tmp_path,dp)
     assert caught.value.category == '视频技能未生效'
-    assert not caught.value.allow_account_retry and caught.value.generation_started is False
+    from generation_errors import VideoSkillUnavailableError
+    assert isinstance(caught.value, VideoSkillUnavailableError)
+    assert caught.value.generation_started is False
     assert not calls and not dp.replies and not dp.downloaded
 
 

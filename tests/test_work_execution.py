@@ -13,7 +13,7 @@ from test_account_throttle import _row
 from test_task_deadline import _run
 from test_work_mode import _agent, _work_pool
 from test_work_followups import work_server
-from test_work_session import Page, load_agent, bot
+from test_work_session import Page, Target, load_agent, bot
 
 
 @pytest.mark.parametrize("model,seconds,valid", [
@@ -229,6 +229,89 @@ def test_doubao_work_generation_can_deliver_a_native_high_bitrate_link(monkeypat
     result = _run(item.deliver('{"video_id":"v1","video_duration":15.073}', 'original-conv'))
     assert result['delivery'] == 'link' and result['account'] == 'db'
     assert result['conversation_id'] == 'original-conv' and not result.get('duration_error')
+
+
+@pytest.mark.parametrize("broken_attempts", [1, 2])
+def test_doubao_unavailable_work_page_reopens_once_and_reports_startup_failure(monkeypatch, broken_attempts):
+    agent = load_agent(monkeypatch)
+    class StartupPage(Page):
+        def __init__(self):
+            super().__init__([])
+            self.navigations, self.waits = 0, []
+        async def goto(self, *args, **kwargs):
+            self.navigations += 1
+        def get_by_text(self, text, exact=False):
+            assert text == "该页面暂时不可用" and exact
+            return Target(int(self.navigations <= broken_attempts))
+        def locator(self, selector):
+            return Target(int(self.navigations > broken_attempts))
+        async def wait_for_timeout(self, ms):
+            self.waits.append(ms)
+    page = StartupPage()
+    item = agent._WorkSession("db", page, None, model="doubao-seedance-2.0-fast")
+    async def logged_out():
+        return False
+    async def dismiss(page):
+        pass
+    item.logged_out = logged_out
+    monkeypatch.setattr(agent, "dismiss_popups", dismiss)
+    if broken_attempts == 2:
+        from generation_errors import PreSubmissionParametersError
+        with pytest.raises(PreSubmissionParametersError, match="初始化超时或异常"):
+            _run(item.open_chat())
+    else:
+        _run(item.open_chat())
+    assert page.navigations == 2 and len(page.waits) <= 1 and not page.typed
+
+
+@pytest.mark.parametrize("started", [False, True])
+def test_work_reference_failure_stops_confirmations_or_flags_the_existing_video(monkeypatch, started):
+    from generation_errors import UpstreamReplyError
+    agent = load_agent(monkeypatch)
+    item = agent._WorkSession("db", Page([]), None, attachments=1, ratio="16:9",
+                              model="doubao-seedance-2.0-fast")
+    messages = bot("参考图资源当前无法读取，我先按文字设定直接生成。", tool=started)["messages"]
+    if started:
+        item.check_references(messages)
+        assert item.reference_error
+    else:
+        with pytest.raises(UpstreamReplyError, match="参考图不可用") as caught:
+            item.check_references(messages)
+        assert not caught.value.allow_account_retry
+    assert not item.page.typed
+
+
+def test_work_existing_video_preserves_reference_and_ratio_validation_errors(monkeypatch):
+    import video_link
+    agent = load_agent(monkeypatch)
+    item = agent._WorkSession("db", Page([]), None, attachments=1, ratio="16:9",
+                              model="doubao-seedance-2.0-fast")
+    item.reference_error = "参考图资源无法读取"
+    vm = json.dumps({"vid": "original", "video_duration": 15.1,
+                     "video_list": {"high": {"vwidth": 960, "vheight": 720}}})
+    async def direct(*args):
+        return {"delivery": "link", "video_url": "https://cdn.invalid/original.mp4", "local_path": "",
+                "video_duration": 15.1, "video_model": vm}
+    monkeypatch.setattr(video_link, "from_model", direct)
+    result = _run(item.deliver(vm, "original-conv"))
+    assert "参考图未用于生成" in result["validation_error"] and "画幅" in result["validation_error"]
+    assert result["delivery"] == "link" and not item.page.typed
+
+
+def test_startup_resource_diagnostics_keep_only_hosts_and_timing(monkeypatch):
+    agent = load_agent(monkeypatch)
+    page = Page([])
+    events = {}
+    page.on = lambda event, handler: events.setdefault(event, []).append(handler)
+    item = agent._WorkSession("db", page, None, model="doubao-seedance-2.0-fast")
+    item.watch()
+    events["requestfinished"][0](SimpleNamespace(resource_type="script", timing={"responseEnd": 31000},
+        url="https://lf-doubao.example/assets/chat.js?token=secret"))
+    events["requestfailed"][0](SimpleNamespace(resource_type="stylesheet", failure="net::ERR_TIMED_OUT",
+        url="https://lf-doubao.example/assets/chat.css?signature=secret"))
+    detail = " | ".join(item.startup_resources)
+    assert "31.0 秒" in detail and "加载失败" in detail and "lf-doubao.example" in detail
+    assert "secret" not in detail and "chat.js" not in detail and "chat.css" not in detail
 
 
 def test_native_thirty_dispatch_uses_one_account_without_pair(tmp_path, monkeypatch):

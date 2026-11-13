@@ -18,7 +18,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -27,10 +29,11 @@ from typing import Any, Callable
 import config
 import dola_responder
 import sites
-from generation_errors import UpstreamReplyError
+from account_transport import redact_error
+from generation_errors import UpstreamReplyError, VideoSkillUnavailableError
 from upstream_reply import reply_failure
 from pure_api_gen import (
-    AbnormalNoAckError, PureApiError, PureLoginExpired, ShortClipError,
+    PureApiError, PureLoginExpired,
     UnsupportedDurationError, _emit_note_text, _emit_upstream_note, _load_state,
     _media_duration, _progress_heartbeat, _timeout_for_upstream_wait,
     _wait_seconds_from_texts, clip_is_short,
@@ -65,8 +68,54 @@ def _site():
 
 def _session(dp, state_file, proxy: str):
     from protocol import doubao_site
-    return dp.setup_session(region=doubao_site.REGION, pc_version=doubao_site.PC_VERSION,
-                            proxy=proxy or "", login_pure=True, login_state_file=str(state_file))
+    session, ctx, headers = dp.setup_session(region=doubao_site.REGION, pc_version=doubao_site.PC_VERSION,
+                                             proxy=proxy or "", login_pure=True, login_state_file=str(state_file))
+    stage = "身份初始化"
+    try:
+        data = dp.dola_api_post_json(session, ctx, "/alice/user/get_web_anon_id", {},
+                                     label="doubao_session_identity", referer=f"{dp.BASE}/chat/")
+        if str(data.get("code")) in LOGIN_EXPIRED_CODES:
+            raise PureLoginExpired("豆包登录态已失效，尚未提交生成")
+        dp.assert_ok(data, "doubao_session_identity")
+        identity = data.get("data") if isinstance(data.get("data"), dict) else data
+        dp.apply_anon_id_to_ctx(ctx, identity)
+        if identity.get("device_id"):
+            ctx["device_id"] = str(identity["device_id"])
+        stage = "会话启动"
+        launch = dp.dola_api_post_json(session, ctx, "/alice/user/launch", {},
+                                       label="doubao_session_launch", referer=f"{dp.BASE}/chat/")
+        if str(launch.get("code")) in LOGIN_EXPIRED_CODES:
+            raise PureLoginExpired("豆包登录态已失效，尚未提交生成")
+        dp.assert_ok(launch, "doubao_session_launch")
+        session._doubao_launch = launch
+        stage = "保存账号上下文"
+        state_path = Path(state_file)
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        saved = state.get("ctx") if isinstance(state.get("ctx"), dict) else {}
+        state["ctx"] = saved
+        saved.update({key: ctx[key] for key in ("fp", "web_id", "tea_uuid", "device_id") if ctx.get(key)})
+        # Keep an interrupted write from truncating the account's imported login state.
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=state_path.parent,
+                                         prefix=".cookie_state_", suffix=".tmp", delete=False) as saved_file:
+            temp_path = Path(saved_file.name)
+            try:
+                temp_path.chmod(0o600)
+                saved_file.write(json.dumps(state, ensure_ascii=False, indent=2))
+            except BaseException:
+                saved_file.close()
+                temp_path.unlink(missing_ok=True)
+                raise
+        try:
+            os.replace(temp_path, state_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+        return session, ctx, headers
+    except PureLoginExpired:
+        session.close()
+        raise
+    except Exception as exc:
+        session.close()
+        raise PureApiError(f"豆包{stage}失败（{type(exc).__name__}），尚未提交生成") from None
 
 
 # ---------------------------------------------------------------- 会话解析
@@ -130,6 +179,8 @@ def _messages(chain: Any) -> list[dict]:
             "creation": bool(str(ext.get("use_creation") or "") == "1" or str(ext.get("has_video_gen") or "") == "1"
                              or str(ext.get("agent_name") or "") == "Agent-Creation"),
             "generating": generating or str(ext.get("has_video_gen") or "") == "1",
+            "references": sum(len((block.get("content") or {}).get("attachment_block", {}).get("attachments") or [])
+                              for block in raw.get("content_block") or [] if isinstance(block, dict)),
         })
     out.sort(key=lambda m: m["index"])
     return out
@@ -181,6 +232,49 @@ def plain_chat_reply(message: dict) -> bool:
                     or message.get("agent_intention") == "seed_main"))
 
 
+def reference_failure(text: str) -> str:
+    """A required image was rejected, unavailable, or explicitly dropped from creation."""
+    value = _compact(text)
+    # Questions and conditional advice are not a report that the supplied image failed.
+    value = re.sub(r"(?:如果|若|假如|当(?!前)).{0,60}?(?:[，,。；;]|$)", "", value)
+    value = re.sub(r"(?:不会|并未|没有|无需|不要|避免|防止).{0,8}(?:放弃|忽略|不使用|不参考|丢失|失效|无法读取)", "", value)
+    patterns = (
+        r"(?:参考图|参考图片|图片资源|图像资源|上传的图片|参考素材).{0,24}(?:无法读取|不可读取|无法访问|不可用|已失效|失效素材|不存在|未找到|丢失|加载失败)",
+        r"(?:无法读取|无法访问|无法使用|无法识别|未能读取|未能访问).{0,16}(?:参考图|参考图片|上传的图片|图片资源|参考素材)",
+        r"(?:不再引用|不使用|不参考|放弃|忽略).{0,12}(?:参考图|参考图片|上传的图片|失效素材)",
+        r"(?:改为|改成|先按|直接按|仅按).{0,12}(?:纯文字|纯文本|文字设定|文字描述).{0,12}生成",
+    )
+    return text[-1200:] if any(re.search(pattern, value) for pattern in patterns) else ""
+
+
+def wants_creation_confirmation(text: str) -> bool:
+    value = _compact(text)
+    return (not re.search(r"(?:无法|不能|没办法|不支持).{0,12}(?:生成|导出).{0,6}视频", value)
+            and bool(re.search(r"(?:要不要|是否|需要我|可以.{0,8}直接).{0,24}生成.{0,8}视频(?!提示词|脚本|方案)", value)))
+
+
+def creation_reference_error(messages: list[dict], has_images: bool) -> str:
+    if not has_images:
+        return ""
+    return next((reference_failure(m.get("text") or "") for m in reversed(messages)
+                 if m.get("bot") and m.get("finished") and reference_failure(m.get("text") or "")), "")
+
+
+def video_ratio_error(video_model: str, ratio: str | None) -> str:
+    if not ratio or not re.fullmatch(r"\d{1,2}:\d{1,2}", ratio):
+        return ""
+    try:
+        import video_link
+        meta = video_link.meta_from_model(video_model, None, None, ratio)
+        width, height = meta.get("video_width"), meta.get("video_height")
+        left, right = map(int, ratio.split(":"))
+        if width and height and right and abs(width / height - left / right) > (left / right) * .02:
+            return f"实际视频为 {width}×{height}，画幅与请求 {ratio} 不符，已保留成片，未补做"
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return ""
+
+
 def looks_like_plan_unavailable(text: str) -> bool:
     c = _compact(text)
     return bool(re.search(r"(?:套餐|订阅|权益).{0,20}(?:不可|不能|不支持|无法).{0,12}(?:创作|生成视频|视频生成)", c))
@@ -216,11 +310,11 @@ def looks_like_quota_exhausted(text: str) -> bool:
     return any(k in c for k in QUOTA_EXHAUSTED_MARKERS)
 
 
-_DURATION_RE = re.compile(r"时长[：:]\s*(\d{1,2})\s*秒")
-_MODEL_RE = re.compile(r"模型[：:]\s*(Seedance\s*[\d.]+(?:\s*(?:Mini|Fast))?)", re.I)
+_DURATION_RE = re.compile(r"(?:时长\s*[：:]?\s*|生成\s*(?:一(?:条|段))?\s*)(\d{1,2})\s*(?:秒|s\b)", re.I)
+_MODEL_RE = re.compile(r"(?:模型[：:]\s*|(?:改用|使用|用)\s*)(Seedance\s*[\d.]+(?:\s*(?:Mini|Fast))?)", re.I)
 
 
-def confirm_mismatch(text: str, *, duration: int, model_display: str) -> str:
+def confirm_mismatch(text: str, *, duration: int, model_display: str, ratio: str | None = None) -> str:
     """确认文案里的参数和请求不一致时返回说明（空串 = 一致或读不出）。"""
     c = re.sub(r"\*+", "", text or "")
     m = _DURATION_RE.search(c)
@@ -231,6 +325,11 @@ def confirm_mismatch(text: str, *, duration: int, model_display: str) -> str:
         said = re.sub(r"\s+", " ", m.group(1)).strip().lower()
         if said != model_display.lower():
             return f"豆包把模型改成了 {m.group(1).strip()}（请求 {model_display}）"
+    ratios = re.findall(r"(?<!\d)(\d{1,2})\s*[:：]\s*(\d{1,2})(?!\d)", c)
+    if ratio and re.fullmatch(r"\d{1,2}:\d{1,2}", ratio):
+        candidates = {f"{int(left)}:{int(right)}" for left, right in ratios}
+        if candidates.intersection({"16:9", "9:16", "1:1", "4:3", "3:4", "21:9"}) - {ratio}:
+            return f"豆包确认的画幅与请求 {ratio} 不符"
     return ""
 
 
@@ -261,7 +360,10 @@ def _reply(dp, session, ctx, headers, conversation_id: str, text: str = CONFIRM_
     2026-11-03 实测：不带技能的「确认生成」被豆包普通对话（seed_main）接走，它嘴上说「已确认，开始生成」，
     视频创作智能体（Agent-Creation）却没收到，永远不出片。
     """
-    chain = dp.fetch_single_chain(session, ctx, conversation_id)
+    try:
+        chain = dp.fetch_single_chain(session, ctx, conversation_id)
+    except Exception as exc:
+        raise TimeoutError(f"豆包确认前读取原会话失败（{type(exc).__name__}），保留原会话核对，未重复提交") from None
     result = dp.submit_chat_completion(
         session, ctx, headers, images=[], audios=[], prompt=text, duration=duration if model else 5,
         model=model, ratio=ratio, timeout_sec=180, video_ability=bool(model), conversation_id=conversation_id,
@@ -269,7 +371,7 @@ def _reply(dp, session, ctx, headers, conversation_id: str, text: str = CONFIRM_
         last_message_index=dp.find_latest_message_index(chain),
         payload_hook=_keep_reply_text(dp, text) if model else None)
     if getattr(result, "error", ""):
-        raise PureApiError(f"回「{text}」失败: {result.error_code} {result.error}"[:300])
+        raise TimeoutError("豆包确认回复未取得有效回执，保留原会话核对，未重复提交")
     return result
 
 
@@ -293,7 +395,7 @@ def _download(dp, session, ctx, conversation_id: str, vid: str, chain: Any, out_
     try:
         url, _ = nowatermark_url(dp, session, ctx, vid)
     except Exception as exc:  # noqa: BLE001
-        log.warning("doubao 无水印地址获取失败 %s: %s", vid, str(exc)[:200])
+        log.warning("doubao 无水印地址获取失败 %s: %s", vid, redact_error(exc, limit=200))
     if not url:
         unwatermarked = False
         urls = dp.find_video_urls(chain)
@@ -342,7 +444,7 @@ def ensure_no_watermark(dp, session, ctx, account: str = "") -> bool | None:
     try:
         off = watermark_off(dp, session, ctx)
     except Exception as exc:  # noqa: BLE001 - 读设置失败不影响出片
-        log.info("doubao 水印设置读取失败 %s: %s", account, str(exc)[:160])
+        log.info("doubao 水印设置读取失败 %s: %s", account, redact_error(exc, limit=160))
         return None
     if off or off is None or not config.DOUBAO_AUTO_NO_WATERMARK:
         return off
@@ -351,7 +453,7 @@ def ensure_no_watermark(dp, session, ctx, account: str = "") -> bool | None:
         off = watermark_off(dp, session, ctx)
         log.info("doubao %s 已关闭 AI 生成明水印 → %s", account, "成功" if off else "未生效")
     except Exception as exc:  # noqa: BLE001
-        log.warning("doubao %s 关闭水印失败: %s", account, str(exc)[:160])
+        log.warning("doubao %s 关闭水印失败: %s", account, redact_error(exc, limit=160))
     return off
 
 
@@ -373,7 +475,7 @@ def _check_login(dp, session, ctx) -> tuple[bool, str]:
 # ---------------------------------------------------------------- 对外入口
 
 def probe_login(state_file, proxy: str = "") -> tuple[bool, str]:
-    """导入 / 面板「验证」用：只查额度接口，秒回、不花额度。"""
+    """导入 / 面板「验证」用：只读校验网页身份与额度，不提交生成。"""
     dp = _site()
     session = None
     try:
@@ -385,14 +487,15 @@ def probe_login(state_file, proxy: str = "") -> tuple[bool, str]:
             kind = doubao_account.from_file(state_file)
             try:
                 if proxy:
-                    data = dp.dola_api_post_json(session, ctx, "/alice/user/launch", {}, label="account_modes")
+                    data = getattr(session, "_doubao_launch", None) or dp.dola_api_post_json(
+                        session, ctx, "/alice/user/launch", {}, label="account_modes")
                     kind = doubao_account.launch_type(data, kind)
                 doubao_account.remember(state_file, kind)
             except Exception:  # 入口识别失败保留 Cookie 分类，不改变登录验证结果。
                 pass
         return ok, reason
     except Exception as exc:  # noqa: BLE001
-        return False, str(exc).replace("\n", " ")[:300]
+        return False, redact_error(exc, limit=300).replace("\n", " ")
     finally:
         if session is not None:
             session.close()
@@ -414,7 +517,7 @@ def hello_probe(state_file, proxy: str = "", **_ignored) -> dict[str, Any]:
         if login_ok:
             no_watermark = ensure_no_watermark(dp, session, ctx)
     except Exception as exc:  # noqa: BLE001
-        reason = str(exc).replace("\n", " ")[:200] or exc.__class__.__name__
+        reason = redact_error(exc, limit=200).replace("\n", " ") or exc.__class__.__name__
     finally:
         if session is not None:
             session.close()
@@ -456,6 +559,10 @@ def generate_doubao_video(
     dp = _site()
     session, ctx, headers = _session(dp, state_file, proxy)
     try:
+        from protocol import doubao_site
+        log.info("doubao prepare account=%s model=%s duration=%s ratio=%s references=%s client=%s proxy_bound=%s",
+                 account, upstream_model, duration, ratio, len(reference_image_paths or []),
+                 doubao_site.PC_VERSION, bool(proxy))
         # 水印是按号的设置，出片时生效：提交前确认这个号已关（没关就替它关）
         no_watermark = ensure_no_watermark(dp, session, ctx, account)
         images: list[dict[str, Any]] = []
@@ -463,18 +570,21 @@ def generate_doubao_video(
             try:
                 images.append(dp.upload_image(session, ctx, headers, path))
             except Exception as exc:  # noqa: BLE001
-                raise PureApiError(f"参考图上传失败（{path.name}）: {str(exc)[:200]}") from exc
+                raise PureApiError(f"参考图上传失败（{path.name}）: {redact_error(exc, limit=200)}") from None
+        log.info("doubao references account=%s requested=%s uploaded=%s", account,
+                 len(reference_image_paths or []), len(images))
+        _emit_note_text(on_poll, f"豆包：准备提交视频创作，参考图 {len(images)} 张")
         submit = dp.submit_chat_completion(
             session, ctx, headers, images=images, audios=[], prompt=prompt, duration=duration,
             model=upstream_model, ratio=ratio, timeout_sec=180, video_ability=True)
-        if submit.error:
-            msg = f"{submit.error_code or 'upstream'}: {submit.error}"
-            if any(k in msg.lower() for k in ("login", "登录", "未登录", "anonymous", "710012001")):
-                raise PureLoginExpired(f"{account} 豆包会话失效: {msg[:200]}")
-            raise PureApiError(f"{account} 提交失败: {msg[:300]}")
         conversation_id = submit.conversation_id
         if not conversation_id:
-            raise PureApiError(f"{account} 提交未返回 conversation_id")
+            if submit.error:
+                msg = redact_error(f"{submit.error_code or 'upstream'}: {submit.error}", limit=300)
+                if any(k in msg.lower() for k in ("login", "登录", "未登录", "anonymous", "710012001")):
+                    raise PureLoginExpired(f"{account} 豆包会话失效: {msg[:200]}")
+                raise PureApiError(f"{account} 提交失败: {msg[:300]}")
+            raise TimeoutError(f"{account} 提交未返回会话标识，结果待核对，未自动重发")
 
         submitted_at = time.time()
         deadline = submitted_at + timeout
@@ -483,6 +593,9 @@ def generate_doubao_video(
                 on_conversation_id(account, conversation_id, deadline)
             except Exception:  # noqa: BLE001
                 pass
+        _emit_note_text(on_poll, "豆包：会话已建立，等待视频创作受理")
+        if submit.error:
+            raise TimeoutError(f"{account} 豆包会话已建立但回执异常，保留原会话核对，未重复提交")
 
         handled: set[int] = set()
         confirms = 0
@@ -492,6 +605,9 @@ def generate_doubao_video(
         seen_texts: list[str] = []
         chain: Any = None
         vid = ""
+        reference_error = ""
+        plain_seen: set[int] = set()
+        creation_confirmation = False
         responder = dola_responder.DialogueResponder(
             prompt=prompt, ratio=ratio, duration=duration, attachments=len(images), model=display, site="豆包")
         with _progress_heartbeat(on_poll):
@@ -499,19 +615,34 @@ def generate_doubao_video(
                 try:
                     chain = dp.fetch_single_chain(session, ctx, conversation_id)
                 except dp.DolaNoDataError as exc:
-                    raise PureApiError(f"{account} 豆包会话已失效: {str(exc)[:200]}") from exc
+                    raise PureApiError(f"{account} 豆包会话已失效: {redact_error(exc, limit=200)}") from None
                 except Exception as exc:  # noqa: BLE001
-                    log.info("doubao 轮询异常 %s（继续等）: %s", account, str(exc)[:160])
+                    log.info("doubao 轮询异常 %s（继续等）: %s", account, redact_error(exc, limit=160))
                     time.sleep(poll)
                     continue
                 msgs = _messages(chain)
+                was_accepted = accepted
+                accepted = accepted or any(m["bot"] and (m["generating"] or
+                    not plain_chat_reply(m) and looks_like_accepted(m["text"])) for m in msgs)
+                if accepted and not was_accepted:
+                    log.info("doubao creation account=%s accepted=true references=%s", account, len(images))
+                    _emit_note_text(on_poll, "豆包：视频创作已受理，等待生成")
+                previous_reference_error = reference_error
+                reference_error = reference_error or creation_reference_error(msgs, bool(images))
+                if reference_error and not previous_reference_error:
+                    _emit_upstream_note(on_poll, dp, [reference_error])
                 for m in msgs:
                     if m["bot"] and m["vids"]:
                         vid = m["vids"][0]
                 if vid:
                     break
-                accepted = accepted or any(m["bot"] and (m["generating"] or
-                    not plain_chat_reply(m) and looks_like_accepted(m["text"])) for m in msgs)
+                if reference_error and not accepted:
+                    raise UpstreamReplyError("参考图不可用", reference_error,
+                                             generation_started=False, allow_account_retry=False)
+                if reference_error:
+                    _emit_note_text(on_poll, "豆包：参考图未被使用，只读取回已受理任务，不再确认或补做")
+                    time.sleep(poll)
+                    continue
                 latest = next((m for m in reversed(msgs) if m["bot"]), None)
                 if latest and latest["index"] <= max((m["index"] for m in msgs if not m["bot"]), default=-1):
                     latest = None
@@ -524,9 +655,41 @@ def generate_doubao_video(
                     seen_texts.append(text)
                     _emit_upstream_note(on_poll, dp, [text])
                     if not accepted and plain_chat_reply(m):
-                        raise UpstreamReplyError("视频技能未生效",
-                            f"{account} 豆包由普通对话助手回复，未进入视频创作；请核对视频技能请求参数。上游原文：{text[:1000]}",
-                            generation_started=False, allow_account_retry=False)
+                        label = reply_failure(text)
+                        if label in ("内容拒绝", "肖像保护", "内容审核", "版权侵权"):
+                            raise UpstreamReplyError(label, text[:1000],
+                                                     generation_started=False, allow_account_retry=False)
+                        if label == "需要补充信息":
+                            raise UpstreamReplyError(label, text[:1000],
+                                                     generation_started=False, allow_account_retry=False)
+                        if confirms or creation_confirmation:
+                            raise TimeoutError(
+                                f"{account} 确认回复被普通对话接走，保留原会话核对，未重复提交：{text[:1000]}")
+                        if any(row["creation"] or row["generating"] for row in msgs if row["bot"]):
+                            _emit_note_text(on_poll, "豆包：已有创作记录，继续查询原会话")
+                            continue
+                        if looks_like_paid_prompt(text, m["buttons"]):
+                            raise UpstreamReplyError("创作权限未确认", text[:1000],
+                                                     generation_started=False, allow_account_retry=False)
+                        if (wants_creation_confirmation(text) and not creation_confirmation
+                                and not any(row["creation"] or row["generating"] for row in msgs if row["bot"])):
+                            mismatch = confirm_mismatch(text, duration=duration, model_display=display, ratio=ratio)
+                            if mismatch:
+                                raise UpstreamReplyError("参数不符", mismatch, generation_started=False,
+                                                         allow_account_retry=False)
+                            _reply(dp, session, ctx, headers, conversation_id,
+                                   model=upstream_model, duration=duration, ratio=ratio)
+                            creation_confirmation = True
+                            _emit_note_text(on_poll, "豆包：已确认视频创作，等待创作回执")
+                            continue
+                        # A completed answer offering only text has no active video task. Give
+                        # a handoff one extra read, then temporarily pause this account.
+                        if m["index"] not in plain_seen:
+                            plain_seen.add(m["index"])
+                            handled.discard(m["index"])
+                            continue
+                        raise VideoSkillUnavailableError(
+                            f"{account} 豆包由普通对话助手回复，未进入视频创作。上游原文：{text[:1000]}")
                     if looks_like_plan_unavailable(text):
                         raise DoubaoPlanUnavailableError(f"{account} 豆包套餐不支持创作：{text[:300]}")
                     if looks_like_model_locked(text):
@@ -544,9 +707,9 @@ def generate_doubao_video(
                         paid = True
                         _emit_note_text(on_poll, "豆包：免费额度已用完，已确认使用付费额度")
                         continue
-                    if confirms and not m["creation"] and m["agent_intention"] == "seed_main":
-                        raise PureApiError(
-                            f"{account} 豆包的确认被普通对话接走，视频创作没有开始（未生成、不扣额度）：{text[:160]}")
+                    if (confirms or creation_confirmation) and plain_chat_reply(m):
+                        raise TimeoutError(
+                            f"{account} 确认回复被普通对话接走，保留原会话核对，未重复提交：{text[:1000]}")
                     if looks_like_accepted(text):
                         accepted = True
                         wait = _wait_seconds_from_texts(dp, [text])
@@ -557,13 +720,13 @@ def generate_doubao_video(
                     if accepted and dp.looks_like_generation_failure(text):
                         raise UpstreamReplyError("上游生成失败", text[:1000], generation_started=True)
                     if looks_like_confirm_request(text) and not accepted:
-                        mismatch = confirm_mismatch(text, duration=duration, model_display=display)
+                        mismatch = confirm_mismatch(text, duration=duration, model_display=display, ratio=ratio)
                         if mismatch:
                             if "模型" in mismatch:
                                 raise DoubaoModelLockedError(f"{account} {mismatch}，未确认（不扣额度）")
                             raise UnsupportedDurationError(f"{mismatch}，未确认（不扣额度）")
                         if confirms >= 2:
-                            raise PureApiError(f"{account} 豆包反复要求确认，放弃：{text[:200]}")
+                            raise TimeoutError(f"{account} 豆包反复要求确认，保留原会话核对：{text[:200]}")
                         _reply(dp, session, ctx, headers, conversation_id,
                                model=upstream_model, duration=duration, ratio=ratio)
                         confirms += 1
@@ -582,8 +745,8 @@ def generate_doubao_video(
                             raise UpstreamReplyError("上游在等待回复",
                                 f"豆包未开始生成，AI 判断失败（{responder.last_error}）：{text[:800]}", generation_started=False)
                 if not replied_any and time.time() - submitted_at > config.NO_ACK_SECONDS:
-                    raise AbnormalNoAckError(
-                        f"生视频过程中出现异常情况，请重试（豆包 {config.NO_ACK_SECONDS} 秒内没有任何回应）")
+                    raise TimeoutError(
+                        f"豆包 {config.NO_ACK_SECONDS} 秒内没有回应，保留原会话核对，未自动重发")
                 time.sleep(poll if accepted else min(poll, 5))
         if not vid:
             waited = int((time.time() - submitted_at) // 60)
@@ -592,18 +755,26 @@ def generate_doubao_video(
                 f"为避免重复扣额度不自动重提。豆包回执：{' | '.join(seen_texts)[-300:]}")
 
         import video_link
+        from work_reply import video_models
+        models = video_models(chain)
+        video_model = next((raw for raw in models
+                            if str((json.loads(raw).get("vid") or json.loads(raw).get("video_id") or "")) == str(vid)), "")
+        validation_error = "; ".join(filter(None, (
+            f"参考图未用于生成：{reference_error}" if reference_error else "",
+            video_ratio_error(video_model, ratio))))
         if video_link.enabled():
-            from work_reply import video_models
-            for vm_str in video_models(chain):
+            for vm_str in models:
                 vm = json.loads(vm_str)
                 if str(vm.get("vid") or vm.get("video_id") or "") != str(vid):
                     continue
                 linked = asyncio.run(video_link.from_model(vm_str, account, conversation_id))
                 if linked:
                     if clip_is_short(linked["video_duration"], duration):
-                        raise ShortClipError(f"{account} 豆包只给了 {linked['video_duration']:.1f} 秒成片（目标 {duration} 秒）")
+                        validation_error = "; ".join(filter(None, (validation_error,
+                            f"豆包实际生成 {linked['video_duration']:.1f} 秒（请求 {duration} 秒），已保留成片，未补做")))
                     _emit_note_text(on_poll, "豆包：视频已生成，高码率直链交付")
                     return {**linked, "duration": duration, "model": upstream_model, "pure_api": True,
+                            "validation_error": validation_error,
                             "site": sites.DOUBAO, "unwatermarked": bool(no_watermark),
                             "no_watermark_setting": no_watermark, "doubao_paid": paid,
                             "credits_used": None, "credits_left": None}
@@ -613,13 +784,12 @@ def generate_doubao_video(
         out_path = out_dir / f"{account}_{uuid.uuid4().hex[:12]}.mp4"
         try:
             saved, url, unwatermarked = _download(dp, session, ctx, conversation_id, vid, chain, out_path)
-        except PureApiError:
-            raise
         except Exception as exc:  # noqa: BLE001
-            raise PureApiError(f"{account} 下载失败: {str(exc)[:200]}") from exc
+            raise TimeoutError(f"{account} 视频已生成但交付失败，保留原会话取回，不重新生成：{redact_error(exc, limit=200)}") from None
         actual = _media_duration(saved)
         if clip_is_short(actual, duration):
-            raise ShortClipError(f"{account} 豆包只给了 {actual:.1f} 秒成片（目标 {duration} 秒），换号重试")
+            validation_error = "; ".join(filter(None, (validation_error,
+                f"豆包实际生成 {actual:.1f} 秒（请求 {duration} 秒），已保留成片，未补做")))
         return {
             "local_path": str(saved),
             "account": account,
@@ -633,6 +803,7 @@ def generate_doubao_video(
             "unwatermarked": bool(unwatermarked and no_watermark),
             "no_watermark_setting": no_watermark,
             "doubao_paid": paid,
+            "validation_error": validation_error,
             "credits_used": None,
             "credits_left": None,
         }
@@ -641,7 +812,8 @@ def generate_doubao_video(
 
 
 def fetch_conversation_video(cookie_state_path, conversation_id: str, *, proxy: str = "",
-                             output_dir: str | Path | None = None) -> dict:
+                             output_dir: str | Path | None = None, reference_count: int = 0,
+                             duration: int | None = None, ratio: str | None = None) -> dict:
     """超时任务取回：只查已有会话，出片了就下载；**不提交任何新请求、不回确认**。"""
     dp = _site()
     _load_state(Path(cookie_state_path))
@@ -649,6 +821,8 @@ def fetch_conversation_video(cookie_state_path, conversation_id: str, *, proxy: 
     try:
         chain = dp.fetch_single_chain(session, ctx, conversation_id)
         msgs = _messages(chain)
+        reference_error = creation_reference_error(msgs, bool(reference_count or
+                                                   any(m.get("references") for m in msgs if not m["bot"])))
         vid = next((m["vids"][0] for m in msgs if m["bot"] and m["vids"]), "")
         texts = [m["text"] for m in msgs if m["bot"] and m["text"]]
         detail = " | ".join(texts)[-300:]
@@ -657,7 +831,16 @@ def fetch_conversation_video(cookie_state_path, conversation_id: str, *, proxy: 
             out_dir.mkdir(parents=True, exist_ok=True)
             saved, _url, _ = _download(dp, session, ctx, conversation_id, vid, chain,
                                        out_dir / f"recovered_{uuid.uuid4().hex[:12]}.mp4")
+            from work_reply import video_models
+            vm = next((raw for raw in video_models(chain)
+                       if str(json.loads(raw).get("vid") or json.loads(raw).get("video_id") or "") == vid), "")
+            actual = _media_duration(saved) if duration else None
+            errors = [f"参考图未用于生成：{reference_error}" if reference_error else "",
+                      video_ratio_error(vm, ratio)]
+            if duration and clip_is_short(actual, duration):
+                errors.append(f"豆包实际生成 {actual:.1f} 秒（请求 {duration} 秒），已保留成片，未补做")
             return {"status": "succeeded", "local_path": str(saved), "final": False,
+                    "validation_error": "; ".join(filter(None, errors)),
                     "detail": detail, "conversation_id": conversation_id}
         latest = next((m for m in reversed(msgs) if m["bot"]), {})
         last = latest.get("text", "")
@@ -667,7 +850,8 @@ def fetch_conversation_video(cookie_state_path, conversation_id: str, *, proxy: 
         if plain_chat:
             plan_unavailable = False
         # 停在确认 / 付费追问 / 模型锁 / 额度 / 拒稿上：没人回话就永远不会出片（也没扣额度），不用再盯
-        final = bool(last) and (plain_chat or plan_unavailable or looks_like_model_locked(last) or looks_like_quota_exhausted(last)
+        final = bool(reference_error) and not any(m["generating"] for m in msgs if m["bot"])
+        final = final or bool(last) and (plain_chat or plan_unavailable or looks_like_model_locked(last) or looks_like_quota_exhausted(last)
                                 or looks_like_paid_prompt(last) or dp.looks_like_content_refusal(last)
                                 or (looks_like_confirm_request(last) and not looks_like_accepted(last)))
         return {"status": "failed" if final else "pending", "local_path": "", "final": final,

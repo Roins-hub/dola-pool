@@ -19,9 +19,12 @@ BOT_ID = "7338286299411103781"
 IMAGEX_REGION = "cn-north-1"
 UPLOAD_SCENE_ID = "5"          # 豆包网页 prepare_upload 的 scene_id（dola 是 "4"）
 REGION = "CN"
-PC_VERSION = "3.41.4"
+PC_VERSION = "3.45.5"
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0")
 # 签名器页面环境：域名 / aid；/creativity（无水印下载接口）也要签
-SIGNER_ENV = {"BDMS_HOST": HOST, "BDMS_AID": AID, "BDMS_EXTRA_PATHS": "/creativity"}
+SIGNER_ENV = {"BDMS_HOST": HOST, "BDMS_AID": AID, "BDMS_EXTRA_PATHS": "/creativity",
+              "BDMS_USER_AGENT": USER_AGENT}
 
 _LOCK = threading.Lock()
 _MODULE = None
@@ -44,6 +47,7 @@ def load():
         module.BASE = BASE
         module.AID = AID
         module.BOT_ID = BOT_ID
+        module.UA = USER_AGENT
         module.IMAGEX_REGION = IMAGEX_REGION
         module.UPLOAD_SCENE_ID = UPLOAD_SCENE_ID
         module.SIGNER_ENV = dict(SIGNER_ENV)

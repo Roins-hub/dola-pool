@@ -56,6 +56,12 @@ class AIAccountUnavailableError(UpstreamReplyError):
         super().__init__(category, reply, generation_started=False)
 
 
+class VideoSkillUnavailableError(UpstreamReplyError):
+    """A finished plain-chat reply explicitly confirms video creation never started."""
+    def __init__(self, reply):
+        super().__init__("视频技能未生效", reply, generation_started=False)
+
+
 class WorkVideoMismatchError(UpstreamReplyError):
     """工作模式已经产出视频，但实际时长或条数不符；保留成片，停止补做与换号。"""
     def __init__(self, reply, result):

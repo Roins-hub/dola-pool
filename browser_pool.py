@@ -16,7 +16,7 @@ from pathlib import Path
 
 from generation_errors import (
     AIAccountUnavailableError, CreditError, PreSubmissionUploadError, PreSubmissionParametersError, RegionRestrictedError,
-    UploadRouteError, UpstreamGenerationFailed, UpstreamReplyError, WorkQuotaError, portrait_refusal,
+    UploadRouteError, UpstreamGenerationFailed, UpstreamReplyError, VideoSkillUnavailableError, WorkQuotaError, portrait_refusal,
 )
 from account_transport import diagnose_upload_route, egress_alive, redact_error
 from video_worker_ui import (
@@ -1680,7 +1680,8 @@ class BrowserPool:
         直接导致参考图上传失败（NewConnectionError）。浏览器路径不走这里，
         见 browser.proxy_kwargs_for() → 它用的仍是 socks5://。
         """
-        return proxy_store.requests_proxy_url(name)
+        from account_transport import requests_proxy
+        return requests_proxy(name) or ""
 
     def _has_bound_proxy(self, name: str) -> bool:
         try:
@@ -1693,12 +1694,15 @@ class BrowserPool:
 
         返回 (能用, 说明)。说明为空表示一切正常。静态代理换不了，只能本轮跳过。
         """
+        if config.ISOLATE_SHARED_EGRESS and not self._has_bound_proxy(name):
+            return False, "账号没有启用的绑定代理，严格隔离模式禁止提交"
         if not config.EGRESS_PRECHECK or not self._has_bound_proxy(name):
             return True, ""      # 只检测绑定了代理的号；未绑定的走全局默认代理，换不了也不归它管
         try:
-            check = await asyncio.to_thread(egress_alive, name)
-        except Exception:        # 严格隔离下缺可用节点等：交给原有流程报错，这里不拦
-            return True, ""
+            kwargs = {"site": sites.DOUBAO} if self.site_of(name) == sites.DOUBAO else {}
+            check = await asyncio.to_thread(egress_alive, name, **kwargs)
+        except Exception as exc:
+            return False, f"账号代理不可用（{type(exc).__name__}），尚未提交生成"
         if check["ok"]:
             return True, ""
         detail = check["detail"]
@@ -1708,7 +1712,7 @@ class BrowserPool:
             rotated = await asyncio.to_thread(self.rotate_account_ip, name, f"出口不通自动换 IP（{detail}）", True)
             if rotated.get("rotated"):
                 print(f"[pool] {name} 代理出口连不上（{detail}）→ 已自动换 IP，重新检测", flush=True)
-                again = await asyncio.to_thread(egress_alive, name)
+                again = await asyncio.to_thread(egress_alive, name, **kwargs)
                 if again["ok"]:
                     return True, f"原出口连不上（{detail}），已自动换 IP"
                 detail = f"换 IP 后仍连不上：{again['detail']}"
@@ -1968,7 +1972,8 @@ class BrowserPool:
         meta = self._meta(name)
         return bool(meta and meta["source"] == "cookie")
 
-    def fetch_conversation_video(self, account: str, conversation_id: str) -> dict:
+    def fetch_conversation_video(self, account: str, conversation_id: str, *, reference_count: int = 0,
+                                 duration: int | None = None, ratio: str | None = None) -> dict:
         """超时任务自动取回：用该号（含它的代理）查一次已有会话，出片了就下载。线程里调用。"""
         state = self._pure_state(account)
         if state is None:
@@ -1976,7 +1981,8 @@ class BrowserPool:
         if self.site_of(account) == sites.DOUBAO:
             from doubao_gen import fetch_conversation_video as fetch_doubao
             return fetch_doubao(state, conversation_id, proxy=self._proxy_url_for(account),
-                                output_dir=config.DOWNLOAD_DIR)
+                                output_dir=config.DOWNLOAD_DIR, reference_count=reference_count,
+                                duration=duration, ratio=ratio)
         from pure_api_gen import fetch_conversation_video
         return fetch_conversation_video(state, conversation_id,
                                         proxy=self._proxy_url_for(account),
@@ -1995,14 +2001,17 @@ class BrowserPool:
         return self._claim_for(account, cost, result or {})
 
     async def fetch_work_conversation_video(self, account: str, conversation_id: str, *,
-                                            model="seedance-2.0", duration=WORK_DURATION, video_count=1) -> dict:
+                                            model="seedance-2.0", duration=WORK_DURATION, video_count=1,
+                                            reference_count=0, ratio=None) -> dict:
         """恢复查询与生成共用全局并发和账号锁，浏览器名额由 worker 管理。"""
         from video_worker_agent import fetch_work_conversation_video
         async with self.semaphore:
             async with self._use_account(account, "recovering"):
                 self._phases[account] = "只读检查超时原会话"
                 return await self._web_playable(await fetch_work_conversation_video(
-                    account, conversation_id, model=model, duration=duration, video_count=video_count))
+                    account, conversation_id, model=model, duration=duration, video_count=video_count,
+                    **({"ratio": ratio} if ratio else {}),
+                    **({"reference_count": reference_count} if reference_count else {})))
 
     def is_pure_account(self, name: str) -> bool:
         """这个号能不能走纯 API（cookie 来源 + 有 cookie_state.json）。
@@ -2060,6 +2069,10 @@ class BrowserPool:
                     on_balance=on_balance,
                     reference_image_paths=reference_image_paths,
                 )
+                if result.get("validation_error"):
+                    from generation_errors import WorkVideoMismatchError
+                    self._claim_for(account, self._duration_cost(model, duration), result)
+                    raise WorkVideoMismatchError(result["validation_error"], await self._web_playable(result))
                 return await self._web_playable(result)
         pure_cookie = (pure_state is not None and self._is_cookie_source(account)
                        and not is_cloak_cookie_account(account))
@@ -2073,11 +2086,12 @@ class BrowserPool:
                 reference_image_paths=reference_image_paths, duration=duration, model=model, video_count=video_count)
             if site == sites.DOLA:
                 self._mark_work_blocked(account, None, WORK_QUOTA_NOTE)
-            if result.get("duration_error"):
+            if result.get("duration_error") or result.get("validation_error"):
                 if site == sites.DOUBAO:
                     self._claim_for(account, self._duration_cost(model, duration), result)
                 from generation_errors import WorkVideoMismatchError
-                raise WorkVideoMismatchError(result["duration_error"], await self._web_playable(result))
+                raise WorkVideoMismatchError(result.get("validation_error") or result["duration_error"],
+                                             await self._web_playable(result))
             return await self._web_playable(result)
         if pure_cookie:
             # cookie 号：纯 API 出片；失败抛真实错误，不再回退浏览器
@@ -2236,7 +2250,7 @@ class BrowserPool:
             except DoubaoPlanUnavailableError as exc:
                 self._mark_abnormal(account, str(exc))
                 return {"ok": False, "account": account, "error": str(exc)[:500]}
-            except AIAccountUnavailableError as exc:
+            except (AIAccountUnavailableError, VideoSkillUnavailableError) as exc:
                 self._mark_abnormal(account, str(exc))
                 return {"ok": False, "account": account, "error": str(exc)[:1500]}
             except DoubaoQuotaError as exc:
@@ -2248,7 +2262,7 @@ class BrowserPool:
                     result = exc.result
                     local = result.get("local_path")
                     return {**result, "ok": False, "account": account, "error": str(exc),
-                            "video_url": f"{config.PUBLIC_BASE}/videos/{Path(local).name}" if local else ""}
+                            "video_url": f"{config.PUBLIC_BASE}/videos/{Path(local).name}" if local else result.get("video_url", "")}
                 if "登录态失效" in str(exc):
                     self._set_risk(account, str(exc))
                 else:
@@ -2329,13 +2343,18 @@ class BrowserPool:
         duplicates = self._duplicate_owners()
         for name in self.accounts:
             meta = self._meta(name)
+            try:
+                proxy = self._proxy_url_for(name)
+                route_available = True
+            except RuntimeError:
+                proxy, route_available = "", False
             cfg_list.append(_PoolAccountConfig(
                 id=name,
                 state_file=Path(self.accounts_dir) / name / "state.json",
                 profile_dir=str(Path(self.accounts_dir) / name),
-                proxy=self._proxy_url_for(name),
+                proxy=proxy,
                 egress_key=self._egress_for(name),
-                enabled=bool(meta["scheduling"] if meta else True) and name not in duplicates,
+                enabled=bool(meta["scheduling"] if meta else True) and name not in duplicates and route_available,
                 weight=self._meta_weight(name),
             ))
         engine = _PoolEngine(
@@ -2602,6 +2621,7 @@ class BrowserPool:
             # max_attempts <= 0：不限次数，只要没到 deadline 就一轮轮换号重试。
             unlimited = max_attempts <= 0
             generation_retries = 0     # 已提交且上游确认失败后的换号重提次数
+            creation_retries = 0
             portrait_retries = 0       # 肖像保护拒绝（未开始生成）后的换号重提次数
             ai_retry_state = _ai_retry_state if _ai_retry_state is not None else {"ai_switches": 0}
             last_note = [""]
@@ -2643,6 +2663,7 @@ class BrowserPool:
                 short_seen = 0
                 non_pure: list[str] = []   # pair 单跳过的浏览器登录号（拼接只走纯 API）
                 busy_names: list[str] = []  # 能接单、但正被别的任务占着出片的号
+                missing_proxies: list[str] = []
                 candidates = self._ordered_candidates(allowed_groups)
                 for a in (self._work_order(candidates) if work_job else candidates):
                     if a["name"] in tried or a["name"] in (excluded_accounts or ()):
@@ -2678,6 +2699,9 @@ class BrowserPool:
                         if a["remaining"] < need:
                             short_seen += 1
                             continue
+                    if (config.ISOLATE_SHARED_EGRESS or account_work) and not self._has_bound_proxy(a["name"]):
+                        missing_proxies.append(a["name"])
+                        continue
                     # 两段拼接只在纯 API 路径实现（浏览器号会按 30 秒原样提交，拿不到片）
                     if pair_job and not self.is_pure_account(a["name"]):
                         non_pure.append(a["name"])
@@ -2881,6 +2905,14 @@ class BrowserPool:
                                 _on_ai_switch()
                             say(f"{account} {e} → 检查其他账号（AI 换号 {ai_retry_state['ai_switches']}/{dola_responder.AI_SWITCH_LIMIT}）")
                             last_err = e
+                        except VideoSkillUnavailableError as e:
+                            attempt_error = e
+                            self._mark_abnormal(account, str(e))
+                            if creation_retries >= 2 or not time_left():
+                                raise
+                            creation_retries += 1
+                            say(f"{account} 未进入视频创作，暂停派发并检查其他账号（{creation_retries}/2）")
+                            last_err = e
                         except UpstreamReplyError as e:
                             attempt_error = e
                             if not e.allow_account_retry:
@@ -2983,6 +3015,13 @@ class BrowserPool:
                         tried_order.append(account)
                         if not attempts_left() or not time_left():
                             break
+                if (not picked and missing_proxies and not throttle_wait and not waiting_possible
+                        and not temporary_reason and not group_wait):
+                    reason = f"账号缺少启用的绑定代理，尚未提交生成：{'、'.join(missing_proxies[:8])}；请在代理管理绑定后重试"
+                    if last_err is None:
+                        raise RuntimeError(reason)
+                    say(reason)
+                    break
                 if (not picked and short_seen and not throttle_wait and not waiting_possible and not temporary_reason
                         and not tried_order):
                     # 号都在、只是今日余额都不够这一单：等下去要等到明天额度重置，直接说清楚

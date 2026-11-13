@@ -325,6 +325,7 @@ class _WorkSession:
         self.skill_labels = []
         self.skill_reference = None
         self.thread_chains = {}
+        self.startup_resources = []
 
     def watch(self):
         def on_request(request):
@@ -343,11 +344,25 @@ class _WorkSession:
             if parts.path.endswith("/chat/completion"):
                 self.send_error = str(request.failure or "连接失败")[:120]
             host = (parts.hostname or "").lower()
+            if (self.site == sites.DOUBAO and not self.sent
+                    and getattr(request, "resource_type", "") in ("script", "stylesheet")):
+                self.startup_resources = [*self.startup_resources[-3:],
+                    f"{host} 加载失败（{redact_error(request.failure or '连接失败', limit=80)}）"]
             if self.uploading and any(host == domain or host.endswith("." + domain)
                                       for domain in ("bytevcloudapi.com", "vodupload.com")):
                 self.upload_error = UploadRouteError(host, short_error(request.failure or "连接失败"),
                                                      stage="工作模式参考图")
         self.page.on("requestfailed", on_failed)
+
+        def on_finished(request):
+            if (self.site != sites.DOUBAO or self.sent
+                    or getattr(request, "resource_type", "") not in ("script", "stylesheet")):
+                return
+            elapsed = (request.timing or {}).get("responseEnd", 0)
+            if elapsed >= 10000:
+                host = urlsplit(request.url).hostname or ""
+                self.startup_resources = [*self.startup_resources[-3:], f"{host} 加载耗时 {elapsed / 1000:.1f} 秒"]
+        self.page.on("requestfinished", on_finished)
         self.page.on("response", self.read_skill_response)
         self.page.on("response", self.read_send_response)
 
@@ -448,17 +463,31 @@ class _WorkSession:
 
     async def open_chat(self):
         page = self.page
+        startup_error = ""
         for attempt in range(2):
             await page.goto(self.base + "/chat/", timeout=120000, wait_until="domcontentloaded")
             for _ in range(45):
                 raise_if_region_restricted(page, self.account)
+                if self.site == sites.DOUBAO:
+                    unavailable = page.get_by_text("该页面暂时不可用", exact=True)
+                    if await unavailable.count() and await unavailable.first.is_visible():
+                        startup_error = "豆包工作页面初始化超时或异常，网页提示“该页面暂时不可用”；请检查账号代理到豆包静态资源域名的连接"
+                        break
                 if await page.locator(VISIBLE_COMPOSER).count():
                     break
                 await page.wait_for_timeout(1000)
             else:
                 if attempt:
-                    raise PreSubmissionParametersError(f"{self.account} 工作模式输入框没有加载出来")
+                    detail = "；资源诊断：" + " | ".join(self.startup_resources) if self.startup_resources else ""
+                    raise PreSubmissionParametersError(f"{self.account} 工作模式输入框没有加载出来{detail}")
                 emit_feedback(self.on_poll, progress="工作模式：页面加载未完成，重新打开页面")
+                continue
+            if startup_error:
+                if attempt:
+                    detail = "；资源诊断：" + " | ".join(self.startup_resources) if self.startup_resources else ""
+                    raise PreSubmissionParametersError(f"{self.account} {startup_error}，尚未提交生成{detail}")
+                emit_feedback(self.on_poll, progress="豆包工作页面初始化异常，重新打开页面")
+                startup_error = ""
                 continue
             break
         # 账号语言和页面语言不一致时页面会重载一次，等它稳定再操作
@@ -467,6 +496,18 @@ class _WorkSession:
         if await self.logged_out():
             raise LoginExpiredError(f"{self.account} 登录态失效，工作模式未发送")
         await dismiss_popups(page)
+
+    def check_references(self, messages, *, has_video=False):
+        if self.site != sites.DOUBAO or not self.attachments:
+            return
+        from doubao_gen import reference_failure
+        self.reference_error = getattr(self, "reference_error", "") or next(
+            (reference_failure(reply_text(m)) for m in reversed(messages)
+             if str(m.get("user_type")) == "2" and reply_finished(m) and reference_failure(reply_text(m))), "")
+        if self.reference_error and not has_video and not any(
+                generation_started(m) or background_task_pending(m) for m in messages):
+            raise UpstreamReplyError("参考图不可用", self.reference_error,
+                                     generation_started=False, allow_account_retry=False)
 
     async def enter_work_mode(self):
         if self.site == sites.DOUBAO:
@@ -840,7 +881,7 @@ class _WorkSession:
         if looks_like_paid_prompt(text) or paid:
             raise UpstreamReplyError("需要付费确认", text[-1200:], generation_started=False, allow_account_retry=False)
         if asks_to_confirm(text):
-            mismatch = confirm_mismatch(text, duration=self.duration, model_display=model_label(self.model))
+            mismatch = confirm_mismatch(text, duration=self.duration, model_display=model_label(self.model), ratio=self.ratio)
             if mismatch:
                 raise UpstreamReplyError("上游参数不符", mismatch + "；" + text[-1000:],
                                          generation_started=False, allow_account_retry=False)
@@ -1043,6 +1084,10 @@ class _WorkSession:
                 from pure_api_gen import clip_is_short
                 if clip_is_short(linked["video_duration"], self.duration):
                     linked["duration_error"] = f"工作模式实际生成 {linked['video_duration']:.1f} 秒（请求原生 {self.duration} 秒），已保留成片，未拼接或补做"
+                from doubao_gen import video_ratio_error
+                linked["validation_error"] = "; ".join(filter(None, (
+                    f"参考图未用于生成：{self.reference_error}" if getattr(self, "reference_error", "") else "",
+                    video_ratio_error(vm_str, self.ratio))))
                 return linked
             try:
                 vm = json.loads(vm_str)
@@ -1066,6 +1111,12 @@ class _WorkSession:
                 result["video_duration"] = actual
                 if clip_is_short(actual, self.duration):
                     result["duration_error"] = f"工作模式实际生成 {actual:.1f} 秒（请求原生 {self.duration} 秒），已保留成片，未拼接或补做"
+        if getattr(self, "reference_error", ""):
+            result["validation_error"] = f"参考图未用于生成：{self.reference_error}"
+        if self.site == sites.DOUBAO:
+            from doubao_gen import video_ratio_error
+            result["validation_error"] = "; ".join(filter(None, (result.get("validation_error"),
+                                                                video_ratio_error(vm_str, self.ratio))))
         return result
 
     async def deliver_all(self, found, conversation_id):
@@ -1113,6 +1164,8 @@ class _WorkSession:
             unread = 0
             emit_feedback(self.on_poll, progress="工作模式：助手处理中")
             found = self.find_videos(chain)
+            self.check_references([m for m in [*chain_messages(chain), *self.thread_messages()]
+                                   if str(m.get("user_type")) == "2"], has_video=bool(found))
             if found:
                 self.found_videos = found
             if len(found) >= self.video_count:
@@ -1144,6 +1197,9 @@ class _WorkSession:
             if delegated:
                 emit_feedback(self.on_poll, progress="豆包工作模式：后台任务处理中，正在检查视频结果"
                               if self.site == sites.DOUBAO else "工作模式：后台任务处理中")
+            if getattr(self, "reference_error", ""):
+                emit_feedback(self.on_poll, progress="豆包工作模式：参考图未被使用，只读取回已受理任务，不再确认或补做")
+                continue
             if finished and any(tools_ran(m) for m in bots) and not delegated:
                 if stable >= SETTLED_POLLS:
                     reply = reply_text(latest)[-300:]
@@ -1338,9 +1394,12 @@ async def generate_work_video(account: str, prompt: str, ratio: str = None, *,
 
 
 async def fetch_work_conversation_video(account: str, conversation_id: str, *, on_poll=None,
-                                        duration=WORK_DURATION, model="seedance-2.0", video_count=1) -> dict:
+                                        duration=WORK_DURATION, model="seedance-2.0", video_count=1,
+                                        reference_count=0, ratio=None) -> dict:
     """只读已有会话，不发送提示词、不代答、不创建新会话。"""
-    async with _work_browser(account, on_poll, duration=duration, model=model, video_count=video_count) as session:
+    async with _work_browser(account, on_poll, duration=duration, model=model, video_count=video_count,
+                             **({"ratio": ratio} if ratio else {}),
+                             **({"attachments": reference_count} if reference_count else {})) as session:
         _stage(account, on_poll, "工作模式：只读检查超时原会话")
         session.conversation_id = conversation_id
         chain = await session.read_chain(await session.chain_query(), conversation_id)
@@ -1350,6 +1409,10 @@ async def fetch_work_conversation_video(account: str, conversation_id: str, *, o
         found = session.find_videos(chain)
         bots = [m for m in chain_messages(chain) if str(m.get("user_type")) == "2"]
         latest = bots[-1] if bots else None
+        try:
+            session.check_references([*bots, *session.thread_messages()], has_video=bool(found))
+        except UpstreamReplyError as exc:
+            return {"status": "failed", "local_path": "", "final": True, "detail": str(exc)}
         if found:
             if len(found) < video_count and not (latest and reply_finished(latest)):
                 return pending

@@ -38,6 +38,7 @@ def test_empty_node_pool_cannot_fall_back_to_default(monkeypatch):
 
 @pytest.mark.parametrize("proxy_id", ["p1", None])
 def test_cookie_first_probe_uses_selected_proxy(tmp_path, monkeypatch, proxy_id):
+    import account_transport
     import config
     import cookie_login
     monkeypatch.chdir(tmp_path)
@@ -46,7 +47,7 @@ def test_cookie_first_probe_uses_selected_proxy(tmp_path, monkeypatch, proxy_id)
     events = []
     monkeypatch.setattr(selection, "bind_selected_proxy", lambda n, p: events.append(("bind", n, p)))
     expected_proxy = "http://chosen:8080" if proxy_id else "http://default:8080"
-    monkeypatch.setattr(selection.proxy_store, "requests_proxy_url", lambda n: expected_proxy)
+    monkeypatch.setattr(account_transport, "requests_proxy", lambda n: expected_proxy)
     def probe(state, proxy=""):
         assert events == ([("bind", "acc1", "p1")] if proxy_id else [])
         assert Path(state).exists()
@@ -56,6 +57,24 @@ def test_cookie_first_probe_uses_selected_proxy(tmp_path, monkeypatch, proxy_id)
     bundle = {"cookies": [{"name": "sessionid", "value": "test-only", "domain": ".doubao.com"}]}
     result = run(cookie_login.import_cookie_account("acc1", bundle, proxy_id=proxy_id))
     assert result["verified"] and events[-1] == ("probe", expected_proxy)
+
+
+def test_cookie_verification_without_bound_proxy_cannot_bypass_isolation(tmp_path, monkeypatch):
+    import account_transport
+    import config
+    import cookie_login
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "COOKIE_RUNTIME", "pure")
+    monkeypatch.setattr(config, "ISOLATE_SHARED_EGRESS", True)
+    monkeypatch.setattr(cookie_login, "browser_backend_available", lambda: (False, "test"))
+    monkeypatch.setattr(account_transport.proxy_store, "get_account_proxy", lambda name: None)
+    def forbidden(*args, **kwargs):
+        pytest.fail("缺绑定代理时不得请求登录验证接口")
+    monkeypatch.setitem(sys.modules, "doubao_gen", SimpleNamespace(probe_login=forbidden))
+    result = run(cookie_login.import_cookie_account("acc1", {"cookies": [
+        {"name": "sessionid", "value": "test-only", "domain": ".doubao.com"}]}))
+    assert not result["verified"] and "禁止直连" in result["verify_error"]
+    assert Path(result["cookie_state_file"]).exists()
 
 
 def test_batch_round_robin_skips_existing_cookie(monkeypatch):

@@ -125,7 +125,7 @@ class FakePool:
     def egress_throttle_remaining(self, name):
         return 0
 
-    def fetch_conversation_video(self, account, conv):
+    def fetch_conversation_video(self, account, conv, **requirements):
         self.calls += 1
         r = self.results.pop(0) if self.results else {"status": "timeout", "local_path": "", "final": False}
         if r.get("local_path"):

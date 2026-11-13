@@ -259,6 +259,8 @@ def test_resume_time_follows_the_stated_offset():
 def _work_pool(tmp_path, monkeypatch, names):
     browser_pool, bp, _ = _pool(tmp_path, monkeypatch, {n: n for n in names})
     monkeypatch.setattr(config, "WORK_15S_ENABLED", True)
+    monkeypatch.setattr(config, "EGRESS_PRECHECK", False)
+    bp._has_bound_proxy = lambda name: True
     for n in names:
         bp._conn.execute("UPDATE accounts_meta SET source='login' WHERE name=?", (n,))
     bp._conn.commit()

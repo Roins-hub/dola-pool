@@ -13,7 +13,7 @@ const path = require('path');
 
 const SCRIPT_DIR = __dirname;
 const BDMS_SDK_PATH = path.join(SCRIPT_DIR, 'bdms-sdk.js');
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
+const UA = process.env.BDMS_USER_AGENT || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
 
 const daemon = process.env.DOLA_SIGNER_DAEMON === '1' || process.argv.includes('--daemon');
 // 站点：默认 dola；豆包（doubao.com）由 pure_signer 用环境变量起一组独立进程

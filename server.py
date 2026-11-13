@@ -1057,7 +1057,10 @@ async def _recover_loop(task_id: str) -> None:
             res = None
             if pool.egress_throttle_remaining(account) <= 0:   # 出口被限流时这一轮先不查
                 try:
-                    res = await asyncio.to_thread(pool.fetch_conversation_video, account, conv)
+                    res = await asyncio.to_thread(pool.fetch_conversation_video, account, conv,
+                        **({"reference_count": len(_task_reference_thumbs(row.get("reference_thumbs"))),
+                            "duration": row.get("duration"), "ratio": row.get("ratio")}
+                           if sites.is_doubao_model(row.get("model")) else {}))
                 except Exception as exc:  # noqa: BLE001 - 单次查询失败下一轮再试
                     print(f"[recover] {task_id} 查询失败（稍后再试）: {str(exc)[:160]}", flush=True)
             if res and res.get("local_path"):
@@ -1068,10 +1071,12 @@ async def _recover_loop(task_id: str) -> None:
                     pool.claim_recovered(account, row.get("model") or "", row.get("duration"), res)
                 except Exception as exc:  # noqa: BLE001 - 记账失败不影响交付
                     print(f"[recover] {task_id} 记账失败: {exc}", flush=True)
-                store.update(task_id, status="completed", video_url=public_url, error="",
-                             failure_code=None, recover_state="recovered",
+                store.update(task_id, status="failed" if res.get("validation_error") else "completed",
+                             video_url=public_url, error=res.get("validation_error") or "",
+                             failure_code=None, recover_state="gave_up" if res.get("validation_error") else "recovered",
                              recovered_at=time.time(), finished_at=time.time(), **meta)
-                print(f"[recover] {task_id} 已自动取回 → {public_url}", flush=True)
+                outcome = "成片不符合请求，已保留原片" if res.get("validation_error") else "已自动取回"
+                print(f"[recover] {task_id} {outcome} → {public_url}", flush=True)
                 await asyncio.to_thread(_prune_downloads)
                 return
             if res and res.get("final"):
@@ -1202,7 +1207,10 @@ async def _recover_work_loop(task_id: str) -> None:
                     res = target.get("result") or await pool.fetch_work_conversation_video(
                         account, conv, model=row.get("model") or "seedance-2.0",
                         duration=work_reply.WORK_DURATION if pair else row.get("duration"),
-                        video_count=int(row.get("video_count") or 1))
+                        video_count=int(row.get("video_count") or 1),
+                        **({"reference_count": len(_task_reference_thumbs(row.get("reference_thumbs"))),
+                            "ratio": row.get("ratio")}
+                           if sites.is_doubao_model(row.get("model")) else {}))
                 if res.get("local_path") or res.get("video_url"):
                     res.update(account=account, conversation_id=conv, submitted_at=target.get("submitted_at"),
                                execution_mode=row.get("execution_mode") or "auto")
@@ -1210,9 +1218,9 @@ async def _recover_work_loop(task_id: str) -> None:
                         pool.claim_recovered(account, row.get("model") or "", row.get("duration"), res)
                         _record_work_recovery(task_id, target)
                         target["quota_claimed"] = True
-                    if res.get("duration_error"):
+                    if res.get("duration_error") or res.get("validation_error"):
                         fields = await _completion_fields(task_id, res, row.get("duration"), row.get("ratio"))
-                        store.update(task_id, status="failed", recover_state="gave_up", error=res["duration_error"],
+                        store.update(task_id, status="failed", recover_state="gave_up", error=res.get("validation_error") or res["duration_error"],
                                      finished_at=time.time(), **fields)
                         return
                     if row.get("status") == "completed":
@@ -1308,7 +1316,10 @@ async def _resume_pure_conversation(row: dict) -> None:
             res = None
             if pool.egress_throttle_remaining(account) <= 0:   # 出口被限流时这一轮先不查
                 try:
-                    res = await asyncio.to_thread(pool.fetch_conversation_video, account, conv)
+                    res = await asyncio.to_thread(pool.fetch_conversation_video, account, conv,
+                        **({"reference_count": len(_task_reference_thumbs(row.get("reference_thumbs"))),
+                            "duration": row.get("duration"), "ratio": row.get("ratio")}
+                           if sites.is_doubao_model(row.get("model")) else {}))
                 except Exception as exc:  # noqa: BLE001 - 单次查询失败下一轮再试
                     print(f"[resume] {task_id} 查询失败（稍后再试）: {str(exc)[:160]}", flush=True)
             store.update(task_id, last_poll_at=time.time())   # 心跳：别让看门狗当成卡住
@@ -1320,15 +1331,17 @@ async def _resume_pure_conversation(row: dict) -> None:
                 except Exception as exc:  # noqa: BLE001 - 记账失败不影响交付
                     print(f"[resume] {task_id} 记账失败: {exc}", flush=True)
                 got = float(meta.get("video_duration") or 0)
-                if duration > 15 and got and got < duration * 0.9:
+                if not res.get("validation_error") and duration > 15 and got and got < duration * 0.9:
                     # 30 秒单原会话只出了半截：照实失败（不再补段，免得重启又多扣点）
                     store.update(task_id, status="failed", queue_note="", finished_at=time.time(),
                                  error=f"服务重启后取回的原会话成片只有 {got:.1f} 秒，不足 {duration} 秒")
                     return
                 public_url = f"{config.PUBLIC_BASE}/videos/{Path(res['local_path']).name}"
-                store.update(task_id, status="completed", video_url=public_url, error="",
+                store.update(task_id, status="failed" if res.get("validation_error") else "completed",
+                             video_url=public_url, error=res.get("validation_error") or "",
                              queue_note="", last_poll_at=time.time(), finished_at=time.time(), **meta)
-                print(f"[resume] {task_id} 原会话出片 → {public_url}", flush=True)
+                outcome = "成片不符合请求，已保留原片" if res.get("validation_error") else "原会话出片"
+                print(f"[resume] {task_id} {outcome} → {public_url}", flush=True)
                 await asyncio.to_thread(_prune_downloads)
                 return
             if res and res.get("final"):
@@ -3641,8 +3654,11 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
                 TEST_JOBS[task_id]["result"] = {**result, "video_url": fields["video_url"]}
         else:
             status = "风控" if _is_risk_error(err) else "failed"
-            if result.get("local_path"):
-                store.update(task_id, **await _completion_fields(task_id, result, duration, ratio))
+            if result.get("local_path") or result.get("delivery") == "link":
+                fields = await _completion_fields(task_id, result, duration, ratio)
+                store.update(task_id, **fields)
+                if result.get("delivery") == "link":
+                    TEST_JOBS[task_id]["result"] = {**result, "video_url": fields["video_url"]}
             store.update(task_id, status=status, error=failure_text.summarize(err),
                          finished_at=time.time())
             if result.get("recoverable"):

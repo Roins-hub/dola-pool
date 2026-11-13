@@ -219,7 +219,7 @@ class _FakeDP:
         return Path(path)
 
 
-def _gen(monkeypatch, tmp_path, dp, model="doubao-seedance-2.0-mini", duration=5):
+def _gen(monkeypatch, tmp_path, dp, model="doubao-seedance-2.0-mini", duration=5, **kwargs):
     import doubao_gen
     state = tmp_path / "cookie_state.json"
     state.write_text(json.dumps({"cookies_list": [{"name": "sessionid", "value": "s", "domain": ".doubao.com"}],
@@ -230,7 +230,7 @@ def _gen(monkeypatch, tmp_path, dp, model="doubao-seedance-2.0-mini", duration=5
     monkeypatch.setattr(doubao_gen, "_media_duration", lambda _p: 5.05)
     return doubao_gen.generate_doubao_video(
         account="d1", prompt="x", ratio="16:9", duration=duration, model=model,
-        cookie_state_path=state, output_dir=tmp_path)
+        cookie_state_path=state, output_dir=tmp_path, **kwargs)
 
 
 def test_flow_confirm_then_paid_then_video(monkeypatch, tmp_path):
@@ -287,8 +287,7 @@ def test_confirm_taken_by_plain_chat_ends_without_waiting(monkeypatch, tmp_path)
     plain = {"agent_name": "豆包", "agent_intention": "seed_main"}
     dp = _FakeDP([(0, CONFIRM, [], {"agent_name": "Agent-Creation", "use_creation": "1"}),
                   (1, "好的，已确认，开始生成这个视频，稍等片刻，视频很快就出来啦。", [], plain)])
-    from generation_errors import UpstreamReplyError
-    with pytest.raises(UpstreamReplyError, match="普通对话"):
+    with pytest.raises(TimeoutError, match="普通对话"):
         _gen(monkeypatch, tmp_path, dp)
     assert dp.replies == ["确认生成"]
 
@@ -398,6 +397,8 @@ def test_dispatch_routes_by_site_and_tier(tmp_path, monkeypatch):
 def test_auto_dispatch_uses_cookie_account_kind_for_doubao_route(
         tmp_path, monkeypatch, kind, requested, expected_work):
     _browser_pool, bp = _pool(tmp_path, monkeypatch, dola=(), doubao=("db1",))
+    monkeypatch.setattr(config, "EGRESS_PRECHECK", False)
+    bp._has_bound_proxy = lambda name: True
     state = Path(bp.accounts_dir) / "db1" / "cookie_state.json"
     state.write_text(json.dumps({"cookies_list": [
         {"name": "sessionid", "value": "db1", "domain": ".doubao.com"},

@@ -529,6 +529,7 @@ def test_readonly_worker_fetch_never_sends_or_answers(monkeypatch):
             return video()
 
         yield SimpleNamespace(chain_query=query, read_chain=read, find_videos=agent.video_models,
+                              check_references=lambda *args, **kwargs: None, thread_messages=lambda: [],
                               deliver_all=lambda found, conv: deliver(account, found[0], conv, on_poll))
 
     async def deliver(account, vm, conv, poll):

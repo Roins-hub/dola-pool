@@ -460,6 +460,8 @@ def base_params(ctx: dict[str, str], include_fp: bool = False, extra: dict[str, 
         "samantha_web", "web_platform", "use-olympus-account", "web_tab_id",
     ]
     params = {k: str(ctx.get(k, "")) for k in keys}
+    if SITE == "doubao":
+        params["tz_name"] = "Asia/Shanghai"
     if include_fp:
         params["fp"] = ctx["fp"]
     if extra:
@@ -822,9 +824,17 @@ def resolve_session_proxy(proxy: str = "", *, login_pure: bool = False, cdp_url:
 
 def apply_state_to_ctx(ctx: dict[str, str], state: dict[str, Any]) -> None:
     saved = state.get("ctx") if isinstance(state.get("ctx"), dict) else {}
-    for k in ("fp", "web_id", "tea_uuid"):
+    for k in ("fp", "web_id", "tea_uuid", "device_id"):
         if saved.get(k):
             ctx[k] = str(saved[k])
+    cookies = state.get("cookies_list") or [dict(v, name=k) for k, v in (state.get("cookies") or {}).items()
+                                             if isinstance(v, dict)]
+    cookie_fp = next((str(c.get("value")) for c in cookies
+                      if c.get("name") == "s_v_web_id" and c.get("value")
+                      and (str(c.get("domain") or "").lstrip(".") == SITE_HOST
+                           or str(c.get("domain") or "").endswith("." + SITE_HOST))), "")
+    if cookie_fp:
+        ctx["fp"] = cookie_fp
 
 
 def apply_anon_id_to_ctx(ctx: dict[str, str], data: dict[str, Any]) -> None:
@@ -1070,8 +1080,9 @@ def proxy_dict(proxy: str = "") -> dict[str, str] | None:
 def ajax_headers() -> dict[str, str]:
     match = re.search(r"(?:Chrome|HeadlessChrome)/(\d+)", UA)
     chrome_major = match.group(1) if match else "149"
+    brand = "Microsoft Edge" if "Edg/" in UA else "Google Chrome"
     return {
-        "sec-ch-ua": f'"Google Chrome";v="{chrome_major}", "Chromium";v="{chrome_major}", "Not)A;Brand";v="24"',
+        "sec-ch-ua": f'"{brand}";v="{chrome_major}", "Chromium";v="{chrome_major}", "Not)A;Brand";v="24"',
         "sec-ch-ua-mobile": "?0",
         "sec-ch-ua-platform": '"Windows"',
         "sec-fetch-dest": "empty",
@@ -2039,7 +2050,8 @@ def parse_sse(resp: requests.Response, timeout_sec: int) -> tuple[str, str, str,
             elif line.startswith("data:"):
                 data_lines.append(line[5:].strip())
     except requests.exceptions.RequestException as exc:
-        log(f"   SSE stream stopped early after {len(events)} events: {str(exc).replace(chr(10), ' ')[:200]}")
+        detail = type(exc).__name__ if SITE == "doubao" else str(exc).replace(chr(10), " ")[:200]
+        log(f"   SSE stream stopped early after {len(events)} events: {detail}")
     flush_event()
     return conv_id, error, error_code, events
 
@@ -2384,7 +2396,8 @@ def submit_chat_completion(
     try:
         fetch_recent_conversations(session, ctx, referer_id)
     except Exception as exc:
-        log(f"   recent_conv warning: {str(exc).replace(chr(10), ' ')[:300]}")
+        detail = type(exc).__name__ if SITE == "doubao" else str(exc).replace(chr(10), " ")[:300]
+        log(f"   recent_conv warning: {detail}")
 
     log(f"   Posting chat/completion for {mode_label} step")
     if need_create:
@@ -2393,7 +2406,7 @@ def submit_chat_completion(
         log(f"   chat target: existing_chat conversation_id={conversation_id}, section_id={section_id}, last_message_index={last_message_index}")
     response: requests.Response | BrowserSseResponse | None = None
     last_error = ""
-    max_attempts = 4
+    max_attempts = 1 if SITE == "doubao" else 4
     retry_statuses = {500, 502, 503, 504}
     cdp = get_login_cdp(session)
     for attempt in range(1, max_attempts + 1):
@@ -2443,6 +2456,8 @@ def submit_chat_completion(
                     timeout=(30, max(10, min(max(int(timeout_sec), 10), 300))),
                 )
         except requests.exceptions.RequestException as exc:
+            if SITE == "doubao":
+                raise TimeoutError(f"豆包视频提交结果待核对（{type(exc).__name__}），未自动重发") from None
             last_error = str(exc).replace(chr(10), " ")[:800]
             if attempt < max_attempts:
                 wait_s = min(2 ** attempt, 10)
@@ -2451,6 +2466,8 @@ def submit_chat_completion(
                 continue
             raise DolaError(f"chat/completion request failed after {max_attempts} attempts: {last_error}") from exc
         except Exception as exc:
+            if SITE == "doubao":
+                raise TimeoutError(f"豆包视频提交结果待核对（{type(exc).__name__}），未自动重发") from None
             last_error = str(exc).replace(chr(10), " ")[:800]
             if attempt < max_attempts:
                 wait_s = min(2 ** attempt, 10)
@@ -2470,6 +2487,10 @@ def submit_chat_completion(
 
     if response is None:
         raise DolaError(f"chat/completion request failed: {last_error or 'no response'}")
+    if SITE == "doubao" and response.status_code >= 500:
+        status = response.status_code
+        response.close()
+        raise TimeoutError(f"豆包视频提交返回 HTTP {status}，结果待核对，未自动重发")
     if response.status_code >= 400:
         try:
             body_preview = response.text[:800]
