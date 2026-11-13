@@ -57,14 +57,57 @@ openTestGen('acc153');
 assert(rendered.includes('value="doubao-seedance-2.0-fast" selected'));
 assert(rendered.includes('value="auto" disabled'));
 assert(rendered.includes('value="work" selected'));
+assert(rendered.includes('执行方式'));
+assert(rendered.includes('本次任务的视频条数'));
 assert(rendered.includes('<option value="15" selected>15</option>'));
 allAccounts.push({name:'acc154',site:'doubao',doubao_account_type:'personal'});
 openTestGen('acc154');
 assert(rendered.includes('value="doubao-seedance-2.0-mini" selected'));
-assert(rendered.includes('value="auto" selected'));
-assert(rendered.includes('value="work" disabled'));
+assert(!rendered.includes('执行方式'));
+assert(!rendered.includes('id="tg_mode"'));
+assert(!rendered.includes('本次任务的视频条数'));
+assert(!rendered.includes('id="tg_count"'));
+allAccounts.push({name:'acc155',site:'doubao',doubao_account_type:''});
+openTestGen('acc155');
+assert(!rendered.includes('执行方式'));
+assert(!rendered.includes('本次任务的视频条数'));
 """
     subprocess.run([node],input=script,text=True,encoding='utf8',capture_output=True,check=True,timeout=15)
+
+
+def test_personal_doubao_submission_defaults_to_auto_and_one_video():
+    node=shutil.which('node')
+    if not node: pytest.skip('node required')
+    html=(Path(__file__).resolve().parents[1]/'web/index.html').read_text(encoding='utf8')
+    start=html.index('const TEST_GEN_DURATIONS=')
+    end=html.index('async function pollTestGen(taskId,name)',start)
+    code=html[start:end]
+    script=r"""
+const assert=require('assert'),calls=[];
+const fields={
+  '#tg_prompt':{value:'湖面白鹭'},
+  '#tg_model':{value:'doubao-seedance-2.0-mini'},
+  '#tg_duration':{value:'5',innerHTML:''},
+  '#tg_ratio':{value:'16:9'},
+  '#tg_hint':{innerHTML:''},
+  '#tg_btn':{disabled:false},
+  '#tg_status':{textContent:'',style:{}}
+};
+const q=selector=>fields[selector]||null;
+const api=async(_path,options)=>{calls.push(options.body);return {task_id:'test_task'}};
+const pollTestGen=()=>{};
+"""+code+r"""
+(async()=>{
+  syncTestGenDurations();
+  assert(fields['#tg_duration'].innerHTML.includes('value="5"'));
+  await submitTestGen('acc154');
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].execution_mode,'auto');
+  assert.equal(calls[0].video_count,1);
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+    result=subprocess.run([node],input=script,text=True,encoding='utf8',capture_output=True,timeout=15)
+    assert result.returncode==0,result.stderr
 
 
 def test_work_mode_option_only_disables_dola_25():

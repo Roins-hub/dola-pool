@@ -2348,7 +2348,7 @@ function openTestGen(name){
   stopTestGenPoll();
   const account=allAccounts.find(a=>a.name===name)||{};
   const isDoubao=account.site==='doubao',workOnly=isDoubao&&account.doubao_account_type==='work';
-  const personalDoubao=isDoubao&&account.doubao_account_type==='personal';
+  const doubaoWithoutWorkMode=isDoubao&&!workOnly;
   const defaultModel=isDoubao?(workOnly?'doubao-seedance-2.0-fast':'doubao-seedance-2.0-mini'):'seedance-2.0-fast';
   const defaultDuration=workOnly?15:undefined;
   const modelOpts=isDoubao
@@ -2364,21 +2364,21 @@ function openTestGen(name){
     <select id="tg_model" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px" onchange="syncTestGenDurations()">
       ${modelOpts}
     </select>
-    <label>执行方式</label>
+    ${doubaoWithoutWorkMode?'':`<label>执行方式</label>
     <select id="tg_mode" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px" onchange="syncTestGenDurations()">
       <option value="auto"${workOnly?' disabled':' selected'}>自动（现有生成流程）</option>
-      <option value="work"${workOnly?' selected':''}${personalDoubao?' disabled':''}>工作模式（原生视频）</option>
-    </select>
+      <option value="work"${workOnly?' selected':''}>工作模式（原生视频）</option>
+    </select>`}
     <label>时长（秒）</label>
     <select id="tg_duration" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px" onchange="syncTestGenCount()">
       ${testGenDurationOptions(defaultModel,defaultDuration,workOnly?'work':'auto')}
     </select>
     <div id="tg_hint" class="tiny" style="margin-top:6px">${testGenHint(isDoubao?'doubao-seedance-2.0-mini':'seedance-2.0-fast',workOnly?'work':'auto')}</div>
-    <label>本次任务的视频条数</label>
+    ${doubaoWithoutWorkMode?'':`<label>本次任务的视频条数</label>
     <select id="tg_count" disabled style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
       <option value="1">1 条</option>
       <option value="2">同一任务 2 条（同账号，各 15 秒）</option>
-    </select>
+    </select>`}
     <label>尺寸 / 画幅</label>
     <select id="tg_ratio" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px">
       <option value="16:9" selected>16:9</option>
@@ -2410,10 +2410,14 @@ function testGenHint(model,mode='auto'){
 function syncTestGenDurations(){
   const sel=q('#tg_duration');if(!sel)return;
   const model=q('#tg_model').value,mode=q('#tg_mode');
-  const opt=mode.querySelector('option[value="work"]');opt.disabled=model==='seedance-2.5';
-  if(opt.disabled)mode.value='auto';
-  sel.innerHTML=testGenDurationOptions(model,sel.value,mode.value);
-  q('#tg_hint').innerHTML=testGenHint(model,mode.value);
+  const modeValue=mode?mode.value:'auto';
+  if(mode){
+    const opt=mode.querySelector('option[value="work"]');
+    opt.disabled=model==='seedance-2.5';
+    if(opt.disabled)mode.value='auto';
+  }
+  sel.innerHTML=testGenDurationOptions(model,sel.value,mode?mode.value:modeValue);
+  q('#tg_hint').innerHTML=testGenHint(model,mode?mode.value:modeValue);
   syncTestGenCount();
 }
 function syncTestGenCount(){
@@ -2424,7 +2428,8 @@ function syncTestGenCount(){
 async function submitTestGen(name,force){
   const prompt=q('#tg_prompt').value.trim();
   if(!prompt){q('#tg_status').textContent='提示词必填';q('#tg_status').style.color='var(--red)';return;}
-  const body={prompt,model:q('#tg_model').value,duration:Number(q('#tg_duration').value),ratio:q('#tg_ratio').value,force:!!force,execution_mode:q('#tg_mode').value,video_count:Number(q('#tg_count').value)};
+  const mode=q('#tg_mode'),count=q('#tg_count');
+  const body={prompt,model:q('#tg_model').value,duration:Number(q('#tg_duration').value),ratio:q('#tg_ratio').value,force:!!force,execution_mode:mode?mode.value:'auto',video_count:Number(count?count.value:1)};
   q('#tg_btn').disabled=true;
   try{
     const r=await api('/api/admin/accounts/'+encodeURIComponent(name)+'/test-generate',{method:'POST',body});
