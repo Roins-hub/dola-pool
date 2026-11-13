@@ -55,7 +55,7 @@ function showDlg(x){rendered=x;}
 assert(srcBadge(allAccounts[0]).includes('工作号 · 仅工作模式'));
 openTestGen('acc153');
 assert(rendered.includes('value="doubao-seedance-2.0-fast" selected'));
-assert(rendered.includes('value="auto" disabled'));
+assert(!rendered.includes('value="auto"'));
 assert(rendered.includes('value="work" selected'));
 assert(rendered.includes('执行方式'));
 assert(rendered.includes('本次任务的视频条数'));
@@ -84,6 +84,7 @@ def test_personal_doubao_submission_defaults_to_auto_and_one_video():
     code=html[start:end]
     script=r"""
 const assert=require('assert'),calls=[];
+const allAccounts=[{name:'acc154',site:'doubao',doubao_account_type:'personal'}];
 const fields={
   '#tg_prompt':{value:'湖面白鹭'},
   '#tg_model':{value:'doubao-seedance-2.0-mini'},
@@ -103,6 +104,42 @@ const pollTestGen=()=>{};
   await submitTestGen('acc154');
   assert.equal(calls.length,1);
   assert.equal(calls[0].execution_mode,'auto');
+  assert.equal(calls[0].video_count,1);
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+    result=subprocess.run([node],input=script,text=True,encoding='utf8',capture_output=True,timeout=15)
+    assert result.returncode==0,result.stderr
+
+
+def test_work_only_doubao_submission_cannot_fall_back_to_auto():
+    node=shutil.which('node')
+    if not node: pytest.skip('node required')
+    html=(Path(__file__).resolve().parents[1]/'web/index.html').read_text(encoding='utf8')
+    start=html.index('const TEST_GEN_DURATIONS=')
+    end=html.index('async function pollTestGen(taskId,name)',start)
+    code=html[start:end]
+    script=r"""
+const assert=require('assert'),calls=[];
+const allAccounts=[{name:'acc153',site:'doubao',doubao_account_type:'work'}];
+const fields={
+  '#tg_prompt':{value:'湖面白鹭'},
+  '#tg_model':{value:'doubao-seedance-2.0-fast'},
+  '#tg_duration':{value:'15',innerHTML:''},
+  '#tg_ratio':{value:'16:9'},
+  '#tg_mode':{value:'auto'},
+  '#tg_count':{value:'1'},
+  '#tg_hint':{innerHTML:''},
+  '#tg_btn':{disabled:false},
+  '#tg_status':{textContent:'',style:{}}
+};
+const q=selector=>fields[selector]||null;
+const api=async(_path,options)=>{calls.push(options.body);return {task_id:'test_task'}};
+const pollTestGen=()=>{};
+"""+code+r"""
+(async()=>{
+  await submitTestGen('acc153');
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].execution_mode,'work');
   assert.equal(calls[0].video_count,1);
 })().catch(error=>{console.error(error);process.exit(1)});
 """
