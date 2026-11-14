@@ -27,6 +27,10 @@ class PreSubmissionParametersError(TimeoutError):
     """Requested video settings could not be confirmed before sending the prompt."""
 
 
+class PreSubmissionParameterTimeout(PreSubmissionParametersError):
+    """Browser parameter controls timed out before prompt submission."""
+
+
 class RegionRestrictedError(Exception):
     """Dola redirected to /security/region-restricted: the proxy exit's region, not a logout.
 

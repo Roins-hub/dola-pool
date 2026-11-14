@@ -5,7 +5,7 @@ import pytest
 
 from browser_video_params import (PARAMS_TRIGGER, _select_slider, duration_labels,
                                   select_video_parameters, summary_duration)
-from generation_errors import PreSubmissionParametersError
+from generation_errors import PreSubmissionParameterTimeout, PreSubmissionParametersError
 
 
 def run(coro):
@@ -20,8 +20,15 @@ class Control:
     def __init__(self, page, kind, count=1, name=None):
         self.page, self.kind, self.number, self.name = page, kind, count, name
 
-    async def count(self): return self.number
-    async def wait_for(self, **kwargs): pass
+    async def count(self):
+        if self.kind == 'menu':
+            return 1 if self.page.open else 0
+        return self.number
+    async def wait_for(self, **kwargs):
+        if (self.kind == 'menu' and kwargs.get('state') == 'visible'
+                and self.page.menu_wait_failures):
+            self.page.menu_wait_failures -= 1
+            raise TimeoutError('https://signed.invalid/?token=SECRET')
 
     async def get_attribute(self, name):
         if name == 'aria-expanded': return 'true' if self.page.open else 'false'
@@ -50,7 +57,10 @@ class Control:
 
     async def click(self, **kwargs):
         if self.kind == 'trigger': self.page.open = True
-        elif self.kind == 'ratio': self.page.ratio = self.name
+        elif self.kind == 'ratio':
+            self.page.ratio = self.name
+            if self.page.close_menu_on_ratio:
+                self.page.open = False
         elif self.kind == 'legacy': self.page.open = True
         elif self.kind == 'legacy_target': self.page.seconds = self.name; self.page.open = False
 
@@ -68,6 +78,8 @@ class Page:
         self.modern, self.open = modern, False
         self.seconds, self.ratio = 10, '自動'
         self.bad_summary = self.stuck = self.wrong_panel = False
+        self.close_menu_on_ratio = False
+        self.menu_wait_failures = 0
         self.keys = []
         self.keyboard = self
 
@@ -75,7 +87,7 @@ class Page:
         if selector == PARAMS_TRIGGER + ':visible':
             return Control(self, 'trigger', count=1 if self.modern else 0)
         assert selector == '[role="menu"][data-creation-params-panel-id]:visible'
-        return Control(self, 'menu')
+        return Control(self, 'menu', count=1 if self.open else 0)
 
     def get_by_text(self, pattern, **kwargs):
         assert isinstance(pattern, re.Pattern)
@@ -130,6 +142,29 @@ def test_stuck_slider_and_wrong_menu_are_not_accepted():
     page = Page(); page.wrong_panel = True
     with pytest.raises(PreSubmissionParametersError, match='不匹配'):
         run(select_video_parameters(page, 5))
+
+
+def test_transient_menu_timeout_is_resynced_before_parameter_selection():
+    page = Page()
+    page.menu_wait_failures = 1
+    run(select_video_parameters(page, 5, '9:16'))
+    assert page.seconds == 5 and page.ratio == '9:16' and not page.open
+
+
+def test_menu_is_reopened_when_ratio_selection_closes_it():
+    page = Page()
+    page.close_menu_on_ratio = True
+    run(select_video_parameters(page, 5, '9:16'))
+    assert page.seconds == 5 and page.ratio == '9:16' and not page.open
+
+
+def test_persistent_menu_timeout_identifies_the_panel_step_without_urls():
+    page = Page()
+    page.menu_wait_failures = 2
+    with pytest.raises(PreSubmissionParameterTimeout, match='打开参数菜单') as caught:
+        run(select_video_parameters(page, 5, '16:9'))
+    assert 'SECRET' not in str(caught.value)
+    assert not page.open
 
 
 def test_legacy_exact_duration_is_still_supported():

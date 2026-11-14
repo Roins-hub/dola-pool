@@ -2,7 +2,7 @@
 import asyncio
 import re
 
-from generation_errors import PreSubmissionParametersError
+from generation_errors import PreSubmissionParameterTimeout, PreSubmissionParametersError
 
 
 PARAMS_TRIGGER = 'button[data-input-engine-actionbar-render-entry-key="video-generation-params-panel"]'
@@ -49,26 +49,70 @@ async def _select_slider(page, slider, duration):
     raise PreSubmissionParametersError(f"网页时长滑条未能选中 {duration} 秒，尚未提交生成")
 
 
-async def _select_modern(page, trigger, duration, ratio):
-    if await trigger.get_attribute("aria-expanded") != "true":
-        await trigger.click(timeout=4000)
+def _is_timeout(exc):
+    return isinstance(exc, TimeoutError) or type(exc).__name__ == "TimeoutError"
+
+
+async def _open_parameter_menu(page, trigger, menu):
+    last_error = None
+    for attempt in range(2):
+        count = await menu.count()
+        if count == 1:
+            return
+        if count > 1:
+            raise PreSubmissionParametersError("无法唯一识别视频参数菜单，尚未提交生成")
+
+        if await trigger.get_attribute("aria-expanded") == "true":
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(120)
+            if await trigger.get_attribute("aria-expanded") == "true":
+                await trigger.click(timeout=3000)
+                await page.wait_for_timeout(120)
+
+        try:
+            if await trigger.get_attribute("aria-expanded") != "true":
+                await trigger.click(timeout=4000)
+            await menu.wait_for(state="visible", timeout=4000)
+            count = await menu.count()
+            if count == 1:
+                return
+            if count > 1:
+                raise PreSubmissionParametersError("无法唯一识别视频参数菜单，尚未提交生成")
+            last_error = TimeoutError("参数菜单没有变为可见")
+        except Exception as exc:
+            if not _is_timeout(exc) or attempt == 1:
+                raise
+            last_error = exc
+
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(150)
+
+    raise last_error or TimeoutError("参数菜单没有变为可见")
+
+
+async def _select_modern(page, trigger, duration, ratio, set_step):
     menu = page.locator('[role="menu"][data-creation-params-panel-id]:visible')
-    await menu.wait_for(state="visible", timeout=4000)
-    if await menu.count() != 1:
-        raise PreSubmissionParametersError("无法唯一识别视频参数菜单，尚未提交生成")
-    trigger_id = await trigger.get_attribute("data-creation-params-panel-id")
-    if await menu.get_attribute("data-creation-params-panel-id") != trigger_id:
-        raise PreSubmissionParametersError("视频参数菜单与当前输入框不匹配，尚未提交生成")
     try:
+        set_step("打开参数菜单")
+        await _open_parameter_menu(page, trigger, menu)
+        set_step("核对参数菜单")
+        if await menu.count() != 1:
+            raise PreSubmissionParametersError("无法唯一识别视频参数菜单，尚未提交生成")
+        trigger_id = await trigger.get_attribute("data-creation-params-panel-id")
+        if await menu.get_attribute("data-creation-params-panel-id") != trigger_id:
+            raise PreSubmissionParametersError("视频参数菜单与当前输入框不匹配，尚未提交生成")
         if ratio:
+            set_step("选择画幅")
             option = menu.get_by_role("button", name=ratio, exact=True)
             if await option.count() != 1:
                 raise PreSubmissionParametersError(f"网页没有可选比例 {ratio}，尚未提交生成")
             await option.click(timeout=3000)
-            if await trigger.get_attribute("aria-expanded") != "true":
-                await trigger.click(timeout=3000)
-                await menu.wait_for(state="visible", timeout=3000)
+            set_step("等待画幅切换后重新打开菜单")
+            await _open_parameter_menu(page, trigger, menu)
+            if await menu.get_attribute("data-creation-params-panel-id") != trigger_id:
+                raise PreSubmissionParametersError("视频参数菜单与当前输入框不匹配，尚未提交生成")
         if duration is not None:
+            set_step("设置时长")
             slider = menu.get_by_role("slider")
             if await slider.count() != 1:
                 raise PreSubmissionParametersError("无法唯一识别时长滑条，尚未提交生成")
@@ -77,6 +121,7 @@ async def _select_modern(page, trigger, duration, ratio):
         if await trigger.get_attribute("aria-expanded") == "true":
             await page.keyboard.press("Escape")
     # A click is not success until the closed actionbar summary confirms it.
+    set_step("回读确认参数")
     for _ in range(10):
         text = await trigger.inner_text()
         ratio_ok = not ratio or text.split("·")[0].strip().replace(" ", "") == ratio
@@ -136,6 +181,11 @@ async def select_video_parameters(page, duration, ratio=None):
     if duration is None and not ratio:
         return
     step = "等待参数入口"
+
+    def set_step(name):
+        nonlocal step
+        step = f"新版参数面板 / {name}"
+
     try:
         async with asyncio.timeout(25):
             trigger = page.locator(PARAMS_TRIGGER + ':visible')
@@ -149,8 +199,7 @@ async def select_video_parameters(page, duration, ratio=None):
             if await trigger.count():
                 if await trigger.count() != 1:
                     raise PreSubmissionParametersError("存在多个视频参数入口，尚未提交生成")
-                step = "新版参数面板"
-                await _select_modern(page, trigger, duration, ratio)
+                await _select_modern(page, trigger, duration, ratio, set_step)
             else:
                 step = "旧版控件（未找到新版参数入口）"
                 await _select_legacy(page, duration, ratio)
@@ -158,6 +207,7 @@ async def select_video_parameters(page, duration, ratio=None):
         raise
     except Exception as exc:
         # Browser exception strings can contain signed URLs and account details.
-        raise PreSubmissionParametersError(
+        error_type = PreSubmissionParameterTimeout if _is_timeout(exc) else PreSubmissionParametersError
+        raise error_type(
             f"设置视频参数失败：未确认 {duration} 秒 / {ratio or '原比例'}，尚未提交生成"
             f"（{describe_failure(step, exc)}）") from None

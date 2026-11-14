@@ -1043,6 +1043,87 @@ async def enter_video_mode(page, account: str) -> None:
         await dismiss_popups(page)
 
 
+async def _select_video_model(page, account: str, model_key: str) -> None:
+    """Select the requested Dola model when the page exposes its model menu."""
+    try:
+        current_model = None
+        for label in ("モデル 2.0高速", "モデル 2.5"):
+            loc = page.get_by_text(label, exact=True).first
+            if await loc.count() and await loc.is_visible():
+                current_model = loc
+                break
+        if current_model is None:
+            current_model = page.get_by_text(re.compile(r"^モデル "), exact=False).first
+        if not await current_model.count():
+            raise RuntimeError("没有模型按钮")
+        try:
+            await current_model.click(timeout=5000)
+        except Exception:
+            await current_model.evaluate("(el) => el.click()", timeout=3000)
+        await page.wait_for_timeout(500)
+        options = (("Dreamina Seedance 2.5",)
+                   if model_key == "seedance_v2.5"
+                   else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0", "Seedance2.0Fast"))
+        selected = False
+        for option_text in options:
+            loc = page.get_by_text(option_text, exact=False).first
+            if await loc.count() and await loc.is_visible():
+                try:
+                    await loc.click(timeout=5000)
+                except Exception:
+                    await loc.evaluate("(el) => el.click()")
+                    await page.wait_for_timeout(300)
+                selected = True
+                break
+        if not selected:
+            print(f"  (未找到模型选项，用 Dola 默认: {model_key})", flush=True)
+        await page.wait_for_timeout(500)
+    except Exception as exc:
+        print(f"[{account}] 设置模型失败，用 Dola 默认 {model_key}（{type(exc).__name__}）", flush=True)
+
+
+async def confirm_video_parameters_with_retry(page, account: str, model_key: str,
+                                              duration: int, ratio: str | None,
+                                              on_poll=None,
+                                              reference_image_paths: list[str] | None = None) -> None:
+    """Retry a timed-out parameter panel once on the same account before submission."""
+    from browser_video_params import select_video_parameters
+    from generation_errors import (PreSubmissionParameterTimeout, PreSubmissionParametersError,
+                                   PreSubmissionUploadError)
+
+    async def select_model_and_parameters():
+        await _select_video_model(page, account, model_key)
+        await select_video_parameters(page, duration, ratio)
+
+    try:
+        await select_model_and_parameters()
+        return
+    except PreSubmissionParameterTimeout:
+        emit_feedback(on_poll, progress=f"{account} 参数面板响应超时，刷新同账号页面后重试（尚未提交生成）")
+
+    try:
+        await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
+        await page.wait_for_timeout(1500)
+        raise_if_region_restricted(page, account)
+        await dismiss_popups(page)
+        if await is_logged_out(page):
+            raise LoginExpiredError(f"{account} 参数面板恢复时登录态失效，请重新登录该账号")
+        await enter_video_mode(page, account)
+        if reference_image_paths:
+            await upload_with_retry(page, account, reference_image_paths, on_poll)
+        await select_model_and_parameters()
+    except PreSubmissionParameterTimeout as exc:
+        raise PreSubmissionParameterTimeout(
+            f"{account} 参数面板刷新后重试仍超时，尚未提交生成：{exc}") from None
+    except PreSubmissionUploadError:
+        raise
+    except (PreSubmissionParametersError, LoginExpiredError):
+        raise
+    except Exception as exc:
+        raise PreSubmissionParametersError(
+            f"{account} 参数面板刷新恢复失败，尚未提交生成（{type(exc).__name__}）") from None
+
+
 async def upload_with_retry(page, account: str, image_paths: list[str], on_poll=None) -> None:
     """Upload references; on a pre-submission failure reload and retry on the same account.
 
@@ -1173,49 +1254,10 @@ async def _submit_and_poll(context, account, prompt, ratio, duration, timeout, m
         await enter_video_mode(page, account)
         if reference_image_paths:
             await upload_with_retry(page, account, reference_image_paths, on_poll)
-        # 选择模型（尽力而为）：扩展/当前网页端文案 モデル 2.0高速/2.5；
-        # 部分账号 UI 变体没有该按钮，找不到就沿用 Dola 默认模型，不阻塞出片。
-        try:
-            current_model = None
-            for label in ("モデル 2.0高速", "モデル 2.5"):
-                loc = page.get_by_text(label, exact=True).first
-                if await loc.count() and await loc.is_visible():
-                    current_model = loc
-                    break
-            if current_model is None:
-                current_model = page.get_by_text(re.compile(r"^モデル "), exact=False).first
-            if not await current_model.count():
-                raise RuntimeError("没有模型按钮")   # 不让 evaluate 再盲等 30 秒
-            try:
-                await current_model.click(timeout=5000)
-            except Exception:
-                # radix popper 子元素拦截点击时，用 JS 直接派发点击
-                await current_model.evaluate("(el) => el.click()", timeout=3000)
-            await page.wait_for_timeout(500)
-            options = (("Dreamina Seedance 2.5",)
-                       if model_key == "seedance_v2.5"
-                       else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0", "Seedance2.0Fast"))
-            selected = False
-            for option_text in options:
-                loc = page.get_by_text(option_text, exact=False).first
-                if await loc.count() and await loc.is_visible():
-                    try:
-                        await loc.click(timeout=5000)
-                    except Exception:
-                        # radix popper 子元素拦截点击时，用 JS 直接派发点击
-                        await loc.evaluate("(el) => el.click()")
-                        await page.wait_for_timeout(300)
-                    selected = True
-                    break
-            if not selected:
-                print(f"  (未找到模型选项，用 Dola 默认: {model_key})", flush=True)
-            await page.wait_for_timeout(500)
-        except Exception as e:
-            print(f"  (设置模型失败，用 Dola 默认: {str(e)[:100]})", flush=True)
         # Confirm both settings in the current combined slider panel (or legacy UI).
-        from browser_video_params import select_video_parameters
         emit_feedback(on_poll, progress="正在确认视频模型、时长和比例（尚未提交生成）")
-        await select_video_parameters(page, duration, ratio)
+        await confirm_video_parameters_with_retry(
+            page, account, model_key, duration, ratio, on_poll, reference_image_paths)
         await dismiss_popups(page)
         box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')
         try:
