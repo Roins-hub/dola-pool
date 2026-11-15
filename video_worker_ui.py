@@ -1065,7 +1065,7 @@ async def _select_video_model(page, account: str, model_key: str) -> None:
                 current_model = loc
                 break
         if current_model is None:
-            current_model = page.get_by_text(MODEL_BUTTON, exact=False).first
+            current_model = page.get_by_role("button", name=MODEL_BUTTON).first
         if not await current_model.count():
             raise RuntimeError("没有模型按钮")
         try:

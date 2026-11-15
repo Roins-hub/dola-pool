@@ -111,7 +111,7 @@ def test_seconds_are_read_from_visible_labels_not_slider_indices():
 
 
 @pytest.mark.parametrize('label', ['モデル 2.0高速', 'モデル\nDreamina Seedance 2.0高速',
-                                  'モデル\nDreamina Seedance 2.5'])
+                                  'モデルDreamina Seedance 2.0高速', 'モデル\nDreamina Seedance 2.5'])
 def test_model_button_supports_wrapped_labels(label):
     assert MODEL_BUTTON.match(label)
 
@@ -212,7 +212,9 @@ def test_video_mode_requires_model_or_params_control():
     class Page:
         def __init__(self, trigger, model): self.t, self.m = trigger, model
         def locator(self, selector): return Loc(self.t)
-        def get_by_text(self, *a, **kw): return Loc(self.m)
+        def get_by_role(self, role, **kw):
+            assert role == 'button'
+            return Loc(self.m)
         async def wait_for_timeout(self, ms): pass
     assert run(video_mode_ready(Page(1, 0), 500))
     assert run(video_mode_ready(Page(0, 1), 500))

@@ -150,7 +150,7 @@ async def _select_legacy(page, duration, ratio):
         raise PreSubmissionParametersError(f"旧版页面未确认 {duration} 秒，尚未提交生成")
 
 
-MODEL_BUTTON = re.compile(r"^モデル\s")
+MODEL_BUTTON = re.compile(r"^モデル")
 
 
 async def video_mode_ready(page, timeout_ms=10000):
@@ -160,7 +160,7 @@ async def video_mode_ready(page, timeout_ms=10000):
     the page was still in plain chat mode after clicking 動画を作成.
     """
     trigger = page.locator(PARAMS_TRIGGER + ':visible')
-    model = page.get_by_text(MODEL_BUTTON).filter(visible=True)
+    model = page.get_by_role("button", name=MODEL_BUTTON).filter(visible=True)
     for _ in range(max(1, timeout_ms // 250)):
         try:
             if await trigger.count() or await model.count():
