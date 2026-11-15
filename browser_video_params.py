@@ -150,7 +150,7 @@ async def _select_legacy(page, duration, ratio):
         raise PreSubmissionParametersError(f"旧版页面未确认 {duration} 秒，尚未提交生成")
 
 
-MODEL_BUTTON = re.compile(r"^モデル ")
+MODEL_BUTTON = re.compile(r"^モデル\s")
 
 
 async def video_mode_ready(page, timeout_ms=10000):

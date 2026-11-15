@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from browser_video_params import (PARAMS_TRIGGER, _select_slider, duration_labels,
+from browser_video_params import (MODEL_BUTTON, PARAMS_TRIGGER, _select_slider, duration_labels,
                                   select_video_parameters, summary_duration)
 from generation_errors import PreSubmissionParameterTimeout, PreSubmissionParametersError
 
@@ -108,6 +108,12 @@ def test_seconds_are_read_from_visible_labels_not_slider_indices():
     assert summary_duration('16:9 · 10 秒') == 10
     assert summary_duration('5s') == 5
     assert summary_duration('seedance 2.5') is None
+
+
+@pytest.mark.parametrize('label', ['モデル 2.0高速', 'モデル\nDreamina Seedance 2.0高速',
+                                  'モデル\nDreamina Seedance 2.5'])
+def test_model_button_supports_wrapped_labels(label):
+    assert MODEL_BUTTON.match(label)
 
 
 @pytest.mark.parametrize('duration', [5, 10])

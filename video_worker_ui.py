@@ -153,7 +153,17 @@ async def is_logged_out(page) -> bool:
 
 
 async def dismiss_popups(page):
-    """关闭 Cookie 同意、桌面应用推广等可能拦截点击的弹层。"""
+    """Hide the extension resource window and dismiss page popups before UI actions."""
+    # The extension's fixed resource window overlaps the model/parameter controls.
+    # Hide its host for automation; its background hooks and listeners keep running.
+    await page.evaluate("""() => {
+        if (!document.getElementById('dola-pool-resource-panel-style')) {
+            const style = document.createElement('style');
+            style.id = 'dola-pool-resource-panel-style';
+            style.textContent = '#watermark-free-media-panel { display: none !important; }';
+            document.documentElement.appendChild(style);
+        }
+    }""")
     for sel in ("OK", "同意する", "Accept All", "閉じる", "Close"):
         try:
             loc = page.get_by_text(sel, exact=True).first
@@ -1045,6 +1055,8 @@ async def enter_video_mode(page, account: str) -> None:
 
 async def _select_video_model(page, account: str, model_key: str) -> None:
     """Select the requested Dola model when the page exposes its model menu."""
+    from browser_video_params import MODEL_BUTTON
+
     try:
         current_model = None
         for label in ("モデル 2.0高速", "モデル 2.5"):
@@ -1053,7 +1065,7 @@ async def _select_video_model(page, account: str, model_key: str) -> None:
                 current_model = loc
                 break
         if current_model is None:
-            current_model = page.get_by_text(re.compile(r"^モデル "), exact=False).first
+            current_model = page.get_by_text(MODEL_BUTTON, exact=False).first
         if not await current_model.count():
             raise RuntimeError("没有模型按钮")
         try:
