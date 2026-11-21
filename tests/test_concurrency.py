@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import time
 import types
@@ -172,6 +173,29 @@ def test_health_queue_reports_unlimited_workers(tmp_path, monkeypatch):
         assert data["queue"]["workers"] == 0
         assert data["queue"]["queued"] == 0
         assert data["queue"]["running"] == 0
+
+    _run(scenario())
+
+
+def test_health_hides_per_account_proxy_details(tmp_path, monkeypatch):
+    """回归：/health 无需鉴权，不能带出代理原文（含密码）、出口和隔离分组，只给计数。"""
+    secret = "socks5h://user-sid-1:s3cretPw@proxy.example:4104"
+
+    async def scenario():
+        bp, server = await _build(tmp_path, monkeypatch, 0)
+        monkeypatch.setattr(bp, "_proxy_url_for", lambda name: secret)
+
+        data = await server.health()
+        text = json.dumps(data, ensure_ascii=False)
+        assert "s3cretPw" not in text
+        assert "proxy.example" not in text
+        assert "accounts" not in data["pool"] and "isolation" not in data["pool"]
+        assert data["pool"]["account_count"] == 3
+
+        # 管理接口的快照也只给脱敏地址
+        engine = bp.engine_snapshot()
+        assert all("proxy" not in a for a in engine["accounts"])
+        assert engine["accounts"][0]["proxy_display"] == "socks5h://user-sid-1:***@proxy.example:4104"
 
     _run(scenario())
 

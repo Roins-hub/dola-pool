@@ -542,7 +542,7 @@ class AccountPool:
             out.append({
                 "id": name,
                 "status": st.status,
-                "proxy": proxy,
+                # 只给脱敏后的地址：快照会进 /health、管理接口和日志，原文里有代理密码
                 "proxy_display": self._mask_proxy(proxy) if proxy else "",
                 "effective_egress": self.effective_egress(name),
                 "proxy_enabled": self.account_proxy_enabled,

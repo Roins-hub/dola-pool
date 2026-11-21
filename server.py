@@ -95,7 +95,7 @@ from user_store import (
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "2.8.2"
+APP_VERSION = "2.8.3"
 
 app = FastAPI(title="dola-pool", version=APP_VERSION)
 
@@ -2774,7 +2774,9 @@ for _ark_path in ARK_TASK_PATHS:
 
 
 async def health():
-    meta = pool.engine_snapshot()
+    # /health 无需鉴权（看门狗和下游容量探测在用）：只给计数，逐号明细（代理、出口、隔离分组）
+    # 只在管理接口里返回
+    meta = {k: v for k, v in pool.engine_snapshot().items() if k not in ("accounts", "isolation")}
     storage = store.storage_stats()
     downloads = 0
     download_root = Path(config.DOWNLOAD_DIR)
