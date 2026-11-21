@@ -9,6 +9,8 @@
 </p>
 
 <img align="right" width="190" alt="交流群二维码" src="https://github.com/user-attachments/assets/39207d3c-955f-49ec-adbc-8db471f23b79" />
+![Uploading qrcode_1795249672015.jpg…]()
+
 
 [dola.com](https://www.dola.com) 是字节 Seedance 视频模型的国际版，[豆包](https://www.doubao.com) 是国内版。dola-pool 把这两个站点的账号放进同一个号池，对外提供 **OpenAI 风格接口**，也兼容火山方舟（Ark）任务协议，可以直接接入 [new-api](https://github.com/QuantumNous/new-api) 等网关。
 
