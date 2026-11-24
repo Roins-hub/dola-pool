@@ -941,7 +941,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         await asyncio.to_thread(_prune_downloads)
     except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
         store.update(task_id, status="failed", error=failure_text.summarize(str(e)),
-                     failure_code="429", finished_at=time.time())
+                     **{**upstream_error.failure_fields(e), "failure_code": "429"},
+                     finished_at=time.time())
     except asyncio.CancelledError:
         # 服务重启/任务被取消：CancelledError 不是 Exception，别把它吞了，
         # 但也别把行留在 processing —— 退回 queued，下次启动或看门狗会接上。
@@ -1076,7 +1077,8 @@ async def _recover_loop(task_id: str) -> None:
                     print(f"[recover] {task_id} 记账失败: {exc}", flush=True)
                 store.update(task_id, status="failed" if res.get("validation_error") else "completed",
                              video_url=public_url, error=res.get("validation_error") or "",
-                             failure_code=None, recover_state="gave_up" if res.get("validation_error") else "recovered",
+                             failure_code=None, upstream_error=None,
+                             recover_state="gave_up" if res.get("validation_error") else "recovered",
                              recovered_at=time.time(), finished_at=time.time(), **meta)
                 outcome = "成片不符合请求，已保留原片" if res.get("validation_error") else "已自动取回"
                 print(f"[recover] {task_id} {outcome} → {public_url}", flush=True)
@@ -1088,7 +1090,7 @@ async def _recover_loop(task_id: str) -> None:
                 upstream = "豆包" if sites.is_doubao_model(row.get("model")) else "dola"
                 note = f"；后台取回结束：{upstream} 最终状态 {res.get('status')}（{(res.get('detail') or '')[:80]}）"
                 store.update(task_id, recover_state="gave_up",
-                             **upstream_error.failure_fields(res),
+                             **upstream_error.known_fields(res, row),
                              error=failure_text.summarize((row.get("error") or "") + note))
                 print(f"[recover] {task_id} 上游已判定 {res.get('status')}，停止盯守", flush=True)
                 return
@@ -1225,7 +1227,7 @@ async def _recover_work_loop(task_id: str) -> None:
                     if res.get("duration_error") or res.get("validation_error"):
                         fields = await _completion_fields(task_id, res, row.get("duration"), row.get("ratio"))
                         store.update(task_id, status="failed", recover_state="gave_up", error=res.get("validation_error") or res["duration_error"],
-                                     finished_at=time.time(), **fields)
+                                     failure_code=None, upstream_error=None, finished_at=time.time(), **fields)
                         return
                     if row.get("status") == "completed":
                         if res.get("local_path"):
@@ -1272,7 +1274,7 @@ async def _recover_work_loop(task_id: str) -> None:
                         targets.remove(target)
                     else:
                         store.update(task_id, recover_state="gave_up",
-                                     **upstream_error.failure_fields(res), error=failure_text.summarize(
+                                     **upstream_error.known_fields(res, row), error=failure_text.summarize(
                             (row.get("error") or "") + "；原会话已明确结束：" + (res.get("detail") or "")))
                         return
             except Exception as exc:
@@ -1354,7 +1356,7 @@ async def _resume_pure_conversation(row: dict) -> None:
                     pool._mark_abnormal(account, res.get("detail") or "豆包套餐不支持创作")
                 upstream = "豆包" if sites.is_doubao_model(row.get("model")) else "dola"
                 store.update(task_id, status="failed", queue_note="", finished_at=time.time(),
-                             **upstream_error.failure_fields(res), error=failure_text.summarize(
+                             **upstream_error.known_fields(res, row), error=failure_text.summarize(
                                  f"{upstream} 最终状态 {res.get('status')}：{(res.get('detail') or '')[:200]}"))
                 return
             await asyncio.sleep(max(1, config.RESUME_POLL_SECONDS))

@@ -331,7 +331,12 @@ Authorization: Bearer <API_KEY>
 | `status` | `queued` / `processing` / `completed` / `failed` |
 | `video_url` | 仅 `completed` 时有值；指向**本服务转存**的静态文件（稳定地址，不是 dola 临时 CDN） |
 | `error` | 仅 `failed` 时有值，是最末一次失败的原因（最多 500 字） |
+| `failure_code` | 失败错误码（字符串）。上游视频工具明确失败（`status=5`）时为它的非零 `fail_code`；`429` 表示本服务判定号池额度或次数已用完；未知为 `null` |
+| `upstream_error` | 上游诊断信息，只含 `ai_creation_res_code` 与 `ai_creation_tool_list`（每项仅 `status`、`fail_code`、符号型 `failure_reason`），不含凭据、地址或会话 ID；未知为 `null` |
 | `video_url_hd` | 这条视频超分后的高清地址（`/v/<id>-1080p.mp4`，2K / 4K 为 `-2k` / `-4k`）；没有超分时为 `null`。见 [UPSCALE.md](UPSCALE.md) |
+
+`failure_code` 与 `upstream_error` 只在失败任务上有值，是排查用的附加信息，不影响生成、确认或重试策略。
+确认参数阶段出现的非零 `ai_creation_res_code`（如 `710082041`）不代表失败；含义未公开的错误码也不要当成风控或额度不足。
 
 **只能查到自己 Key 创建的任务**；别人的 task_id 一律 `404 task not found`。
 
@@ -435,7 +440,7 @@ GET {前缀}/{task_id}
 }
 ```
 
-状态映射：`queued→queued`、`processing→running`、`completed→succeeded`、`failed→failed`；失败时额外带 `error`。
+状态映射：`queued→queued`、`processing→running`、`completed→succeeded`、`failed→failed`；失败时额外带 `error`，以及与 3.3 相同的 `failure_code`、`upstream_error`。
 
 ### 3.8 静态出片文件
 

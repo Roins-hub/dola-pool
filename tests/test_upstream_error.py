@@ -174,3 +174,86 @@ def test_existing_typed_failure_preserves_retry_policy():
                                     conversation_id="synthetic", retryable=False, not_charged=True)
     assert diagnostics.failure_fields(error)["failure_code"] == "710082023"
     assert error.retryable is False and error.not_charged is True
+
+
+def test_typed_failure_does_not_invent_an_upstream_record():
+    from generation_errors import UpstreamGenerationFailed
+    error = UpstreamGenerationFailed("上游生成失败", "failed", code="710082023",
+                                    conversation_id="synthetic", retryable=False, not_charged=True)
+    assert diagnostics.failure_fields(error) == {"failure_code": "710082023", "upstream_error": None}
+    diagnostics.attach(error, RAW)
+    assert json.loads(diagnostics.failure_fields(error)["upstream_error"])["ai_creation_tool_list"][0][
+        "failure_reason"] == "cta_limit"
+
+
+def test_unrelated_exception_code_attribute_is_ignored():
+    error = RuntimeError("http")
+    error.code = 503
+    assert diagnostics.failure_fields(error)["failure_code"] is None
+
+
+def test_wrapped_failure_keeps_the_original_code_without_following_context():
+    with pytest.raises(RuntimeError) as wrapped:
+        raise RuntimeError("连续 3 次生成均失败") from diagnostics.attach(ValueError("x"), RAW)
+    assert diagnostics.failure_fields(wrapped.value)["failure_code"] == "710082023"
+    with pytest.raises(RuntimeError) as unrelated:
+        try:
+            raise diagnostics.attach(ValueError("x"), RAW)
+        except ValueError:
+            raise RuntimeError("unrelated cleanup error")
+    assert diagnostics.failure_fields(unrelated.value)["failure_code"] is None
+
+
+def test_exhausted_accounts_keep_the_last_upstream_code(tmp_path, monkeypatch):
+    from test_auto_recover import _run
+    from test_portrait_retry import _dispatch
+    failures = {name: diagnostics.attach(RuntimeError("出片未成功"), RAW) for name in ("acc1", "acc2", "acc3")}
+    calls, run = _dispatch(tmp_path, monkeypatch, failures)
+    with pytest.raises(RuntimeError, match="次生成均失败") as failure:
+        _run(run)
+    assert calls
+    assert diagnostics.failure_fields(failure.value)["failure_code"] == "710082023"
+
+
+KNOWN = {"failure_code": "710082023", "upstream_error": json.dumps({"ai_creation_res_code": "710082023"})}
+
+
+@pytest.mark.parametrize("res,expected", [
+    ({}, KNOWN),                                                          # 没读到：保留
+    ({"upstream_error": {"ai_creation_res_code": "710082041"}}, KNOWN),   # 只有前置码：保留
+    ({"upstream_error": {"ai_creation_tool_list": [{"status": 5, "fail_code": 7}]}},
+     {"failure_code": "7", "upstream_error": json.dumps({"ai_creation_tool_list": [
+         {"status": "5", "fail_code": "7"}]})}),
+])
+def test_final_readback_never_erases_a_known_code(tmp_path, monkeypatch, res, expected):
+    import time
+    from test_auto_recover import FakePool, _run, _server
+    server = _server(tmp_path, monkeypatch, FakePool([{"status": "failed", "local_path": "", "final": True,
+                                                       "detail": "x", **res}]))
+    server.store.update("video_t1", recover_state="watching", recover_until=time.time() + 60, **KNOWN)
+    _run(server._recover_loop("video_t1"))
+    row = server.store.get("video_t1")
+    assert row["recover_state"] == "gave_up"
+    assert {key: row[key] for key in expected} == expected
+
+
+def test_recovered_mismatched_clip_clears_the_old_code(tmp_path, monkeypatch):
+    import time
+    from test_auto_recover import FakePool, _run, _server
+    server = _server(tmp_path, monkeypatch, FakePool([{"local_path": str(tmp_path / "dl" / "a.mp4"),
+                                                       "validation_error": "参考图未用于生成"}]))
+    server.store.update("video_t1", recover_state="watching", recover_until=time.time() + 60, **KNOWN)
+    _run(server._recover_loop("video_t1"))
+    row = server.store.get("video_t1")
+    assert row["status"] == "failed" and row["failure_code"] is None and row["upstream_error"] is None
+
+
+def test_work_recovery_mismatched_clip_clears_the_old_code(tmp_path, monkeypatch):
+    from test_auto_recover import _run
+    from test_work_followups import work_server
+    server, _pool = work_server(tmp_path, monkeypatch, [{"local_path": str(tmp_path / "a.mp4"),
+                                                         "validation_error": "参考图未用于生成"}])
+    server.store.update("video_t1", model="doubao-seedance-2.0-fast", execution_mode="work", **KNOWN)
+    _run(server._recover_loop("video_t1"))
+    row = server.store.get("video_t1")
+    assert row["status"] == "failed" and row["failure_code"] is None and row["upstream_error"] is None

@@ -69,17 +69,36 @@ def attach(error, diagnostic):
     return error
 
 
-def failure_fields(source):
-    """DB/test-result fields; a nonzero preflight code is not a failed tool."""
-    diagnostic = normalize(source.get("upstream_error") if isinstance(source, dict)
-                           else getattr(source, "upstream_error", None))
+def _failure(source):
+    """(code, diagnostic) of one exception/result; a nonzero preflight code is not a failed tool."""
+    get = source.get if isinstance(source, dict) else lambda key: getattr(source, key, None)
+    diagnostic = normalize(get("upstream_error"))
     records = diagnostic.get("ai_creation_tool_list", [])
     last = records[-1] if records else {}
-    code = last.get("fail_code") if last.get("status") == "5" else None
-    if code is not None and int(code) == 0:
-        code = None
+    # A typed final failure (UpstreamGenerationFailed) carries its own confirmed code.
+    code = _number(get("failure_code")) or (last.get("fail_code") if last.get("status") == "5" else None)
+    return (code if code is not None and int(code) else None), diagnostic
+
+
+def failure_fields(source):
+    """DB/test-result fields. Follows `raise ... from` so the scheduler's summary keeps the code."""
+    code, diagnostic = _failure(source)
+    depth = 0
+    while not code and not diagnostic and isinstance(source, BaseException) and source.__cause__ and depth < 8:
+        source, depth = source.__cause__, depth + 1
+        code, diagnostic = _failure(source)
     return {"failure_code": code,
             "upstream_error": json.dumps(diagnostic, ensure_ascii=False) if diagnostic else None}
+
+
+def known_fields(source, row):
+    """For later read-backs: never erase or weaken a failure that is already recorded."""
+    fields = failure_fields(source)
+    if fields["failure_code"]:
+        return {key: value for key, value in fields.items() if value is not None}
+    if fields["upstream_error"] and not row.get("failure_code"):
+        return {"upstream_error": fields["upstream_error"]}
+    return {}
 
 
 def public_fields(row):

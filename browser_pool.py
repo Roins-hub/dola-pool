@@ -3121,11 +3121,11 @@ class BrowserPool:
             if self.all_accounts_quota_blocked:
                 raise AllAccountsQuotaBlockedError(
                     f"429: 所有已开启调度的账号均已知积分不足: {last_err or '无号'}"
-                )
+                ) from last_err
             if self.all_accounts_limited:
                 raise AllAccountsLimitedError(
                     f"429: 所有已开启调度的账号均已达到 Dola 每日视频上限: {last_err or '无号'}"
-                )
+                ) from last_err
             if group_wait:
                 # 池子没到「全池上限/积分不足」，但符合本次模型额度要求的号一个都没有
                 waited = int(config.V20_WAIT_SECONDS // 60)
@@ -3152,7 +3152,7 @@ class BrowserPool:
                     # 不在这里截断：上游拒稿原文（审核/肖像/侵权）本身可能上百字，
                     # 截成 300 字会把原因切掉。长度上限由 server 落库时统一处理。
                     f"{prefix}连续 {attempt} 次生成均失败（依次尝试账号: {chain}）: {str(last_err)[:1500]}"
-                )
+                ) from last_err               # 保留原异常，落库时才取得到上游错误码
             if busy_timeout and last_err is None and not picked:
                 raise RuntimeError(
                     "能接这一单的号都在出片中，排队到任务时限仍未空出；请稍后重试"

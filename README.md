@@ -309,12 +309,3 @@ DOLA_MIN_SUBMIT_INTERVAL_SECONDS=15
 本仓库是个人学习与互操作性研究记录，包含对上游网页接口的逆向实现。代码不含任何账号、Cookie、密钥或可用凭据。
 
 使用者须自行遵守 dola.com、doubao.com 的服务条款及所在地法律法规，包括人工智能生成内容的标识要求，并自行评估账号与合规风险。
-
-### 视频失败诊断字段
-
-任务查询 `GET /v1/videos/{id}` 和 Ark 兼容任务查询保留原有字符串 `error`，另外返回：
-
-- `failure_code`：最终视频工具明确失败（`status=5`）时的非零错误码，字符串；未知为 `null`。
-- `upstream_error`：经过白名单过滤的 `ai_creation_res_code` 与 `ai_creation_tool_list`；仅保留数字码/状态和符号型 `failure_reason`，不返回原始 ext、凭据、URL 或内部关联 ID。未知为 `null`。
-
-这些是诊断信息，不改变生成、确认或重试策略。前置确认消息中的非零码不等于生成失败；未知错误码不推定为风控或额度不足。成功及进行中的任务不展示历史失败字段。旧 SQLite 数据库启动时自动新增可空诊断列。
