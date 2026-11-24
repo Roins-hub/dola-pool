@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 import config
 import cred_store
 import failure_text
+import upstream_error
 from account_transport import http_proxy, redact_error
 import proxy_store
 import sites
@@ -432,6 +433,8 @@ class TaskResponse(BaseModel):
     video_url: str | None = None
     videos: list[dict] | None = None
     error: str | None = None
+    failure_code: str | None = None
+    upstream_error: dict | None = None
     # 排队/进度说明：客户端可以拿它显示「排队中，预计 N 分钟」。
     # 字段是附加的（老客户端忽略即可，不影响原有 status/video_url 语义）。
     progress: dict | None = None
@@ -957,7 +960,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             fields = await _completion_fields(task_id, e.result, duration, ratio)
             store.update(task_id, **fields)
         store.update(task_id, status="failed", error=failure_text.summarize(str(e)),
-                     finished_at=time.time())
+                     **upstream_error.failure_fields(e), finished_at=time.time())
         try:
             _maybe_start_recovery(task_id, e)
         except Exception as exc:  # noqa: BLE001 - 取回只是补救，不能影响失败落库
@@ -1085,6 +1088,7 @@ async def _recover_loop(task_id: str) -> None:
                 upstream = "豆包" if sites.is_doubao_model(row.get("model")) else "dola"
                 note = f"；后台取回结束：{upstream} 最终状态 {res.get('status')}（{(res.get('detail') or '')[:80]}）"
                 store.update(task_id, recover_state="gave_up",
+                             **upstream_error.failure_fields(res),
                              error=failure_text.summarize((row.get("error") or "") + note))
                 print(f"[recover] {task_id} 上游已判定 {res.get('status')}，停止盯守", flush=True)
                 return
@@ -1267,7 +1271,8 @@ async def _recover_work_loop(task_id: str) -> None:
                     if pair:
                         targets.remove(target)
                     else:
-                        store.update(task_id, recover_state="gave_up", error=failure_text.summarize(
+                        store.update(task_id, recover_state="gave_up",
+                                     **upstream_error.failure_fields(res), error=failure_text.summarize(
                             (row.get("error") or "") + "；原会话已明确结束：" + (res.get("detail") or "")))
                         return
             except Exception as exc:
@@ -1349,7 +1354,7 @@ async def _resume_pure_conversation(row: dict) -> None:
                     pool._mark_abnormal(account, res.get("detail") or "豆包套餐不支持创作")
                 upstream = "豆包" if sites.is_doubao_model(row.get("model")) else "dola"
                 store.update(task_id, status="failed", queue_note="", finished_at=time.time(),
-                             error=failure_text.summarize(
+                             **upstream_error.failure_fields(res), error=failure_text.summarize(
                                  f"{upstream} 最终状态 {res.get('status')}：{(res.get('detail') or '')[:200]}"))
                 return
             await asyncio.sleep(max(1, config.RESUME_POLL_SECONDS))
@@ -1420,7 +1425,7 @@ async def _resume_task(row: dict):
                      finished_at=time.time(), **fields)
     except Exception as e:
         store.update(task_id, status="failed", error=failure_text.summarize(str(e)),
-                     finished_at=time.time())
+                     **upstream_error.failure_fields(e), finished_at=time.time())
     finally:
         if acquired:
             await key_limiter.release(api_key_hash)
@@ -2488,6 +2493,7 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
     return TaskResponse(
         id=row["id"], status=status, model=row["model"],
         prompt=row["prompt"], video_url=video_url, error=row["error"], videos=_task_videos(row) or None,
+        **upstream_error.public_fields(row),
         progress=_progress_payload(status=status, created_at=row["created_at"],
                                    duration=row["duration"]),
         video_url_hd=video_url_hd,
@@ -2751,6 +2757,7 @@ async def ark_get_task(task_id: str, authorization: str | None = Header(default=
         result["videos"] = _task_videos(row)
     if row.get("error"):
         result["error"] = row["error"]
+    result.update(upstream_error.public_fields(row))
     if row.get("requested_resolution"):
         result["resolution"] = row["requested_resolution"]
         note = _upscale_note(row)
@@ -3662,7 +3669,7 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
                 if result.get("delivery") == "link":
                     TEST_JOBS[task_id]["result"] = {**result, "video_url": fields["video_url"]}
             store.update(task_id, status=status, error=failure_text.summarize(err),
-                         finished_at=time.time())
+                         **upstream_error.failure_fields(result), finished_at=time.time())
             if result.get("recoverable"):
                 _maybe_start_recovery(task_id, TimeoutError(err))
     except Exception as exc:
@@ -3671,7 +3678,7 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
         try:
             status = "风控" if _is_risk_error(str(exc)) else "failed"
             store.update(task_id, status=status, error=failure_text.summarize(str(exc)),
-                         finished_at=time.time())
+                         **upstream_error.failure_fields(exc), finished_at=time.time())
         except Exception:
             pass
 

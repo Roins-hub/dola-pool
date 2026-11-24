@@ -32,6 +32,7 @@ from work_reply import (
     work_limit_until,
 )
 import config
+import upstream_error
 import cred_store
 import dola_responder
 import failure_text
@@ -2228,14 +2229,14 @@ class BrowserPool:
                     "conversation_id": result.get("conversation_id"),
                 }
             except (PreSubmissionUploadError, PreSubmissionParametersError) as exc:
-                return {"ok": False, "account": account, "error": str(exc)}   # 没发出去，不是超时
+                return {"ok": False, "account": account, "error": str(exc), **upstream_error.failure_fields(exc)}   # 没发出去，不是超时
             except TimeoutError as exc:
                 if weekly:
                     self.note_work_suspect(account)
-                return {"ok": False, "account": account, "error": f"生成超时: {exc}", "recoverable": True}
+                return {"ok": False, "account": account, "error": f"生成超时: {exc}", **upstream_error.failure_fields(exc), "recoverable": True}
             except ShortClipError as exc:
                 # 只给了短视频（例如 30 秒只回 15 秒）：不拼接、也不把这个号标成失败。
-                return {"ok": False, "account": account, "error": str(exc)[:300]}
+                return {"ok": False, "account": account, "error": str(exc)[:300], **upstream_error.failure_fields(exc)}
             except LoginExpiredError as exc:
                 self._set_risk(account, str(exc))
                 return {"ok": False, "account": account, "error": f"登录态失效: {exc}"}
@@ -2243,32 +2244,32 @@ class BrowserPool:
                 return {"ok": False, "account": account, "error": f"profile 缺失: {exc}"}
             except WorkQuotaError as exc:
                 self._mark_work_blocked(account, exc.until, str(exc))
-                return {"ok": False, "account": account, "error": str(exc)[:1500]}
+                return {"ok": False, "account": account, "error": str(exc)[:1500], **upstream_error.failure_fields(exc)}
             except DoubaoModelLockedError as exc:
                 self.set_tier(account, "free")
-                return {"ok": False, "account": account, "error": str(exc)[:300]}
+                return {"ok": False, "account": account, "error": str(exc)[:300], **upstream_error.failure_fields(exc)}
             except DoubaoPlanUnavailableError as exc:
                 self._mark_abnormal(account, str(exc))
-                return {"ok": False, "account": account, "error": str(exc)[:500]}
+                return {"ok": False, "account": account, "error": str(exc)[:500], **upstream_error.failure_fields(exc)}
             except (AIAccountUnavailableError, VideoSkillUnavailableError) as exc:
                 self._mark_abnormal(account, str(exc))
-                return {"ok": False, "account": account, "error": str(exc)[:1500]}
+                return {"ok": False, "account": account, "error": str(exc)[:1500], **upstream_error.failure_fields(exc)}
             except DoubaoQuotaError as exc:
                 self._mark_daily_limit(account, str(exc), until=quota_recover_at(str(exc)))
-                return {"ok": False, "account": account, "error": str(exc)[:300]}
+                return {"ok": False, "account": account, "error": str(exc)[:300], **upstream_error.failure_fields(exc)}
             except Exception as exc:
                 from generation_errors import WorkVideoMismatchError
                 if isinstance(exc, WorkVideoMismatchError):
                     result = exc.result
                     local = result.get("local_path")
-                    return {**result, "ok": False, "account": account, "error": str(exc),
+                    return {**result, "ok": False, "account": account, "error": str(exc), **upstream_error.failure_fields(exc),
                             "video_url": f"{config.PUBLIC_BASE}/videos/{Path(local).name}" if local else result.get("video_url", "")}
                 if "登录态失效" in str(exc):
                     self._set_risk(account, str(exc))
                 else:
                     # 测试生成同样要按上游文案落状态：瞬时限流只短冷却，不当成永久失败。
                     self._note_upstream_failure(account, str(exc))
-                return {"ok": False, "account": account, "error": str(exc)[:300]}
+                return {"ok": False, "account": account, "error": str(exc)[:300], **upstream_error.failure_fields(exc)}
 
     async def generate_image(self, prompt: str, model: str, *, ratio: str | None = None,
                              size: str | None = None, n: int | None = None,

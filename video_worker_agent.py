@@ -27,6 +27,7 @@ from patchright.async_api import async_playwright
 
 from account_transport import http_proxy, redact_error
 import config
+import upstream_error
 import dola_responder
 import failure_text
 import sites
@@ -1070,9 +1071,11 @@ class _WorkSession:
                 from doubao_gen import DoubaoQuotaError, looks_like_quota_exhausted
                 detail = next((reply_text(m)[-1500:] for m in reversed(messages)
                                if looks_like_quota_exhausted(reply_text(m))), "豆包视频生成额度已用完（cta_limit）")
-                return DoubaoQuotaError(detail)
-            return (self.reply_failure(detail, ran_tools=True)
-                    or UpstreamReplyError("生成失败", f"豆包视频工具失败（{reason}）：{detail}", generation_started=True))
+                return upstream_error.attach(DoubaoQuotaError(detail), upstream_error.from_message(message))
+            failure = (self.reply_failure(detail, ran_tools=True)
+                       or UpstreamReplyError("生成失败", f"豆包视频工具失败（{reason}）：{detail}",
+                                             generation_started=True))
+            return upstream_error.attach(failure, upstream_error.from_message(message))
         return None
 
     async def deliver(self, vm_str, conversation_id):
@@ -1424,7 +1427,8 @@ async def fetch_work_conversation_video(account: str, conversation_id: str, *, o
             failure = session.reply_failure(reply_text(latest), ran_tools=any(generation_started(m) for m in bots))
         if failure:
             return {"status": "failed", "local_path": "", "final": True,
-                    "detail": str(failure), "work_limit_until": getattr(failure, "until", None),
+                    "detail": str(failure), **upstream_error.failure_fields(failure),
+                    "work_limit_until": getattr(failure, "until", None),
                     "work_quota_blocked": isinstance(failure, WorkQuotaError),
                     "doubao_quota_blocked": type(failure).__name__ == "DoubaoQuotaError",
                     "doubao_plan_unavailable": type(failure).__name__ == "DoubaoPlanUnavailableError"}
