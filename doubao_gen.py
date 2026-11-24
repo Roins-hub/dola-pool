@@ -44,6 +44,8 @@ log = logging.getLogger("dola.doubao")
 
 CONFIRM_REPLY = "确认生成"
 PAID_SCENE = "gen_video_by_downgraded_model"
+# 参考图里有人物时，豆包确认参数之后可能再弹一张「素材均已获充分授权」的确认卡，点了才开始生成
+AUTH_SCENE = "creation_portrait_video_auth_confirm"
 LOGIN_EXPIRED_CODES = ("710012001",)
 
 
@@ -329,6 +331,11 @@ def looks_like_paid_prompt(text: str, buttons: list[dict] | None = None) -> bool
     if any(str((b or {}).get("scene")) == PAID_SCENE for b in buttons or []):
         return True
     return "付费额度" in c and ("是否继续" in c or "是否" in c) and "将消耗付费额度，并" not in c
+
+
+def wants_authorization(message: dict) -> bool:
+    """停在素材/肖像授权确认卡上：只认按钮 scene，不从文案推断。"""
+    return any(str((b or {}).get("scene")) == AUTH_SCENE for b in message.get("buttons") or [])
 
 
 def looks_like_accepted(text: str) -> bool:
@@ -753,6 +760,13 @@ def generate_doubao_video(
                             continue
                         raise VideoSkillUnavailableError(
                             f"{account} 豆包由普通对话助手回复，未进入视频创作。上游原文：{text[:1000]}")
+                    if wants_authorization(m) and not accepted and not failed:
+                        # 授权承诺只能由素材提供者作出：不代点、不交给 AI 判断，也不换号重提
+                        raise UpstreamReplyError(
+                            "素材授权待确认",
+                            f"豆包要求确认参考图素材（含人物肖像）已获授权后才开始生成；尚未生成，号池未代为确认。"
+                            f"上游原文：{text[:800]}",
+                            generation_started=False, allow_account_retry=False)
                     if looks_like_plan_unavailable(text):
                         raise DoubaoPlanUnavailableError(f"{account} 豆包套餐不支持创作：{text[:300]}")
                     if looks_like_model_locked(text):
@@ -921,7 +935,10 @@ def fetch_conversation_video(cookie_state_path, conversation_id: str, *, proxy: 
         failed = final_failure(msgs)
         if failed:
             detail = f"fail_code={failed['code']}；{detail}"     # 放最前：落库时只截取开头
-        final = bool(failed) or bool(reference_error) and not any(m["generating"] for m in msgs if m["bot"])
+        waiting_auth = wants_authorization(latest) and not any(m["generating"] for m in msgs if m["bot"])
+        if waiting_auth:
+            detail = f"停在素材授权确认，未生成；{detail}"
+        final = bool(failed) or waiting_auth or bool(reference_error) and not any(m["generating"] for m in msgs if m["bot"])
         final = final or bool(last) and (plain_chat or plan_unavailable or looks_like_model_locked(last) or looks_like_quota_exhausted(last)
                                 or looks_like_paid_prompt(last) or dp.looks_like_content_refusal(last)
                                 or (looks_like_confirm_request(last) and not looks_like_accepted(last)))
