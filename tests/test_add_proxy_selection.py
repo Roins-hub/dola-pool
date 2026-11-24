@@ -59,7 +59,8 @@ def test_cookie_first_probe_uses_selected_proxy(tmp_path, monkeypatch, proxy_id)
     assert result["verified"] and events[-1] == ("probe", expected_proxy)
 
 
-def test_cookie_verification_without_bound_proxy_cannot_bypass_isolation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("disabled", [True, False])
+def test_cookie_verification_skips_a_disabled_proxy_but_allows_no_binding(tmp_path, monkeypatch, disabled):
     import account_transport
     import config
     import cookie_login
@@ -68,12 +69,21 @@ def test_cookie_verification_without_bound_proxy_cannot_bypass_isolation(tmp_pat
     monkeypatch.setattr(config, "ISOLATE_SHARED_EGRESS", True)
     monkeypatch.setattr(cookie_login, "browser_backend_available", lambda: (False, "test"))
     monkeypatch.setattr(account_transport.proxy_store, "get_account_proxy", lambda name: None)
-    def forbidden(*args, **kwargs):
-        pytest.fail("缺绑定代理时不得请求登录验证接口")
-    monkeypatch.setitem(sys.modules, "doubao_gen", SimpleNamespace(probe_login=forbidden))
+    monkeypatch.setattr(account_transport.proxy_store, "binding_disabled", lambda name: disabled)
+    monkeypatch.setattr(account_transport.proxy_store, "account_proxy_url", lambda name: None)
+    proxies = []
+    def probe(state, proxy=""):
+        if disabled:
+            pytest.fail("绑定的代理停用时不得请求登录验证接口")
+        proxies.append(proxy or None)
+        return True, ""
+    monkeypatch.setitem(sys.modules, "doubao_gen", SimpleNamespace(probe_login=probe))
     result = run(cookie_login.import_cookie_account("acc1", {"cookies": [
         {"name": "sessionid", "value": "test-only", "domain": ".doubao.com"}]}))
-    assert not result["verified"] and "禁止直连" in result["verify_error"]
+    if disabled:
+        assert not result["verified"] and "禁止直连" in result["verify_error"]
+    else:
+        assert result["verified"] and proxies == [None]
     assert Path(result["cookie_state_file"]).exists()
 
 

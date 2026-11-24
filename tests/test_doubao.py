@@ -392,7 +392,10 @@ def test_dispatch_routes_by_site_and_tier(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("kind,requested,expected_work", [
     ("work", "auto", True),
-    ("personal", "work", False),
+    ("work", "work", True),
+    ("personal", "auto", False),
+    ("personal", "chat", False),
+    ("personal", "work", True),
 ])
 def test_auto_dispatch_uses_cookie_account_kind_for_doubao_route(
         tmp_path, monkeypatch, kind, requested, expected_work):

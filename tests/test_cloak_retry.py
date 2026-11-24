@@ -17,6 +17,8 @@ def retry_ready(monkeypatch):
     monkeypatch.setattr(cloak_retry, "find_spec", lambda name: object())
     import account_transport
     monkeypatch.setattr(account_transport, "http_proxy", lambda account: "http://127.0.0.1:1")
+    monkeypatch.setattr(account_transport.proxy_store, "binding_disabled", lambda account: False)
+    monkeypatch.setattr(account_transport.proxy_store, "get_account_proxy", lambda account: None)
 
 
 def test_retry_ready_when_cloak_installed_and_proxy_bound(retry_ready):
@@ -38,17 +40,17 @@ def test_no_retry_without_cloakbrowser(retry_ready, monkeypatch):
     assert "未安装" in cloak_retry.unavailable_reason("acc1", 10)
 
 
-def test_no_retry_without_proxy(retry_ready, monkeypatch):
+def test_retry_allows_an_account_with_no_binding(retry_ready, monkeypatch):
     import account_transport
     monkeypatch.setattr(account_transport, "http_proxy", lambda account: None)
-    assert "代理" in cloak_retry.unavailable_reason("acc1", 10)
+    assert cloak_retry.unavailable_reason("acc1", 10) == ""
 
 
 def test_no_retry_when_proxy_lookup_refuses(retry_ready, monkeypatch):
     import account_transport
 
     def refuse(account):
-        raise RuntimeError("严格隔离模式下账号没有启用的绑定代理，禁止直连")
+        raise RuntimeError("账号绑定的代理已停用，禁止直连")
     monkeypatch.setattr(account_transport, "http_proxy", refuse)
     assert "禁止直连" in cloak_retry.unavailable_reason("acc1", 10)
 

@@ -383,7 +383,8 @@ def test_doubao_work_only_cookie_forces_work_mode_in_fixed_account_test(tmp_path
     assert result["ok"] and calls[0]["model"] == "doubao-seedance-2.0-fast"
 
 
-def test_personal_doubao_cookie_keeps_auto_mode(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode,effective", [("auto", "chat"), ("chat", "chat"), ("work", "work")])
+def test_personal_doubao_account_follows_the_requested_mode(tmp_path, monkeypatch, mode, effective):
     bp_module, pool = _work_pool(tmp_path, monkeypatch, ["db"])
     monkeypatch.setattr(config, "PURE_API_ENABLED", True)
     state = Path(pool.accounts_dir) / "db" / "cookie_state.json"
@@ -392,8 +393,7 @@ def test_personal_doubao_cookie_keeps_auto_mode(tmp_path, monkeypatch):
         {"domain": ".doubao.com", "name": "has_biz_token", "value": "false"},
     ]}), encoding="utf-8")
     pool.set_source("db", "cookie")
-    assert pool.execution_mode_for("db") == "auto"
-    assert pool.execution_mode_for("db", "work") == "auto"
+    assert pool.execution_mode_for("db", mode) == effective
     monkeypatch.setattr(bp_module, "ensure_web_playable", lambda p: p)
     output = tmp_path / "personal.mp4"
     output.write_bytes(b"clip")
@@ -405,11 +405,13 @@ def test_personal_doubao_cookie_keeps_auto_mode(tmp_path, monkeypatch):
 
     _agent(monkeypatch, work_generate)
     import doubao_gen
-    monkeypatch.setattr(doubao_gen, "generate_doubao_video", lambda **kwargs: {
+    chat_calls = []
+    monkeypatch.setattr(doubao_gen, "generate_doubao_video", lambda **kwargs: chat_calls.append(kwargs) or {
         "local_path": str(output), "account": "db"})
     result = _run(pool.test_generate("db", "湖面", "16:9", 15,
-                                     "doubao-seedance-2.0-fast", execution_mode="work"))
-    assert result["ok"] and not work_calls
+                                     "doubao-seedance-2.0-fast", execution_mode=mode))
+    assert result["ok"]
+    assert (len(chat_calls), len(work_calls)) == ((0, 1) if effective == "work" else (1, 0))
 
 
 def test_short_work_result_preserves_video_and_claims_only_one_quota(tmp_path, monkeypatch):

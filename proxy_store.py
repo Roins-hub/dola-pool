@@ -383,6 +383,19 @@ def get_account_proxy(account: str) -> dict | None:
         conn.close()
 
 
+def binding_disabled(account: str) -> bool:
+    """绑了代理但代理已停用。和「没绑定」不同：这种号不能悄悄改走默认代理或直连。"""
+    conn = _connect()
+    try:
+        return conn.execute(
+            """SELECT 1 FROM account_proxy ap LEFT JOIN proxies p ON p.id = ap.proxy_id
+               WHERE ap.account=? AND COALESCE(p.enabled, 0)<>1""",
+            (account,),
+        ).fetchone() is not None
+    finally:
+        conn.close()
+
+
 def forget_account(account: str) -> None:
     """账号删除时清掉它的代理绑定与出口会话，避免同名新号继承旧状态。"""
     conn = _connect()

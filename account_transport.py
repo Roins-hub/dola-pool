@@ -13,14 +13,18 @@ def redact_error(error, *, limit=1500):
 
 
 def account_proxy_url(account):
-    """Resolve the account route once and enforce isolation for every HTTP client."""
+    """Resolve the account route once and enforce isolation for every HTTP client.
+
+    An account with no binding uses DOLA_PROXY or the server's own network. A binding that is
+    disabled or unusable never falls back: the same login would show up from another address.
+    """
     info = proxy_store.get_account_proxy(account) if account else None
-    if config.ISOLATE_SHARED_EGRESS and not info:
-        raise RuntimeError('严格隔离模式下账号没有启用的绑定代理，禁止直连')
+    if config.ISOLATE_SHARED_EGRESS and account and not info and proxy_store.binding_disabled(account):
+        raise RuntimeError('账号绑定的代理已停用，禁止直连')
     url = proxy_store.account_proxy_url(account) if account else config.PROXY
     if info and info.get('mode') == 'extract' and not (proxy_store.get_session(account) or {}).get('node_id'):
         raise RuntimeError('账号代理没有可用节点，禁止直连回退')
-    if config.ISOLATE_SHARED_EGRESS and (not url or str(url).lower() in ('direct', 'none', 'off', 'no')):
+    if config.ISOLATE_SHARED_EGRESS and info and (not url or str(url).lower() in ('direct', 'none', 'off', 'no')):
         raise RuntimeError('账号代理不可用，禁止直连')
     return url or None
 
@@ -37,6 +41,16 @@ def http_proxy(account):
     if url and url.startswith(('socks5://', 'socks5h://')):
         return socks_relay.local_http_proxy_for(url)
     return url or None
+
+
+def browser_proxy(account):
+    """Route for a CloakBrowser launch: the bound proxy only, or the default route when nothing is bound."""
+    if proxy_store.binding_disabled(account):
+        raise RuntimeError('账号绑定的代理已停用，禁止直连')
+    proxy = http_proxy(account)
+    if not proxy and proxy_store.get_account_proxy(account):
+        raise RuntimeError('账号代理不可用，禁止直连')
+    return proxy
 
 
 EGRESS_CHECK_URL = 'https://www.dola.com/favicon.ico'

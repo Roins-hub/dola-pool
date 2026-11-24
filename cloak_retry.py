@@ -21,10 +21,9 @@ def unavailable_reason(account: str, duration) -> str:
         return "30 秒走扩展注入，CloakBrowser 里没测过"
     if find_spec("cloakbrowser") is None:
         return "未安装 CloakBrowser"
-    from account_transport import http_proxy
+    from account_transport import browser_proxy
     try:
-        if not http_proxy(account):
-            return "没有绑定代理"
+        browser_proxy(account)
     except Exception as exc:
         return str(exc)[:80]
     return ""

@@ -112,7 +112,7 @@ def _gated(bp, gate, calls, fail_with=TimeoutError):
     """
     async def fake(account, prompt, ratio, duration, model, *,
                    on_conversation_id, on_poll, on_balance,
-                   reference_image_paths, on_retry=None, work_mode=False, video_count=1):
+                   reference_image_paths, on_retry=None, work_mode=False, video_count=1, execution_mode="auto"):
         calls.append(account)
         await gate.wait()
         raise fail_with("test-gate")
@@ -304,7 +304,7 @@ def test_started_at_is_not_pushed_back_by_account_switch(tmp_path, monkeypatch):
 
         async def fake(account, prompt, ratio, duration, model, *,
                        on_conversation_id, on_poll, on_balance,
-                       reference_image_paths, on_retry=None, work_mode=False, video_count=1):
+                       reference_image_paths, on_retry=None, work_mode=False, video_count=1, execution_mode="auto"):
             row = server.store.get(holder["id"])
             seen.append((account, row["started_at"]))
             if len(seen) == 1:

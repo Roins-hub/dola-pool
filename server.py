@@ -393,7 +393,7 @@ class VideoGenRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     size: str | None = None
     ratio: str | None = None
-    execution_mode: Literal["auto", "work"] = "auto"
+    execution_mode: Literal["auto", "chat", "work"] = "auto"
     video_count: Literal[1, 2] = 1
     duration: int | None = Field(None, ge=4, le=30)
     # 时长别名：new-api 的 sora/vinted 任务插件会把画布传来的 duration 统一改写成
@@ -419,7 +419,7 @@ class TestGenRequest(BaseModel):
     model: str = "seedance-2.0-fast"
     duration: int = Field(10, ge=4, le=30)
     ratio: str | None = None
-    execution_mode: Literal["auto", "work"] = "auto"
+    execution_mode: Literal["auto", "chat", "work"] = "auto"
     video_count: Literal[1, 2] = 1
     # 号处于风控/限流暂停/没绑代理等状态时，先返回提醒；确认后带 force=true 再发
     force: bool = False
@@ -435,6 +435,8 @@ class TaskResponse(BaseModel):
     error: str | None = None
     failure_code: str | None = None
     upstream_error: dict | None = None
+    # 实际执行方式 chat / work；还没派到号、要看账号类型才能定的豆包 auto 任务显示 auto
+    execution_mode: str | None = None
     # 排队/进度说明：客户端可以拿它显示「排队中，预计 N 分钟」。
     # 字段是附加的（老客户端忽略即可，不影响原有 status/video_url 语义）。
     progress: dict | None = None
@@ -525,7 +527,12 @@ def _model_version(model) -> str | None:
     return None
 
 
-def _resolve_model_for_duration(model, duration) -> str | None:
+def _v20_durations(execution_mode="auto"):
+    """2.0 能下发的时长；15 / 30 秒是工作模式的，普通模式（chat）没有。"""
+    return config.V20_BASE_DURATIONS if execution_mode == "chat" else config.V20_DURATIONS
+
+
+def _resolve_model_for_duration(model, duration, execution_mode="auto") -> str | None:
     """模型-时长组合归一化；无法组合时返回 None。
 
     - 请求里写明了 2.5/2.0 版本 → 只允许该版本支持的时长，避免悄悄换型号。
@@ -539,19 +546,19 @@ def _resolve_model_for_duration(model, duration) -> str | None:
         return None
     version = _model_version(model)
     if version is None:
-        if duration in config.V20_DURATIONS:
+        if duration in _v20_durations(execution_mode):
             version = "seedance-2.0"
         else:
             # 30 秒一直是 2.5；任意时长（非原生档位）也只有 2.5 能出。
             version = "seedance-2.5"
-    if version == "seedance-2.0" and duration not in config.V20_DURATIONS:
+    if version == "seedance-2.0" and duration not in _v20_durations(execution_mode):
         return None   # 2.0-fast 只出 V20_DURATIONS 里的档位（2026-10-29 起只剩 5/10 秒）
     if not _duration_supported(version, duration):
         return None
     return version
 
 
-def _supported_durations_for(version: str) -> list[int]:
+def _supported_durations_for(version: str, execution_mode="auto") -> list[int]:
     """某个 seedance 版本当前能下发的时长。
 
     用 config.all_durations() 而不是模块级常量 ALL_DURATIONS：后者是 import 时
@@ -559,7 +566,7 @@ def _supported_durations_for(version: str) -> list[int]:
     """
     if version == "seedance-2.5":
         return config.all_durations()
-    return list(config.V20_DURATIONS)
+    return list(_v20_durations(execution_mode))
 
 
 def _duration_supported(version: str, duration: int) -> bool:
@@ -771,7 +778,8 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
     reference_root = None
     try:
         task_row = store.get(task_id) or {}
-        execution_mode = task_row.get("execution_mode") or "auto"
+        # 派号用客户请求的方式：execution_mode 会被改成上一个号的实际方式，重启后重新受理不能拿它派号
+        execution_mode = task_row.get("requested_mode") or task_row.get("execution_mode") or "auto"
         video_count = int(task_row.get("video_count") or 1)
         pair_context = _pair_state(task_row)
         if pair_context.get("pending") or pair_context.get("active"):
@@ -1000,6 +1008,15 @@ def _is_wait_timeout(exc: BaseException) -> bool:
 
 def _is_work_task(row: dict) -> bool:
     return work_reply.is_work_request(row.get("model"), row.get("duration"), row.get("execution_mode") or "auto")
+
+
+def _task_mode(row: dict) -> str:
+    """给人看的实际执行方式。老任务存的 auto 按当时的规则换算。"""
+    if _is_work_task(row):
+        return "work"
+    if (row.get("execution_mode") or "auto") == "auto" and sites.is_doubao_model(row.get("model")) and not row.get("account"):
+        return "auto"
+    return "chat"
 
 
 def _is_work_pair_task(row: dict) -> bool:
@@ -1817,7 +1834,7 @@ LONG_VIDEO_REJECT_MESSAGE = (
     "如需 30 秒，请让管理员开启 DOLA_30S_MODE=pair（两段 15 秒拼接，消耗双倍额度）")
 
 
-def _reject_unsupported_long(duration, model: str = "") -> None:
+def _reject_unsupported_long(duration, model: str = "", execution_mode="auto") -> None:
     """DOLA_30S_MODE=reject（默认）：30 秒及以上受理时就拒，不派号、不占额度。
 
     2.0 的 30 秒在开着工作模式时用两段 15 秒拼，不受这个设置影响。
@@ -1826,13 +1843,13 @@ def _reject_unsupported_long(duration, model: str = "") -> None:
         seconds = int(duration or 0)
     except (TypeError, ValueError):
         return
-    if work_reply.uses_work_pair(model, seconds):
+    if work_reply.uses_work_pair(model, seconds, execution_mode):
         return
     if seconds > 15 and config.LONG_VIDEO_MODE == "reject":
         raise HTTPException(422, LONG_VIDEO_REJECT_MESSAGE.format(d=seconds))
 
 
-def _reject_unaffordable(model: str, duration) -> None:
+def _reject_unaffordable(model: str, duration, execution_mode="auto") -> None:
     """上游报价超过一个号一整天的额度：号池里没有任何号付得起，受理时直接拒（2.1.9）。
 
     工作模式（2.0 的 15 秒、两段 15 秒拼的 30 秒）用每号 7 天 1 条的单独额度，不扣每日点数，
@@ -1842,7 +1859,8 @@ def _reject_unaffordable(model: str, duration) -> None:
         seconds = int(duration or 0)
     except (TypeError, ValueError):
         seconds = 0
-    if work_reply.uses_work_mode(model, seconds) or work_reply.uses_work_pair(model, seconds):
+    if (work_reply.uses_work_mode(model, seconds, execution_mode)
+            or work_reply.uses_work_pair(model, seconds, execution_mode)):
         return
     from browser_pool import duration_cost
     cost = duration_cost(model, duration)
@@ -1882,8 +1900,8 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
     count_error = work_reply.work_count_error(model, duration, execution_mode, video_count)
     if count_error:
         raise HTTPException(422, count_error)
-    if execution_mode not in ("auto", "work"):
-        raise HTTPException(422, "execution_mode 只支持 auto / work")
+    if execution_mode not in work_reply.EXECUTION_MODES:
+        raise HTTPException(422, "execution_mode 只支持 auto / chat / work")
     if execution_mode == "work":
         error = work_reply.work_request_error(model, duration)
         if error:
@@ -1901,18 +1919,18 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
     elif execution_mode == "work":
         resolved = _model_version(model)
     else:
-        _reject_unsupported_long(duration, model)
-        resolved = _resolve_model_for_duration(model, duration)
+        _reject_unsupported_long(duration, model, execution_mode)
+        resolved = _resolve_model_for_duration(model, duration, execution_mode)
         if resolved is not None:
-            _reject_unaffordable(resolved, duration)
+            _reject_unaffordable(resolved, duration, execution_mode)
     if resolved is None:
         version = _model_version(model)
         if version is not None:
-            supported = _supported_durations_for(version)
+            supported = _supported_durations_for(version, execution_mode)
             raise HTTPException(
                 422,
-                f"{_public_model(version)} 仅支持 {'/'.join(map(str, supported))} 秒视频"
-                f"（收到 {duration} 秒）",
+                f"{_public_model(version)} {'普通模式（chat）' if execution_mode == 'chat' else ''}"
+                f"仅支持 {'/'.join(map(str, supported))} 秒视频（收到 {duration} 秒）",
             )
         raise HTTPException(
             422,
@@ -1987,6 +2005,7 @@ async def _submit_task(client, model, prompt, ratio, duration, reference_images,
         progress=_progress_payload(status="queued", created_at=time.time(),
                                    duration=duration),
         resolution=plan["requested"], upscale_note=_upscale_note(plan),
+        execution_mode=_task_mode({"model": model, "duration": duration, "execution_mode": execution_mode}),
     )
 
 
@@ -2500,6 +2519,7 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
                                    duration=row["duration"]),
         video_url_hd=video_url_hd,
         resolution=row.get("requested_resolution"), upscale_note=_upscale_note(row),
+        execution_mode=_task_mode(row),
     )
 
 
@@ -2707,14 +2727,15 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
             seconds = 5
         resp = await _submit_task(client, requested_model, prompt, ratio, seconds, reference_images,
                                   reference_source=body.get("reference_source"), resolution=resolution,
-                                  execution_mode=body.get("execution_mode", "auto"), video_count=body.get("video_count", 1))
+                                  execution_mode=body.get("execution_mode") or "auto", video_count=body.get("video_count", 1))
         return {"id": resp.id, "status": resp.status}
+    execution_mode = body.get("execution_mode") or "auto"
     version = _model_version(requested_model)
     if version is not None:
         # 显式指定了版本：只在该版本支持的时长里就近取档。
         allowed = [
             d for d in client["allowed_durations"]
-            if d in _supported_durations_for(version)
+            if d in _supported_durations_for(version, execution_mode)
         ]
     else:
         # 模型名无法识别：先按请求时长取档，再由时长挑一个支持的 seedance 版本。
@@ -2724,7 +2745,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
         ]
     # 部分画布工具用 seconds 传时长（new-api 的 sora 插件也会改写成 seconds）。
     duration = _pick_duration(body.get("duration") or body.get("seconds"), allowed)
-    model = _resolve_model_for_duration(requested_model, duration)
+    model = _resolve_model_for_duration(requested_model, duration, execution_mode)
     if model is None:
         raise HTTPException(
             422,
@@ -2735,7 +2756,7 @@ async def ark_create_task(body: dict, authorization: str | None = Header(default
         )
     resp = await _submit_task(client, model, prompt, ratio, duration, reference_images,
                               reference_source=body.get("reference_source"), resolution=resolution,
-                              execution_mode=body.get("execution_mode", "auto"), video_count=body.get("video_count", 1))
+                              execution_mode=execution_mode, video_count=body.get("video_count", 1))
     return {"id": resp.id, "status": resp.status}
 
 
@@ -3567,6 +3588,8 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         raise HTTPException(409, "该账号正在执行任务，稍后再试")
     execution_mode = body.execution_mode
     if pool.site_of(name) == sites.DOUBAO:
+        if execution_mode == "chat" and pool.execution_mode_for(name) == "work":
+            raise HTTPException(422, f"{name} 是豆包工作号，没有普通模式（chat）")
         execution_mode = pool.execution_mode_for(name, execution_mode)
     # 和客户 API 同一道时长检查：2.0-fast 网页只给 4～10 秒，直接请求 15 秒会被 dola 拒绝（2026-10-30 实测）
     version = _model_version(body.model)
@@ -3579,9 +3602,9 @@ async def admin_test_generate(name: str, body: TestGenRequest,
     if work_reply.uses_work_pair(body.model, body.duration, execution_mode):
         raise HTTPException(422, "测试生成只用一个号，跑不了 30 秒拼接（要两个号各出 15 秒）")
     if (version == "seedance-2.0" and not sites.is_doubao_model(body.model)
-            and execution_mode != "work" and body.duration not in config.V20_DURATIONS):
+            and execution_mode != "work" and body.duration not in _v20_durations(execution_mode)):
         raise HTTPException(
-            422, f"{_public_model(version)} 仅支持 {'/'.join(map(str, config.V20_DURATIONS))} 秒视频"
+            422, f"{_public_model(version)} 仅支持 {'/'.join(map(str, _v20_durations(execution_mode)))} 秒视频"
                  f"（收到 {body.duration} 秒）")
     if not body.force:
         warnings = pool.test_generate_warnings(name, body.model, body.duration, execution_mode=execution_mode)
@@ -4452,6 +4475,7 @@ async def admin_tasks(limit: int = 50, q: str = "", x_admin_key: str | None = He
         t.pop("video_model", None)   # 续签用的上游元数据，面板用不到且体积大
         t.pop("upscale_job", None)
         t["upscale_public_url"] = _upscale_public_url(t)
+        t["mode"] = _task_mode(t)
         # 排队中 / 生成中的任务带上预计耗时（与客户接口的 progress 同一口径：
         # 同时长近 3 天已完成任务的平均生成耗时，样本不足用兜底表）
         if t.get("status") in ("queued", "processing"):

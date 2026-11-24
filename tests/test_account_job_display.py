@@ -56,6 +56,7 @@ assert(srcBadge(allAccounts[0]).includes('工作号 · 仅工作模式'));
 openTestGen('acc153');
 assert(rendered.includes('value="doubao-seedance-2.0-fast" selected'));
 assert(!rendered.includes('value="auto"'));
+assert(!rendered.includes('value="chat"'));
 assert(rendered.includes('value="work" selected'));
 assert(rendered.includes('执行方式'));
 assert(rendered.includes('本次任务的视频条数'));
@@ -63,13 +64,12 @@ assert(rendered.includes('<option value="15" selected>15</option>'));
 allAccounts.push({name:'acc154',site:'doubao',doubao_account_type:'personal'});
 openTestGen('acc154');
 assert(rendered.includes('value="doubao-seedance-2.0-mini" selected'));
-assert(!rendered.includes('执行方式'));
-assert(!rendered.includes('id="tg_mode"'));
+assert(rendered.includes('value="auto" selected')&&rendered.includes('value="chat"')&&rendered.includes('value="work"'));
 assert(!rendered.includes('本次任务的视频条数'));
 assert(!rendered.includes('id="tg_count"'));
 allAccounts.push({name:'acc155',site:'doubao',doubao_account_type:''});
 openTestGen('acc155');
-assert(!rendered.includes('执行方式'));
+assert(rendered.includes('value="auto" selected')&&rendered.includes('value="chat"'));
 assert(!rendered.includes('本次任务的视频条数'));
 """
     subprocess.run([node],input=script,text=True,encoding='utf8',capture_output=True,check=True,timeout=15)

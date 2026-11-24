@@ -127,16 +127,35 @@ def test_snapshot_failure_still_closes_browser(runtime, monkeypatch):
 
 
 @pytest.mark.parametrize("bound,url", [(None, ""), ({"id": "proxy"}, "")])
-def test_unbound_or_unavailable_proxy_cannot_launch(runtime, monkeypatch, bound, url):
+def test_disabled_or_unavailable_proxy_cannot_launch(runtime, monkeypatch, bound, url):
     mod, _, _, _ = runtime
     async def forbidden(*args, **kwargs):
         pytest.fail("browser must not start without an account proxy")
     monkeypatch.setitem(__import__("sys").modules, "cloakbrowser",
                         types.SimpleNamespace(launch_persistent_context_async=forbidden))
     monkeypatch.setattr(mod.proxy_store, "get_account_proxy", lambda account: bound)
+    monkeypatch.setattr(mod.proxy_store, "binding_disabled", lambda account: bound is None)
     monkeypatch.setattr(mod.proxy_store, "proxy_url_for", lambda account: url)
     with pytest.raises(RuntimeError, match="proxy"):
         run(mod.launch_account_context(None, "example"))
+
+
+@pytest.mark.parametrize("default,expected", [("", None), ("http://default.invalid:8080", "http://default.invalid:8080")])
+def test_account_with_no_binding_launches_on_the_default_route(runtime, monkeypatch, default, expected):
+    mod, _, _, _ = runtime
+    seen = []
+    async def launch(path, **kwargs):
+        seen.append(kwargs["proxy"])
+        return Context()
+    async def materialize(*args): pass
+    monkeypatch.setitem(__import__("sys").modules, "cloakbrowser",
+                        types.SimpleNamespace(launch_persistent_context_async=launch))
+    monkeypatch.setattr(mod, "_materialize_cloak_cookie_profile", materialize)
+    monkeypatch.setattr(mod.proxy_store, "get_account_proxy", lambda account: None)
+    monkeypatch.setattr(mod.proxy_store, "binding_disabled", lambda account: False)
+    monkeypatch.setattr(mod.proxy_store, "proxy_url_for", lambda account: default)
+    run(mod.launch_account_context(None, "example"))
+    assert (seen[0]["server"] if seen[0] else None) == expected
 
 
 def test_migration_failure_closes_launched_browser(runtime, monkeypatch):

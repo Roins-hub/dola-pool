@@ -42,9 +42,30 @@ curl -s "$BASE/v1/videos/video_xxx/content" -H "Authorization: Bearer $KEY" -o o
 
 要点：**提交是异步的**（立刻返回 `queued`），出片要轮询；`video_url` 是本服务转存后的稳定地址，不是 dola 的临时 CDN 链接。
 
-### 指定工作模式
+### 指定执行方式（chat / work / auto）
 
-JSON、multipart 和 Ark 接口支持 `execution_mode`：`auto`（默认，沿用现有流程）或 `work`（通过账号浏览器进入工作模式并选择视频技能）。豆包仍使用 `doubao-` 模型名，例如：
+JSON、multipart 和 Ark 接口支持 `execution_mode`：
+
+| 值 | 含义 |
+| --- | --- |
+| `chat` | 普通模式，不进入工作模式。豆包只派给有普通入口的账号，跳过工作号；Dola 的 2.0 只有 5 / 10 秒 |
+| `work` | 工作模式：用 CloakBrowser 打开网页，进入工作模式并选择视频技能。豆包工作号和个人号都可以派 |
+| `auto` | 默认，不传就是它。由号池决定，规则见下 |
+
+`auto` 的规则：
+
+| 站点 | 条件 | 实际方式 |
+| --- | --- | --- |
+| 豆包 | 派到工作号 | `work` |
+| 豆包 | 派到个人号或未识别的账号 | `chat` |
+| Dola | 2.0 的 15 秒，且面板开启了「2.0 的 15 秒」 | `work` |
+| Dola | 2.0 的 30 秒，且面板开启了「2.0 的 15 秒」 | 两段 15 秒 `work` 拼接 |
+| Dola | 其它 | `chat` |
+
+豆包的账号类型按 Cookie 里的 `has_biz_token`，或豆包启动接口返回的会话模式识别。同一个豆包 `auto` 请求换号后可能改用另一种方式；需要固定方式时请明确传 `chat` 或 `work`。
+显式指定的方式不会被悄悄换掉：`chat` 遇到全是工作号的号池、或工作模式独有的时长会直接报错，`work` 不会按普通模式执行。提交和查询结果里的 `execution_mode` 是实际采用的方式；豆包 `auto` 任务派到账号之前显示 `auto`。
+
+豆包仍使用 `doubao-` 模型名，例如：
 
 ```json
 {"model":"doubao-seedance-2.0-fast","prompt":"白鹭飞过清晨湖面","duration":15,"ratio":"16:9","execution_mode":"work"}
@@ -52,11 +73,11 @@ JSON、multipart 和 Ark 接口支持 `execution_mode`：`auto`（默认，沿�
 
 Dola 使用 `seedance-2.0-fast`。显式 `work` 的 30 秒请求尝试**单条原生 30 秒**；上游拒绝或返回短片时记录实际结果，保留已获得的视频，不自动拼接或补做。`auto` 的 Dola 30 秒仍按原有配置使用两段拼接。
 
-工作模式需要安装 CloakBrowser，并为账号绑定启用的代理。两个站点分别使用自己的 Cookie、技能和会话接口，共用全局并发、账号锁及工作模式浏览器名额。Dola 工作模式按每号 7 天一次免费额度记账；豆包沿用自身额度和套餐限制。付费确认会停止，发送后超时只读取原会话，不重复提交。
+工作模式需要安装 CloakBrowser。账号可以不绑定代理：没绑定时使用默认代理 `DOLA_PROXY`，留空则用服务器网络。绑定的代理已停用或没有可用节点时，不会改走默认代理或直连，任务在发送前停止。Dola 仍只接受日本 / 韩国出口，服务器不在日韩时 Dola 账号还是要绑代理。两个站点分别使用自己的 Cookie、技能和会话接口，共用全局并发、账号锁及工作模式浏览器名额。Dola 工作模式按每号 7 天一次免费额度记账；豆包沿用自身额度和套餐限制。付费确认会停止，发送后超时只读取原会话，不重复提交。
 
 工作模式发送前核对输入框正文与本次任务完全一致，技能自带示例或其他内容混入时结束并报告参数问题。豆包通过明确的发送按钮提交，点击后即使前端响应延迟也只查询原会话，避免重复发送。豆包 2.5 的专用技能安装和账号权益仍须由官方页面确认。
 
-管理员固定账号测试接口同样接受 `execution_mode`；显式 `work` 允许单账号原生 30 秒尝试。原生 30 秒的可用性以实际回执和成片时长为准。
+管理员固定账号测试接口同样接受 `execution_mode`（对工作号传 `chat` 返回 422）；显式 `work` 允许单账号原生 30 秒尝试。原生 30 秒的可用性以实际回执和成片时长为准。
 
 Dola 工作模式的单个任务可传 `"video_count": 2`、`"duration": 15`，要求同一个账号、同一个会话交付两条独立视频。返回后通过 `videos` 数组读取每条视频的地址和实际时长；`video_url` 保留第一条地址。只产出一条时任务报告条数不符并保留现有成片，不重新发送、不补做。此参数仅支持显式 Dola 工作模式的 15 秒请求，默认条数为 1。
 
@@ -331,6 +352,7 @@ Authorization: Bearer <API_KEY>
 | `status` | `queued` / `processing` / `completed` / `failed` |
 | `video_url` | 仅 `completed` 时有值；指向**本服务转存**的静态文件（稳定地址，不是 dola 临时 CDN） |
 | `error` | 仅 `failed` 时有值，是最末一次失败的原因（最多 500 字） |
+| `execution_mode` | 实际执行方式 `chat` / `work`；豆包 `auto` 任务派到账号之前为 `auto` |
 | `failure_code` | 失败错误码（字符串）。上游视频工具明确失败（`status=5`）时为它的非零 `fail_code`；`429` 表示本服务判定号池额度或次数已用完；未知为 `null` |
 | `upstream_error` | 上游诊断信息，只含 `ai_creation_res_code` 与 `ai_creation_tool_list`（每项仅 `status`、`fail_code`、符号型 `failure_reason`），不含凭据、地址或会话 ID；未知为 `null` |
 | `video_url_hd` | 这条视频超分后的高清地址（`/v/<id>-1080p.mp4`，2K / 4K 为 `-2k` / `-4k`）；没有超分时为 `null`。见 [UPSCALE.md](UPSCALE.md) |

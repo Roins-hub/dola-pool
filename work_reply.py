@@ -7,6 +7,8 @@ import config
 import sites
 
 WORK_DURATION = 15
+# 请求里的执行方式：chat=普通模式，work=工作模式，auto（默认）=豆包看账号类型、Dola 看模型时长和面板开关
+EXECUTION_MODES = ("auto", "chat", "work")
 MAX_CONCURRENCY = 5
 CONFIRM_RE = re.compile(r"确认|確認")
 QUOTA_NOTE = "工作模式免费额度已用：每号 7 天 1 条"
@@ -42,7 +44,9 @@ def apply_saved(saved: str | None, concurrency: str | None = None) -> dict:
 
 
 def uses_work_mode(model: str, duration, execution_mode: str = "auto") -> bool:
-    """这一单是否走工作模式：开关打开、Dola 的 2.0、15 秒。"""
+    """这一单是否走工作模式：显式 work，或 auto 且开关打开、Dola 的 2.0、15 秒。"""
+    if execution_mode == "chat":
+        return False
     if execution_mode == "work":
         return not work_request_error(model, duration)
     if not config.WORK_15S_ENABLED:
@@ -58,6 +62,8 @@ def uses_work_mode(model: str, duration, execution_mode: str = "auto") -> bool:
 
 def is_work_request(model: str, duration, execution_mode: str = "auto") -> bool:
     """已提交任务的类型不随面板开关改变，供恢复和记账使用。"""
+    if execution_mode == "chat":
+        return False
     if execution_mode == "work":
         return not work_request_error(model, duration)
     try:
@@ -69,8 +75,8 @@ def is_work_request(model: str, duration, execution_mode: str = "auto") -> bool:
 
 
 def uses_work_pair(model: str, duration, execution_mode: str = "auto") -> bool:
-    """这一单是否是两段工作模式拼成的 30 秒：开关打开、Dola 的 2.0、30 秒。"""
-    if execution_mode == "work":
+    """这一单是否是两段工作模式拼成的 30 秒：auto、开关打开、Dola 的 2.0、30 秒。"""
+    if execution_mode in ("chat", "work"):
         return False
     try:
         if int(duration or 0) != 2 * WORK_DURATION:

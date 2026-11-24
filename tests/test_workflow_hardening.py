@@ -216,10 +216,11 @@ def test_attempt_records_keep_failure_after_next_progress(tmp_path, monkeypatch)
     assert rows[1]['stage'] == '正在检查登录态' and rows[1]['outcome'] == 'failed'
 
 
-def test_strict_missing_proxy_never_direct(monkeypatch):
+def test_strict_disabled_proxy_never_direct(monkeypatch):
     import account_transport as transport
     monkeypatch.setattr(transport.config, 'ISOLATE_SHARED_EGRESS', True)
     monkeypatch.setattr(transport.proxy_store, 'get_account_proxy', lambda a: None)
+    monkeypatch.setattr(transport.proxy_store, 'binding_disabled', lambda a: True)
     with pytest.raises(RuntimeError, match='禁止直连'):
         transport.http_proxy('acc1')
 

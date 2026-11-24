@@ -69,16 +69,17 @@ def test_unbound_accounts_and_disabled_precheck_are_not_probed(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("work", [False, True])
-def test_strict_missing_proxy_is_excluded_before_any_dispatch(tmp_path, monkeypatch, work):
+def test_disabled_proxy_is_excluded_before_any_dispatch(tmp_path, monkeypatch, work):
     module, bp = _pool(tmp_path, monkeypatch, ("acc1",))
     monkeypatch.setattr(module.config, "ISOLATE_SHARED_EGRESS", True)
     monkeypatch.setattr(module.config, "EGRESS_PRECHECK", False)
-    bp._has_bound_proxy = lambda name: False
+    monkeypatch.setattr(module.proxy_store, "get_account_proxy", lambda name: None)
+    monkeypatch.setattr(module.proxy_store, "binding_disabled", lambda name: True)
     async def forbidden(*args, **kwargs):
-        pytest.fail("缺绑定代理时不得生成或发送请求")
+        pytest.fail("绑定的代理停用时不得生成或发送请求")
     bp._generate_effective = forbidden
     attempted = []
-    with pytest.raises(RuntimeError, match="缺少启用的绑定代理"):
+    with pytest.raises(RuntimeError, match="绑定的代理已停用"):
         _run(bp.generate_video("湖面", "16:9", 5, "seedance-2.0-fast",
                               execution_mode="work" if work else "auto", max_attempts=1,
                               on_account_try=lambda *args: attempted.append(args)))
@@ -108,10 +109,11 @@ def test_doubao_precheck_uses_its_own_site_and_failure_blocks_dispatch(tmp_path,
 
 
 @pytest.mark.parametrize("transport", ["requests_proxy", "http_proxy"])
-def test_transport_rejects_missing_and_unusable_bound_routes(monkeypatch, transport):
+def test_transport_rejects_disabled_and_unusable_bound_routes(monkeypatch, transport):
     import account_transport as t
     monkeypatch.setattr(t.config, "ISOLATE_SHARED_EGRESS", True)
     monkeypatch.setattr(t.proxy_store, "get_account_proxy", lambda name: None)
+    monkeypatch.setattr(t.proxy_store, "binding_disabled", lambda name: True)
     with pytest.raises(RuntimeError, match="禁止直连"):
         getattr(t, transport)("acc1")
     monkeypatch.setattr(t.proxy_store, "get_account_proxy", lambda name: {"mode": "static"})

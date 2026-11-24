@@ -411,7 +411,7 @@ async def import_cookie_account(name: str, cookie_data,
                     "engine": "browser",
                     "browser_error": "",
                     "verified": False,
-                    "verify_error": "已跳过在线验证；请先绑定账号专属代理，再点击验证",
+                    "verify_error": "已跳过在线验证；需要专属代理的请先绑定，再点击验证",
                 }
             try:
                 ctx = await launch_account_context(None, name, headless=False)

@@ -280,7 +280,7 @@ def test_work_service_recovery_keeps_reference_failure_failed(tmp_path, monkeypa
     assert seen[0]["reference_count"] == 1 and seen[0]["ratio"] == "9:16"
 
 
-def test_unbound_account_does_not_block_another_account_with_a_valid_bound_proxy(tmp_path, monkeypatch):
+def test_disabled_proxy_does_not_block_another_account_with_a_valid_bound_proxy(tmp_path, monkeypatch):
     module, pool = _pool(tmp_path, monkeypatch, dola=(), doubao=("db1", "db2"))
     monkeypatch.setattr(config, "ISOLATE_SHARED_EGRESS", True)
     monkeypatch.setattr(config, "EGRESS_PRECHECK", False)
@@ -288,6 +288,7 @@ def test_unbound_account_does_not_block_another_account_with_a_valid_bound_proxy
                         {"mode": "static", "protocol": "http", "host": "bound.invalid", "port": 8080,
                          "username": "", "password": ""} if name == "db2" else None)
     monkeypatch.setattr(module.proxy_store, "account_proxy_url", lambda name: "http://bound.invalid:8080")
+    monkeypatch.setattr(module.proxy_store, "binding_disabled", lambda name: name == "db1")
     calls = []
     async def generate(account, *args, **kwargs):
         calls.append(account)

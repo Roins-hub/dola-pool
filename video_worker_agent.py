@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 from patchright.async_api import async_playwright
 
-from account_transport import http_proxy, redact_error
+from account_transport import browser_proxy, redact_error
 import config
 import upstream_error
 import dola_responder
@@ -1309,9 +1309,11 @@ async def _launch_cloak(account: str, profile: str, extension_paths: list[str] |
     except ImportError as exc:
         raise PreSubmissionParametersError("工作模式需要 CloakBrowser，当前环境没有安装") from exc
     # 带密码的 socks5 浏览器连不上，要走号池的本地中转（和 patchright 路径一样）
-    proxy = http_proxy(account)
-    if not proxy:
-        raise PreSubmissionParametersError(f"{account} 没有绑定代理，工作模式不走直连")
+    # 没绑定代理的号走默认代理或服务器直连；绑了但用不了的不退回直连
+    try:
+        proxy = browser_proxy(account)
+    except RuntimeError as exc:
+        raise PreSubmissionParametersError(f"{account} {exc}") from exc
     doubao = sites.site_of_state_file(Path("accounts") / account / "cookie_state.json") == sites.DOUBAO
     return await launch_persistent_context_async(
         profile, headless=config.CLOAK_HEADLESS, proxy=cloak_proxy_settings(proxy),
