@@ -94,6 +94,8 @@ class UpstreamGenerationFailed(UpstreamReplyError):
     conversation is final, so a new submission cannot duplicate a pending video.
     """
     def __init__(self, category, reply, *, code, conversation_id, retryable, not_charged):
+        import upstream_error
+        upstream_error.attach(self, {"ai_creation_tool_list": [{"status": 5, "fail_code": code}]})
         self.code, self.conversation_id = code, conversation_id
         self.retryable, self.not_charged = retryable, not_charged
         charge = "上游声明未扣积分" if not_charged else "上游未说明扣费"

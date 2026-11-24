@@ -72,6 +72,7 @@ class TaskStore:
                 ("deadline_at", "REAL"),
                 ("last_poll_at", "REAL"),
                 ("failure_code", "TEXT"),
+                ("upstream_error", "TEXT"),
                 ("reference_images", "TEXT"),
                 ("reference_thumbs", "TEXT"),
                 ("reference_source", "TEXT DEFAULT 'unspecified'"),
@@ -355,6 +356,8 @@ class TaskStore:
     def update(self, task_id, **fields):
         if not fields:
             return
+        if fields.get("status") == "completed":
+            fields.update(failure_code=None, upstream_error=None)
         fields = self._clamp_fields(fields)
         fields["updated_at"] = time.time()
         cols = ", ".join(f"{k}=?" for k in fields)

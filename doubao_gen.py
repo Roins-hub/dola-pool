@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import config
+import upstream_error
 import dola_responder
 import sites
 from account_transport import redact_error
@@ -168,6 +169,7 @@ def _messages(chain: Any) -> list[dict]:
         ext = raw.get("ext") if isinstance(raw.get("ext"), dict) else {}
         out.append({
             "index": index,
+            "upstream_error": upstream_error.from_message(raw),
             "bot": str(raw.get("user_type")) == "2",
             "text": "\n".join(texts),
             "buttons": buttons,
@@ -558,6 +560,7 @@ def generate_doubao_video(
 
     dp = _site()
     session, ctx, headers = _session(dp, state_file, proxy)
+    diagnostic = {}
     try:
         from protocol import doubao_site
         log.info("doubao prepare account=%s model=%s duration=%s ratio=%s references=%s client=%s proxy_bound=%s",
@@ -621,6 +624,7 @@ def generate_doubao_video(
                     time.sleep(poll)
                     continue
                 msgs = _messages(chain)
+                diagnostic = next((m["upstream_error"] for m in reversed(msgs) if m["bot"]), {})
                 was_accepted = accepted
                 accepted = accepted or any(m["bot"] and (m["generating"] or
                     not plain_chat_reply(m) and looks_like_accepted(m["text"])) for m in msgs)
@@ -807,6 +811,9 @@ def generate_doubao_video(
             "credits_used": None,
             "credits_left": None,
         }
+    except Exception as exc:
+        upstream_error.attach(exc, diagnostic)
+        raise
     finally:
         session.close()
 
@@ -856,6 +863,7 @@ def fetch_conversation_video(cookie_state_path, conversation_id: str, *, proxy: 
                                 or (looks_like_confirm_request(last) and not looks_like_accepted(last)))
         return {"status": "failed" if final else "pending", "local_path": "", "final": final,
                 "detail": detail, "conversation_id": conversation_id,
-                "plan_unavailable": plan_unavailable}
+                "plan_unavailable": plan_unavailable,
+                **upstream_error.failure_fields(latest)}
     finally:
         session.close()
