@@ -291,6 +291,41 @@ def asks_to_confirm(text: str) -> bool:
     return bool(CONFIRM_RE.search(text or ""))
 
 
+# 明说还没开始、在等确认；只是提到「确认」二字不算
+_AWAITING_RE = re.compile(
+    r"(?:还没|还未|尚未|未)(?:收到)?.{0,6}确认|(?:等待|等你|等您|待你|待您|请(?:你|您)?|需要(?:你|您)?|需(?:你|您)?)(?:先|再)?(?:确认|確認)|"
+    r"回复.{0,6}(?:确认|開始|开始)|(?:你|您)?(?:确认|確認).{0,20}后.{0,16}(?:生成|出片|开始|提交|执行)|"
+    r"確認[」』]?(?:して|いただ|をお願い|と返信)")
+_UNDERWAY_RE = re.compile(r"(?:已|已经|已經)(?:开始|提交|受理|发起|確認|确认)|正在(?:生成|渲染|出片)|生成中")
+
+
+def waits_for_confirmation(text: str) -> bool:
+    """助手明说在等确认、且没有说已经开始：可以回一次「确认」。"""
+    return bool(_AWAITING_RE.search(text or "")) and not _UNDERWAY_RE.search(text or "")
+
+
+# 豆包素材授权承诺：「你在本功能中上传、使用的素材，均已获充分授权，无侵权违法风险」
+_CONSENT_RE = re.compile(r"均已(?:获得?|取得)(?:充分|合法)?授权")
+
+
+def asks_for_consent(text: str) -> bool:
+    """要求素材提供者承诺已获授权：号池不代为确认。"""
+    return bool(_CONSENT_RE.search(text or ""))
+
+
+# 「若返回额度不足，将直接停止」只是说明，不是已经发生；句子后半转回现状（「但当前…」）时保留后半
+_IF_CLAUSE_RE = re.compile(
+    r"(?:若(?!干)|如果|假如|倘若|一旦|万一|如遇|如(?=出现|返回|遇到|发生|提示|额度|額度|免费|积分|余额|模型|权益)"
+    r"|\b(?:if|in case|whenever|should)\b)"
+    r"(?:(?![，,、]\s*(?:但|不过|然而|当前|目前|现在|however|but|currently))[^。；;！!？?\n])*", re.I)
+_JA_IF_CLAUSE_RE = re.compile(r"[^。、，,；;\n]*(?:の場合|場合は|場合に|場合、|であれば)")
+
+
+def without_conditions(text: str) -> str:
+    """去掉假设语句，只留下助手陈述的事实，供判断是否真的失败。"""
+    return _JA_IF_CLAUSE_RE.sub("", _IF_CLAUSE_RE.sub("", text or ""))
+
+
 VIDEO_TOOL_RE = re.compile(r"video", re.I)
 ASK_PREFER_RE = re.compile(r"推荐|推薦|おすすめ|recommend|确认|確認|开始|開始", re.I)
 

@@ -373,7 +373,14 @@ class SkillPage(Page):
         return target
 
     async def evaluate(self, script, args):
+        if 'list_user_and_featured' in script:      # 官方列表读不到：走技能菜单
+            return {"status": 0, "text": ""}
+        if script.startswith('(selector) => [...document') and 'setContent' in script:
+            return self.editor_ready()
         return self.selected if 'node-mention' in script else self.keys
+
+    def editor_ready(self):
+        return True
 
     @property
     def keyboard(self):

@@ -44,10 +44,10 @@ from video_worker_ui import (
     raise_if_region_restricted, solve_slider,
 )
 from work_reply import (
-    WORK_DURATION, WORK_LIMIT_RE, ask_summary, asks_to_confirm, background_task_pending, build_prompt, chain_messages, choose_options,
+    WORK_DURATION, WORK_LIMIT_RE, ask_summary, asks_for_consent, asks_to_confirm, background_task_pending, build_prompt, chain_messages, choose_options,
     generation_started, pending_ask, recent_conversations, reply_finished, reply_text, session_cookies, tools_ran,
     upload_wait_seconds, uploads_committed, video_models, video_skill_labels, video_skill_reference, work_limit_until, model_label,
-    video_creation_records, work_thread_ids,
+    video_creation_records, waits_for_confirmation, without_conditions, work_thread_ids,
 )
 
 SKILL_RE = re.compile(r"^(?!.*(?:analysis|analy[sz]|分析))[^\r\n]*"
@@ -64,6 +64,10 @@ QUIET_POLLS = 2
 ANSWER_GAP_POLLS = 3
 # 回复没写完、也没在出片，却这么多轮一个字没动 → 它在等人回答（2026-11-09：确认单发出来后一直挂着不结束）
 STALLED_POLLS = 9
+# 读过技能说明的助手收到「确认」后要重新起一条回复：这么多轮之内不把旧回复当成最终结果
+ANSWER_WAIT_POLLS = 12
+# 点「工作」后等工作模式编辑器挂载：代理慢时先显示普通输入框，往里打字等于没选技能
+WORK_EDITOR_SECONDS = 90
 # 同一道选择题最多答这么多次：先点选项，不行再打字
 ASK_ROUNDS = 3
 # 连续这么多轮读不到会话就在进度里说一声（代理不稳时页面内请求会失败，照样接着等）
@@ -140,6 +144,10 @@ SELECTED_SKILLS_JS = r"""(selector) => {
 EDITOR_READY_JS = r"""(selector) => [...document.querySelectorAll(selector)].some(box =>
   box.getClientRects().length && !box.editor?.isDestroyed && box.editor?.getJSON && box.editor?.commands?.setContent)
 """
+
+# 历史会话标题常含技能名（「15秒クリエイティブ動画生成」），点到会离开当前页；搜索框里的字也不算菜单项
+OUTSIDE_MENU_JS = r"""node => !!node.closest('textarea,[contenteditable="true"],a[href*="/chat/"],'
+  + '[data-testid^="conversation-"],[data-testid^="sidebar"]')"""
 
 # 只看当前会话那一行：别的旧会话也可能挂着「一時停止中」
 PAUSED_JS = r"""(conversationId) => {
@@ -257,14 +265,16 @@ def translate_browser_error(exc: BaseException, account: str, went_out: bool) ->
 
 def failure_from_reply(account: str, reply: str, *, ran_tools: bool) -> Exception | None:
     """助手回复里明说做不了时对应的错误；额度类换号，其余按原因分类。认不出返回 None。"""
-    if WORK_LIMIT_RE.search(reply):
+    # 请求确认时常附带「若额度不足将停止」：按事实判断，不能把假设当成失败去换号、锁号
+    facts = without_conditions(reply) if asks_to_confirm(reply) else reply
+    if WORK_LIMIT_RE.search(facts):
         # 工作模式自己的 7 天额度：只锁这个号的 15 秒，不动它的每日额度
         return WorkQuotaError(f"{account} 工作模式免费额度已用完：{reply[-160:]}", until=work_limit_until(reply))
-    if DAILY_LIMIT_PATTERN.search(reply) or LIMIT_RE.search(reply):
+    if DAILY_LIMIT_PATTERN.search(facts) or LIMIT_RE.search(facts):
         return AccountLimitedError(f"{account} 工作模式：{reply[-200:]}")
-    if QUOTA_RE.search(reply):
+    if QUOTA_RE.search(facts):
         return CreditInsufficientError(f"{account} 工作模式：{reply[-200:]}")
-    label = failure_text.label_for(reply)
+    label = failure_text.label_for(facts)
     if not label:
         return None
     # 肖像保护按号而异，且没有片子在生成：标成未开始，调度器才会换号重提
@@ -536,11 +546,28 @@ class _WorkSession:
                     raise
                 # 桌面应用推广可能在初始弹层清理后才出现，挡住模式切换。
                 await dismiss_popups(self.page)
-        await self.page.wait_for_timeout(8000)
+        await self.page.wait_for_timeout(8000 if self.site == sites.DOUBAO else 2000)
         if self.site == sites.DOUBAO:
             # 豆包先显示临时 textarea，再挂载技能输入框；等技能按钮出现后再输入，避免草稿被重绘清空。
             await self.page.locator('[data-testid="general-agent-skill-button"]').wait_for(state="visible", timeout=45000)
+        else:
+            await self.wait_work_editor()
         await self.raise_if_blocked()
+
+    async def wait_work_editor(self):
+        for elapsed in range(WORK_EDITOR_SECONDS):
+            if await self.page.evaluate(EDITOR_READY_JS, COMPOSER):
+                await self.page.wait_for_timeout(1500)
+                return
+            self.raise_if_rejected()
+            if elapsed and elapsed % 15 == 0:
+                emit_feedback(self.on_poll, progress=f"工作模式：等待编辑器加载（{elapsed} 秒）")
+            await self.page.wait_for_timeout(1000)
+        await self.raise_if_blocked()
+        if await self.page.locator('[contenteditable="true"]:visible').count():
+            return                            # 编辑器换了实现：交给技能菜单，选不上会在发送前停
+        raise PreSubmissionParametersError(
+            f"{self.account} 工作模式编辑器 {WORK_EDITOR_SECONDS} 秒没有加载出来，请检查账号代理速度，尚未发送生成")
 
     async def _pick_files(self, paths: list[str]) -> bool:
         """上传按钮 → 菜单 → 文件选择框。菜单有时没展开，等一等再重点。"""
@@ -605,33 +632,11 @@ class _WorkSession:
         page = self.page
         if await self.skill_selected():
             return
+        selected, status, code = await self.attach_skill_reference()
+        if selected:
+            return
+        await self.raise_if_blocked()
         if self.site == sites.DOUBAO:
-            status, code = None, None
-            for attempt in range(3):
-                if not self.skill_reference:
-                    # 独立工作区没有技能按钮，读取当前账号的官方列表。
-                    result = await page.evaluate(SKILLS_JS, {"query": await self.chain_query()})
-                    status = result.get("status")
-                    if status == 200:
-                        try:
-                            data = json.loads(result.get("text") or "{}")
-                        except ValueError:
-                            data = {}
-                        code = data.get("code") if isinstance(data, dict) else None
-                        if code in (0, "0", 2000, "2000"):
-                            self.remember_skill_listing(data)
-                        elif code is not None:
-                            break
-                if self.skill_reference and await page.evaluate(SELECT_SKILL_JS,
-                        {"selector": COMPOSER, "reference": self.skill_reference}):
-                    await page.wait_for_timeout(1500)
-                    if await self.skill_selected():
-                        return
-                if attempt < 2:
-                    await self.raise_if_blocked()
-                    emit_feedback(self.on_poll, progress="豆包工作模式：等待视频技能编辑器就绪")
-                    await page.wait_for_timeout(2000)
-            await self.raise_if_blocked()
             detail = "技能编辑器未就绪" if self.skill_reference else "官方列表未返回技能"
             codes = f"，HTTP {status}" if isinstance(status, int) else ""
             if isinstance(code, (int, str)) and re.fullmatch(r"\d{1,12}", str(code)):
@@ -643,7 +648,7 @@ class _WorkSession:
             await page.keyboard.type("/", delay=120)
             await page.wait_for_timeout(3000)
             # 它排在菜单下方的分组里，列表没加载完就找不到；输入名字让菜单筛选出来
-            query = self.skill_labels[0] if self.skill_labels else ("创意视频" if self.site == sites.DOUBAO else "Creative")
+            query = self.skill_labels[0] if self.skill_labels else "Creative"
             await page.keyboard.type(query, delay=80)
             for _ in range(10):
                 await page.wait_for_timeout(1000)
@@ -656,8 +661,7 @@ class _WorkSession:
                 target = None
                 for index in range(await skill.count()):
                     candidate = skill.first if index == 0 else skill.nth(index)
-                    if (await candidate.is_visible()
-                            and not await candidate.evaluate("node => !!node.closest('textarea,[contenteditable=\"true\"]')")):
+                    if await candidate.is_visible() and not await candidate.evaluate(OUTSIDE_MENU_JS):
                         target = candidate
                         break
                 if target is not None:
@@ -679,6 +683,43 @@ class _WorkSession:
             await self.raise_if_blocked()
         detail = "视频技能没有进入输入框" if found else "技能列表未找到视频生成技能，请检查列表加载或账号权限"
         raise PreSubmissionParametersError(f"{self.account} {detail}，尚未发送生成")
+
+    async def attach_skill_reference(self):
+        """读取账号自己的官方技能列表，把视频技能插进编辑器。返回 (选中, HTTP 状态, code)。"""
+        page = self.page
+        status, code = None, None
+        for attempt in range(3):
+            if not self.skill_reference:
+                # 独立工作区没有技能按钮，代理慢时菜单也不出来：直接读取当前账号的官方列表。
+                try:
+                    query = await self.chain_query()
+                except PreSubmissionParametersError:
+                    if self.site == sites.DOUBAO:
+                        raise
+                    break                     # Dola 还能走技能菜单
+                result = await page.evaluate(SKILLS_JS, {"query": query})
+                status = result.get("status")
+                if status == 200:
+                    try:
+                        data = json.loads(result.get("text") or "{}")
+                    except ValueError:
+                        data = {}
+                    code = data.get("code") if isinstance(data, dict) else None
+                    if code in (0, "0", 2000, "2000"):
+                        self.remember_skill_listing(data)
+                    elif code is not None:
+                        break
+            if self.skill_reference and await page.evaluate(SELECT_SKILL_JS,
+                    {"selector": COMPOSER, "reference": self.skill_reference}):
+                await page.wait_for_timeout(1500)
+                if await self.skill_selected():
+                    return True, status, code
+            if attempt < 2:
+                await self.raise_if_blocked()
+                emit_feedback(self.on_poll, progress=("豆包" if self.site == sites.DOUBAO else "")
+                              + "工作模式：等待视频技能编辑器就绪")
+                await page.wait_for_timeout(2000)
+        return False, status, code
 
     def skill_pattern(self):
         if self.skill_labels:
@@ -827,7 +868,18 @@ class _WorkSession:
         if conversation:
             return conversation
         if known:
-            raise PreSubmissionParametersError(f"{self.account} 工作模式请求 {CONVERSATION_WAIT_SECONDS} 秒没有回应，账号上也没有新会话")
+            # 代理慢时会话可能晚一步才出现在列表里：再核对一次，确认没有才允许换号
+            await page.wait_for_timeout(20000)
+            match = re.search(r"/chat/(\d+)", page.url)
+            if match and page.url != self.url_before:
+                return match.group(1)
+            known, conversation = await self.find_conversation(sent_at)
+            if conversation:
+                return conversation
+        if known:
+            seen = "提交请求已发出，上游未返回" if self.sent else "网页已跳转，但没有产生提交请求"
+            raise PreSubmissionParametersError(
+                f"{self.account} 工作模式请求 {CONVERSATION_WAIT_SECONDS} 秒没有回应，账号上也没有新会话（{seen}）")
         raise TimeoutError(f"{self.account} 工作模式 {CONVERSATION_WAIT_SECONDS} 秒没有拿到会话，可能已在生成，不换号重提")
 
     async def find_conversation(self, since: float) -> tuple[bool, str | None]:
@@ -874,6 +926,11 @@ class _WorkSession:
         return None, ""
 
     def check_confirmation(self, text: str):
+        if asks_for_consent(text):
+            raise UpstreamReplyError(
+                "素材授权待确认",
+                "上游要求确认参考图素材（含人物肖像）已获授权后才开始生成；尚未生成，号池未代为确认。"
+                f"上游原文：{text[:800]}", generation_started=False, allow_account_retry=False)
         from doubao_gen import confirm_mismatch, looks_like_paid_prompt
         positive = re.sub(r"不(?:使用|需|用)?付费|无需付费|不购买|不升级", "", text)
         paid = re.search(r"(?:是否|请|需要|必须|确认|同意|继续|将).{0,16}"
@@ -895,6 +952,12 @@ class _WorkSession:
         await target.click(timeout=8000)
         await page.keyboard.insert_text(reply)
         await page.wait_for_timeout(1000)
+        if self.site == sites.DOUBAO:
+            # 与首次发送一致：豆包输入框的回车可能被技能示例吃掉，按钮可用时点按钮
+            button = page.locator('[data-testid="chat_input_send_button"]:visible')
+            if await button.count() and await button.first.is_enabled():
+                await button.first.click(timeout=4000)
+                return
         await page.keyboard.press("Enter")
 
     async def choice_labels(self, questions: list[dict]) -> list[str]:
@@ -1050,9 +1113,10 @@ class _WorkSession:
         if self.site == sites.DOUBAO:
             from doubao_gen import (DoubaoPlanUnavailableError, DoubaoQuotaError, looks_like_plan_unavailable,
                                     looks_like_quota_exhausted)
-            if looks_like_plan_unavailable(text):
+            facts = without_conditions(text) if asks_to_confirm(text) else text
+            if looks_like_plan_unavailable(facts):
                 return DoubaoPlanUnavailableError(text[-1200:])
-            if looks_like_quota_exhausted(text):
+            if looks_like_quota_exhausted(facts):
                 return DoubaoQuotaError(text[-1200:])
         return failure_from_reply(self.account, text, ran_tools=ran_tools)
 
@@ -1203,7 +1267,14 @@ class _WorkSession:
             if getattr(self, "reference_error", ""):
                 emit_feedback(self.on_poll, progress="豆包工作模式：参考图未被使用，只读取回已受理任务，不再确认或补做")
                 continue
-            if finished and any(tools_ran(m) for m in bots) and not delegated:
+            making = delegated or any(generation_started(m) for m in bots)
+            # 读技能说明也会留下工具块：助手明说在等确认、没有任何出片痕迹时，回一次「确认」而不是判失败
+            awaiting = bool(finished and not making and not self.confirmed and not work_thread_ids(chain)
+                            and not any(video_creation_records(m) for m in all_bots)
+                            and waits_for_confirmation(reply_text(latest)))
+            if finished and any(tools_ran(m) for m in bots) and not delegated and not awaiting:
+                if latest.get("index_in_conv") in answered and since_answer < ANSWER_WAIT_POLLS:
+                    continue
                 if stable >= SETTLED_POLLS:
                     reply = reply_text(latest)[-300:]
                     raise (self.reply_failure(reply, ran_tools=True)
@@ -1213,7 +1284,6 @@ class _WorkSession:
                 failure = self.reply_failure(reply_text(latest), ran_tools=False)
                 if failure:
                     raise failure
-            making = delegated or any(generation_started(m) for m in bots)
             # 选择题：以会话内容为准（页面侧栏不一定标「一時停止中」）。已经在出片就不插话。
             ask = pending_ask(latest) if latest and not finished and not making else None
             if ask and since_answer >= ANSWER_GAP_POLLS and self.ask_rounds < ASK_ROUNDS:
