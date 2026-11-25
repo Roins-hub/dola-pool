@@ -295,13 +295,13 @@ input[type=file]::file-selector-button:hover{border-color:var(--control-hi);back
 *{scrollbar-width:thin;scrollbar-color:var(--control) transparent}
 #accountsTable,#proxiesTable,#tasksTable,#videosTable,#keysTable,#perAccount{overflow-x:auto}
 .task-attempt-history{min-width:280px;max-width:420px;overflow-wrap:anywhere}
-#tasksTable table{min-width:1384px;table-layout:fixed}
+#tasksTable table{min-width:1408px;table-layout:fixed}
 #tasksTable th:nth-child(1){width:34px}
 #tasksTable th:nth-child(2){width:100px}
 #tasksTable th:nth-child(3){width:20%}
 #tasksTable th:nth-child(4){width:60px}
 #tasksTable th:nth-child(5){width:85px}
-#tasksTable th:nth-child(6){width:52px}
+#tasksTable th:nth-child(6){width:76px}
 #tasksTable th:nth-child(7){width:74px}
 #tasksTable th:nth-child(8){width:160px}
 #tasksTable th:nth-child(9){width:144px}
@@ -3906,7 +3906,7 @@ async function loadTasks(){
       +'<button class="btn" style="margin-left:6px" onclick="openPrompt(\''+esc(t.id)+'\')">查看</button>',
     refCell(t)+(t.reference_source==='ai_generated'?'<div class="tiny task-source" title="调用方已声明参考图人物完全由 AI 生成；提交时附加来源说明">AI 素材</div>':''),
     accChain(t),
-    (t.duration||10)+'秒'+(Number(t.video_count)>1?' × '+t.video_count:'')+(t.mode?' <span class="tiny">'+esc(t.mode)+'</span>':''),
+    (t.duration||10)+'秒'+(Number(t.video_count)>1?' × '+t.video_count:'')+(t.mode?'<div class="tiny">'+esc(t.mode)+'</div>':''),
     sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
     costCell(t),
     fmt(t.created_at),
