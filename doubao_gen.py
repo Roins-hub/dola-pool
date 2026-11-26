@@ -445,8 +445,8 @@ def _hidden_resend(base, *, ability: dict | None, extra_ext: dict):
 
 def _reply(dp, session, ctx, headers, conversation_id: str, text: str = CONFIRM_REPLY, *,
            model: str = "", duration: int = 5, ratio: str | None = None,
-           button_ext: dict | None = None, ability: dict | None = None):
-    """在会话里回一句话。
+           button_ext: dict | None = None, ability: dict | None = None, images: list | None = None):
+    """在会话里回一句话（images 只在按钮式确认时带：重发原请求连同参考图）。
 
     给了 model（视频任务的确认 / 付费确认）时按「视频生成」技能发：带和首条消息同样的 chat_ability。
     2026-11-03 实测：不带技能的「确认生成」被豆包普通对话（seed_main）接走，它嘴上说「已确认，开始生成」，
@@ -457,7 +457,7 @@ def _reply(dp, session, ctx, headers, conversation_id: str, text: str = CONFIRM_
     except Exception as exc:
         raise TimeoutError(f"豆包确认前读取原会话失败（{type(exc).__name__}），保留原会话核对，未重复提交") from None
     result = dp.submit_chat_completion(
-        session, ctx, headers, images=[], audios=[], prompt=text, duration=duration if model else 5,
+        session, ctx, headers, images=list(images or []), audios=[], prompt=text, duration=duration if model else 5,
         model=model, ratio=ratio, timeout_sec=180, video_ability=bool(model), conversation_id=conversation_id,
         section_id=dp.find_latest_section_id(chain) or "",
         last_message_index=dp.find_latest_message_index(chain),
@@ -470,8 +470,14 @@ def _reply(dp, session, ctx, headers, conversation_id: str, text: str = CONFIRM_
 
 
 def _confirm_authorization(dp, session, ctx, headers, conversation_id: str, msgs: list[dict], card: dict, *,
-                           authorized: bool, model: str, duration: int, ratio: str | None):
-    """素材授权确认卡：按网页点「确认生成」的方式确认一次。确认不了或再次出现时在生成前结束，不换号重提。"""
+                           authorized: bool, model: str, duration: int, ratio: str | None,
+                           images: list | None = None):
+    """素材授权确认卡：按网页点「确认生成」的方式确认一次。确认不了或再次出现时在生成前结束，不换号重提。
+
+    网页按钮重发时带上卡片所指消息里的附件。网页上图和文字在同一条消息里，卡片指回它，图就跟着重发；
+    号池的图单独一条，卡片常指向后来回的「确认生成」（不带图）。只重发文字时豆包会回「需要你上传图1」
+    （2026-11-27 acc154 实测），所以这里带上本任务已上传的参考图，效果与网页图文同条一致。
+    """
     text = card["text"]
     if not config.DOUBAO_CONFIRM_MATERIAL_AUTH:
         why = "未开启自动确认（DOUBAO_CONFIRM_MATERIAL_AUTH=0）"
@@ -481,7 +487,7 @@ def _confirm_authorization(dp, session, ctx, headers, conversation_id: str, msgs
         request, rely, ability = authorization_request(msgs, card)
         if request:
             _reply(dp, session, ctx, headers, conversation_id, text=request, model=model, duration=duration,
-                   ratio=ratio, button_ext={"creation_btn_rely_info": rely}, ability=ability)
+                   ratio=ratio, button_ext={"creation_btn_rely_info": rely}, ability=ability, images=images)
             return
         why = "卡片缺少确认凭据，无法按按钮方式确认"
     raise UpstreamReplyError(
@@ -792,7 +798,7 @@ def generate_doubao_video(
                         # 卡片原文带「侵权」「违反」字样：先于拒稿分类处理，不交给 AI 判断
                         _confirm_authorization(dp, session, ctx, headers, conversation_id, msgs, m,
                                                authorized=authorized, model=upstream_model,
-                                               duration=duration, ratio=ratio)
+                                               duration=duration, ratio=ratio, images=images)
                         authorized = True
                         _emit_note_text(on_poll, "豆包：已确认素材授权卡，等待生成")
                         continue

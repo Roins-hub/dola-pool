@@ -1,6 +1,7 @@
 """Issue #24：豆包普通模式的失败卡片（工具 status=5 + fail_code）要当场结束任务，不能等到超时。"""
 import json
 import types
+from pathlib import Path
 
 import pytest
 
@@ -232,3 +233,18 @@ def test_recovery_stops_on_the_authorization_card(monkeypatch, tmp_path):
     assert result["final"] and result["status"] == "failed" and result["failure_code"] is None
     assert result["detail"].startswith("停在素材授权确认")
     assert dp.replies == []
+
+
+def test_authorization_confirmation_resends_the_task_reference_images(monkeypatch, tmp_path):
+    """卡片指向后来回的「确认生成」（不带图）时，只重发文字豆包会回「需要你上传图1」（2026-11-27 acc154）。"""
+    no_ai(monkeypatch)
+    monkeypatch.setattr(doubao_gen.config, "DOUBAO_CONFIRM_MATERIAL_AUTH", True)
+    reference = tmp_path / "ref.jpg"
+    reference.write_bytes(b"jpg")
+    uploaded = {"uri": "tos-ref", "image_ori": {"width": 1, "height": 1}}
+    dp = with_raw_request(_FakeDP([(0, CONFIRM, []), (1, AUTH_TEXT, [CARD_BUTTON], AUTH_EXT),
+                                   (2, FREE_ACCEPTED, [])], vid_after=2))
+    dp.normalize_image_paths = lambda paths: [Path(p) for p in paths]
+    dp.upload_image = lambda *a, **k: dict(uploaded)
+    assert _gen(monkeypatch, tmp_path, dp, reference_image_paths=[str(reference)])["unwatermarked"] is True
+    assert dp.reply_images == [[], [uploaded]]                   # 普通确认不带图；授权确认带上本任务的参考图
