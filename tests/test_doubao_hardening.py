@@ -402,6 +402,7 @@ def test_fixed_account_test_uses_reference_images_and_removes_them(tmp_path, mon
     pool = FakePool([])
     server = _server(tmp_path, monkeypatch, pool)
     monkeypatch.setattr(config, "REFERENCE_FILE_DIR", str(tmp_path / "refs"))
+    monkeypatch.setattr(config, "THUMB_DIR", str(tmp_path / "thumbs"))
     monkeypatch.setattr(server, "TEST_JOBS", {"test_refs": {}})
     local = materialize_data_urls([PNG_DATA_URL])
     seen = []
@@ -414,6 +415,7 @@ def test_fixed_account_test_uses_reference_images_and_removes_them(tmp_path, mon
                                    reference_images=local))
     assert seen == [[True]]
     assert not Path(local[0]).exists()
+    assert json.loads(server.store.get("test_refs")["reference_thumbs"])
 
 
 def test_fixed_account_test_passes_reference_paths_to_the_generator(tmp_path, monkeypatch):
