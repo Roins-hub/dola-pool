@@ -149,17 +149,57 @@ CONSENT = ("我将为你生成一条 5 秒视频。你在本功能中上传、�
            "违反前述承诺或存在不当使用等违反《豆包使用规范》，你需自行承担责任。请确认")
 
 
-@pytest.mark.parametrize("finished,tool", [(True, False), (True, True), (False, False)])
-def test_material_consent_is_never_confirmed_for_the_user(monkeypatch, finished, tool):
-    card = bot(CONSENT, finished, tool=tool)
-    if tool:
-        card["messages"][0]["content_block"][-1]["content"]["generic_tool_block"]["tool_name"] = "tool_search"
-    page = Page([card])
+def consent_page(monkeypatch, chains, *, button=True, enabled=True):
+    page = Page(chains)
     agent, item = session(monkeypatch, page)
     item.duration, item.model, item.site = 5, "doubao-seedance-2.0-mini", agent.sites.DOUBAO
-    with pytest.raises(agent.UpstreamReplyError, match="素材授权待确认") as caught:
+    monkeypatch.setattr(agent.config, "DOUBAO_CONFIRM_MATERIAL_AUTH", enabled)
+    page.locator = lambda selector: (Target(1 if button else 0, page, "consent")
+                                     if "ai-creation-common-button" in selector else Target())
+    return agent, item, page
+
+
+def consent_card(finished=True, tool=False, index=2):
+    card = bot(CONSENT, finished, index=index, tool=tool)
+    if tool:
+        card["messages"][0]["content_block"][-1]["content"]["generic_tool_block"]["tool_name"] = "tool_search"
+    return card
+
+
+@pytest.mark.parametrize("finished,tool", [(True, False), (True, True), (False, False)])
+def test_material_consent_card_is_clicked_once_then_the_video_comes_back(monkeypatch, finished, tool):
+    agent, item, page = consent_page(monkeypatch, [consent_card(finished, tool)] * 3 + [video()])
+    assert json.loads(wait(item))
+    assert page.clicked == ["consent"] and page.typed == [] and item.tried == ["授权确认"]
+
+
+def test_material_consent_is_not_clicked_when_disabled(monkeypatch):
+    agent, item, page = consent_page(monkeypatch, [consent_card()], enabled=False)
+    with pytest.raises(agent.UpstreamReplyError, match="素材授权待确认.*DOUBAO_CONFIRM_MATERIAL_AUTH=0") as caught:
+        wait(item)
+    assert page.clicked == [] and page.typed == [] and caught.value.generation_started is False
+
+
+def test_second_material_consent_card_is_not_confirmed_again(monkeypatch):
+    agent, item, page = consent_page(monkeypatch, [consent_card(index=2)] * 2 + [consent_card(index=4)])
+    with pytest.raises(agent.UpstreamReplyError, match="已确认过一次") as caught:
+        wait(item)
+    assert page.clicked == ["consent"] and caught.value.allow_account_retry is False
+
+
+def test_material_consent_without_a_button_ends_before_generation(monkeypatch):
+    agent, item, page = consent_page(monkeypatch, [consent_card()], button=False)
+    with pytest.raises(agent.UpstreamReplyError, match="没有找到确认按钮") as caught:
         wait(item)
     assert page.typed == [] and caught.value.generation_started is False
+
+
+def test_dola_never_clicks_the_doubao_consent_button(monkeypatch):
+    agent, item, page = consent_page(monkeypatch, [consent_card()])
+    item.site = agent.sites.DOLA
+    with pytest.raises(agent.UpstreamReplyError, match="素材授权待确认"):
+        wait(item)
+    assert page.clicked == []
 
 
 @pytest.mark.parametrize("enabled,clicked", [(True, ["send"]), (False, [])])

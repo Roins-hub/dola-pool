@@ -146,6 +146,8 @@ EDITOR_READY_JS = r"""(selector) => [...document.querySelectorAll(selector)].som
 """
 
 # 历史会话标题常含技能名（「15秒クリエイティブ動画生成」），点到会离开当前页；搜索框里的字也不算菜单项
+# 豆包素材授权卡上的「确认生成」（网页 CreationReceiveCommonButtonV2，scene=creation_portrait_video_auth_confirm）
+CONSENT_BUTTON = '[data-testid="ai-creation-common-button"]:visible'
 OUTSIDE_MENU_JS = r"""node => !!node.closest('textarea,[contenteditable="true"],a[href*="/chat/"],'
   + '[data-testid^="conversation-"],[data-testid^="sidebar"]')"""
 
@@ -313,6 +315,8 @@ class _WorkSession:
         self.site = sites.site_for_model(model)
         self.base = "https://www.doubao.com" if self.site == sites.DOUBAO else "https://www.dola.com"
         self.confirmed = False
+        self.consented = False
+        self.consent_index = None
         self.nudges = 0
         self.ai_note = ""
         self.tried: list[str] = []
@@ -925,11 +929,32 @@ class _WorkSession:
             return reply, "通用回复"
         return None, ""
 
+    async def confirm_consent(self, text: str, finished: bool) -> bool:
+        """点豆包素材授权卡的「确认生成」（每个任务一次）。按钮还没出来且回复未完成时返回 False 继续等。"""
+        if not config.DOUBAO_CONFIRM_MATERIAL_AUTH:
+            why = "未开启自动确认（DOUBAO_CONFIRM_MATERIAL_AUTH=0）"
+        elif self.consented:
+            why = "已确认过一次，豆包仍停在授权确认，未重复确认"
+        else:
+            button = self.page.locator(CONSENT_BUTTON)
+            if await button.count():
+                await button.last.click(timeout=8000)
+                self.consented = True
+                self.tried.append("授权确认")
+                emit_feedback(self.on_poll, progress="豆包工作模式：已确认素材授权卡，等待生成")
+                return True
+            if not finished:
+                return False
+            why = "页面上没有找到确认按钮"
+        raise UpstreamReplyError(
+            "素材授权待确认", f"上游要求确认参考图素材（含人物肖像）已获授权后才开始生成；尚未生成，{why}。"
+            f"上游原文：{text[:800]}", generation_started=False, allow_account_retry=False)
+
     def check_confirmation(self, text: str):
         if asks_for_consent(text):
             raise UpstreamReplyError(
                 "素材授权待确认",
-                "上游要求确认参考图素材（含人物肖像）已获授权后才开始生成；尚未生成，号池未代为确认。"
+                "上游要求确认参考图素材（含人物肖像）已获授权后才开始生成；尚未生成，未能点击确认卡片。"
                 f"上游原文：{text[:800]}", generation_started=False, allow_account_retry=False)
         from doubao_gen import confirm_mismatch, looks_like_paid_prompt
         positive = re.sub(r"不(?:使用|需|用)?付费|无需付费|不购买|不升级", "", text)
@@ -1268,6 +1293,16 @@ class _WorkSession:
                 emit_feedback(self.on_poll, progress="豆包工作模式：参考图未被使用，只读取回已受理任务，不再确认或补做")
                 continue
             making = delegated or any(generation_started(m) for m in bots)
+            if (self.site == sites.DOUBAO and latest and not making
+                    and not any(video_creation_records(m) for m in all_bots)
+                    and asks_for_consent(reply_text(latest))):
+                # 素材授权确认卡：点一次卡片上的「确认生成」，之后等它往下走
+                if latest.get("index_in_conv") == self.consent_index and since_answer < ANSWER_WAIT_POLLS:
+                    continue
+                if await self.confirm_consent(reply_text(latest), finished):
+                    self.consent_index = latest.get("index_in_conv")
+                    stable, since_answer = 0, 0
+                continue
             # 读技能说明也会留下工具块：助手明说在等确认、没有任何出片痕迹时，回一次「确认」而不是判失败
             awaiting = bool(finished and not making and not self.confirmed and not work_thread_ids(chain)
                             and not any(video_creation_records(m) for m in all_bots)

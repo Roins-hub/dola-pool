@@ -189,6 +189,7 @@ Images take about 20 seconds, at 2K.
 
 - **Quota**: Doubao does not publish its daily free quota and never reports what is left. The multipliers above are quoted from the Doubao page. The panel shows "N made today", and `DOUBAO_DAILY_LIMIT` is only a safety cap.
 - **Paid confirmation**: when the free quota runs out, Doubao asks whether to use paid quota. With `DOUBAO_ALLOW_PAID=1` (default) the pool confirms; with `0` it switches accounts.
+- **Material authorization card**: with reference images, Doubao may show a card stating that all uploaded material is fully authorized. With `DOUBAO_CONFIRM_MATERIAL_AUTH=1` (default) the pool confirms it once, the same way as the web "确认生成" button, and the pool operator takes on that authorization commitment; with `0` the task ends before generation as 「素材授权待确认」.
 - **Membership detection**: when a free account requests 2.0 / 2.5, Doubao offers Mini instead. The pool **never accepts**: it marks the account as free and re-dispatches to a paid account.
 - **Parameter check**: Doubao first asks to confirm the parameters. The pool confirms only when duration and model match; otherwise it reports an error.
 - **Watermark**: the visible "AI generated" watermark is a per-account setting. With `DOUBAO_AUTO_NO_WATERMARK=1` (default) the pool turns it off through the official settings API and downloads through the official watermark-free endpoint. Whoever publishes the content must label it as AI-generated.
@@ -251,6 +252,7 @@ Set these in `dola.env` (one-command install), `.env`, or the environment. The f
 | `DOLA_COOKIE_RUNTIME` | `pure` | `cloak` = run each Dola cookie account in its own CloakBrowser profile (see below) |
 | `DOLA_CLOAK_RETRY` | `1` | When a 5/10-second browser submission is rejected with 710022002, retry it once in CloakBrowser (needs CloakBrowser); `0` turns it off |
 | `DOUBAO_ALLOW_PAID` | `1` | Use paid quota after the Doubao free quota runs out; `0` = switch accounts |
+| `DOUBAO_CONFIRM_MATERIAL_AUTH` | `1` | Confirm the Doubao material authorization card once (the operator takes on the commitment); `0` = do not confirm, end before generation |
 | `DOUBAO_AUTO_NO_WATERMARK` | `1` | Turn off the visible "AI generated" watermark on Doubao accounts |
 | `DOLA_IMAGE_TIMEOUT` | `240` | Maximum seconds for one image request |
 

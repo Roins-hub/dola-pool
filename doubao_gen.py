@@ -211,6 +211,8 @@ def _messages(chain: Any) -> list[dict]:
         ext = raw.get("ext") if isinstance(raw.get("ext"), dict) else {}
         out.append({
             "index": index,
+            "message_id": str(raw.get("message_id") or ""),
+            "chat_ability": ext.get("chat_ability") if isinstance(ext.get("chat_ability"), str) else "",
             "upstream_error": upstream_error.from_message(raw),
             "bot": str(raw.get("user_type")) == "2",
             "text": "\n".join(texts),
@@ -338,6 +340,31 @@ def wants_authorization(message: dict) -> bool:
     return any(str((b or {}).get("scene")) == AUTH_SCENE for b in message.get("buttons") or [])
 
 
+def authorization_request(messages: list[dict], card: dict) -> tuple[str, str, dict | None]:
+    """授权卡的「确认生成」按钮 → (原请求文字, creation_btn_rely_info, 原请求的 chat_ability)。
+
+    网页点这个按钮（command=SendInvisibleMsg）不是发一句话，而是把卡片指向的原请求
+    （creation_btn_rely_info.raw_req_msg_id）连同它的 chat_ability 以隐藏消息重发一次，
+    并在请求 ext 里带上按钮的 creation_btn_rely_info。拿不到按钮凭据或原请求时返回空串。
+    """
+    button = next((b for b in card.get("buttons") or [] if str((b or {}).get("scene")) == AUTH_SCENE), None)
+    rely = ((button or {}).get("extra") or {}).get("creation_btn_rely_info")
+    if not isinstance(rely, str) or not rely:
+        return "", "", None
+    try:
+        raw_id = str(json.loads(rely).get("raw_req_msg_id_str") or "")
+    except (TypeError, ValueError, AttributeError):
+        return "", "", None
+    source = next((m for m in messages if not m["bot"] and raw_id and m.get("message_id") == raw_id), None)
+    if not source or not source["text"]:
+        return "", "", None
+    try:
+        ability = json.loads(source.get("chat_ability") or "")
+    except (TypeError, ValueError):
+        ability = None
+    return source["text"], rely, ability if isinstance(ability, dict) and ability.get("ability_param") else None
+
+
 def looks_like_accepted(text: str) -> bool:
     c = _compact(text)
     return any(k in c for k in ("视频生成已提交", "本次生成将消耗", "将消耗付费额度，并", "视频生成好后",
@@ -403,8 +430,22 @@ def _keep_reply_text(dp, text: str):
     return hook
 
 
+def _hidden_resend(base, *, ability: dict | None, extra_ext: dict):
+    """按钮式确认：消息设为隐藏（MessageStatus_INVISIBLE=1），沿用原请求的 chat_ability，ext 带按钮凭据。"""
+    def hook(payload):
+        if base:
+            base(payload)
+        for message in payload.get("messages") or []:
+            message["message_status"] = 1
+        if ability:
+            payload["chat_ability"] = dict(ability)
+        payload.setdefault("ext", {}).update(extra_ext)
+    return hook
+
+
 def _reply(dp, session, ctx, headers, conversation_id: str, text: str = CONFIRM_REPLY, *,
-           model: str = "", duration: int = 5, ratio: str | None = None):
+           model: str = "", duration: int = 5, ratio: str | None = None,
+           button_ext: dict | None = None, ability: dict | None = None):
     """在会话里回一句话。
 
     给了 model（视频任务的确认 / 付费确认）时按「视频生成」技能发：带和首条消息同样的 chat_ability。
@@ -420,10 +461,32 @@ def _reply(dp, session, ctx, headers, conversation_id: str, text: str = CONFIRM_
         model=model, ratio=ratio, timeout_sec=180, video_ability=bool(model), conversation_id=conversation_id,
         section_id=dp.find_latest_section_id(chain) or "",
         last_message_index=dp.find_latest_message_index(chain),
-        payload_hook=_keep_reply_text(dp, text) if model else None)
+        payload_hook=(_hidden_resend(_keep_reply_text(dp, text) if model else None,
+                                     ability=ability, extra_ext=button_ext) if button_ext
+                      else _keep_reply_text(dp, text) if model else None))
     if getattr(result, "error", ""):
         raise TimeoutError("豆包确认回复未取得有效回执，保留原会话核对，未重复提交")
     return result
+
+
+def _confirm_authorization(dp, session, ctx, headers, conversation_id: str, msgs: list[dict], card: dict, *,
+                           authorized: bool, model: str, duration: int, ratio: str | None):
+    """素材授权确认卡：按网页点「确认生成」的方式确认一次。确认不了或再次出现时在生成前结束，不换号重提。"""
+    text = card["text"]
+    if not config.DOUBAO_CONFIRM_MATERIAL_AUTH:
+        why = "未开启自动确认（DOUBAO_CONFIRM_MATERIAL_AUTH=0）"
+    elif authorized:
+        why = "已确认过一次，豆包再次要求确认，未重复确认"
+    else:
+        request, rely, ability = authorization_request(msgs, card)
+        if request:
+            _reply(dp, session, ctx, headers, conversation_id, text=request, model=model, duration=duration,
+                   ratio=ratio, button_ext={"creation_btn_rely_info": rely}, ability=ability)
+            return
+        why = "卡片缺少确认凭据，无法按按钮方式确认"
+    raise UpstreamReplyError(
+        "素材授权待确认", f"豆包要求确认参考图素材（含人物肖像）已获授权后才开始生成；尚未生成，{why}。上游原文：{text[:800]}",
+        generation_started=False, allow_account_retry=False)
 
 
 def nowatermark_url(dp, session, ctx, vid: str) -> tuple[str, float | None]:
@@ -661,6 +724,7 @@ def generate_doubao_video(
         plain_seen: set[int] = set()
         failure_seen: tuple = (None, 0)
         creation_confirmation = False
+        authorized = False
         responder = dola_responder.DialogueResponder(
             prompt=prompt, ratio=ratio, duration=duration, attachments=len(images), model=display, site="豆包")
         with _progress_heartbeat(on_poll):
@@ -724,6 +788,14 @@ def generate_doubao_video(
                     text = m["text"]
                     seen_texts.append(text)
                     _emit_upstream_note(on_poll, dp, [text])
+                    if wants_authorization(m) and not accepted and not failed:
+                        # 卡片原文带「侵权」「违反」字样：先于拒稿分类处理，不交给 AI 判断
+                        _confirm_authorization(dp, session, ctx, headers, conversation_id, msgs, m,
+                                               authorized=authorized, model=upstream_model,
+                                               duration=duration, ratio=ratio)
+                        authorized = True
+                        _emit_note_text(on_poll, "豆包：已确认素材授权卡，等待生成")
+                        continue
                     if not accepted and not failed and plain_chat_reply(m):
                         label = reply_failure(text)
                         if label in ("内容拒绝", "肖像保护", "内容审核", "版权侵权"):
@@ -732,7 +804,7 @@ def generate_doubao_video(
                         if label == "需要补充信息":
                             raise UpstreamReplyError(label, text[:1000],
                                                      generation_started=False, allow_account_retry=False)
-                        if confirms or creation_confirmation:
+                        if confirms or creation_confirmation or authorized:
                             raise TimeoutError(
                                 f"{account} 确认回复被普通对话接走，保留原会话核对，未重复提交：{text[:1000]}")
                         if any(row["creation"] or row["generating"] for row in msgs if row["bot"]):
@@ -760,13 +832,6 @@ def generate_doubao_video(
                             continue
                         raise VideoSkillUnavailableError(
                             f"{account} 豆包由普通对话助手回复，未进入视频创作。上游原文：{text[:1000]}")
-                    if wants_authorization(m) and not accepted and not failed:
-                        # 授权承诺只能由素材提供者作出：不代点、不交给 AI 判断，也不换号重提
-                        raise UpstreamReplyError(
-                            "素材授权待确认",
-                            f"豆包要求确认参考图素材（含人物肖像）已获授权后才开始生成；尚未生成，号池未代为确认。"
-                            f"上游原文：{text[:800]}",
-                            generation_started=False, allow_account_retry=False)
                     if looks_like_plan_unavailable(text):
                         raise DoubaoPlanUnavailableError(f"{account} 豆包套餐不支持创作：{text[:300]}")
                     if looks_like_model_locked(text):
@@ -784,7 +849,7 @@ def generate_doubao_video(
                         paid = True
                         _emit_note_text(on_poll, "豆包：免费额度已用完，已确认使用付费额度")
                         continue
-                    if (confirms or creation_confirmation) and plain_chat_reply(m):
+                    if (confirms or creation_confirmation or authorized) and plain_chat_reply(m):
                         raise TimeoutError(
                             f"{account} 确认回复被普通对话接走，保留原会话核对，未重复提交：{text[:1000]}")
                     if looks_like_accepted(text):

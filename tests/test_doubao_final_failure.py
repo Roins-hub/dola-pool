@@ -137,24 +137,83 @@ AUTH_EXT = {"agent_name": "Agent-Creation", "use_creation": "1", "ai_creation_re
             "ai_creation_tool_list": "[]"}
 
 
-@pytest.mark.parametrize("text", [AUTH_TEXT, "我将为你生成一条 15 秒、16:9 横屏的视频。\n" + AUTH_TEXT])
-def test_authorization_card_stops_without_ai_confirm_or_account_switch(monkeypatch, tmp_path, text):
+RELY = json.dumps({"raw_req_msg_id": 631, "raw_req_msg_id_str": "631", "scene": AUTH_BUTTON["scene"],
+                   "attach_message_ids": [631], "attach_message_id_str_list": ["631"]})
+CARD_BUTTON = {**AUTH_BUTTON, "extra": {"creation_btn_rely_info": RELY}}
+RAW_ABILITY = {"ability_type": 17, "ability_param": json.dumps(
+    {"ratio": "16:9", "model": "seedance_v2.0_mini", "duration": 5,
+     "input_box_content": {"user_input_content": "确认生成", "reply_message_format": "生成视频：%s"}})}
+
+
+def with_raw_request(dp):
+    """线上会话里卡片指向的原请求：用户回的那条「确认生成」（2026-11-25 acc154，第 7 条）。"""
+    real = dp.fetch_single_chain
+
+    def fetch(*a, **k):
+        chain = real(*a, **k)
+        if dp.replies:                                   # 回过参数确认之后才有这条
+            chain["downlink_body"]["pull_singe_chain_downlink_body"]["messages"].append(
+                {"message_id": "631", "index_in_conv": 4, "user_type": 1, "ext": {"chat_ability": json.dumps(RAW_ABILITY)},
+                 "content_block": [{"content": {"text_block": {"text": "确认生成"}}, "is_finish": True}]})
+        return chain
+    dp.fetch_single_chain = fetch
+    return dp
+
+
+def no_ai(monkeypatch):
     import dola_responder
-    import failure_text
-    from generation_errors import UpstreamReplyError, portrait_refusal
-    short_timeout(monkeypatch)
     monkeypatch.setattr(dola_responder, "enabled", lambda: True)
+
     async def never(*a, **k):
-        raise AssertionError("授权承诺不能交给 AI 判断")
+        raise AssertionError("授权卡不能交给 AI 判断")
     monkeypatch.setattr(dola_responder.DialogueResponder, "decide", never)
-    dp = _FakeDP([(0, CONFIRM, []), (1, text, [AUTH_BUTTON], AUTH_EXT)])
+
+
+@pytest.mark.parametrize("text", [AUTH_TEXT, "我将为你生成一条 15 秒、16:9 横屏的视频。\n" + AUTH_TEXT])
+def test_authorization_card_is_confirmed_like_the_web_button(monkeypatch, tmp_path, text):
+    no_ai(monkeypatch)
+    monkeypatch.setattr(doubao_gen.config, "DOUBAO_CONFIRM_MATERIAL_AUTH", True)
+    dp = with_raw_request(_FakeDP([(0, CONFIRM, []), (1, text, [CARD_BUTTON], AUTH_EXT),
+                                   (2, FREE_ACCEPTED, [])], vid_after=2))
+    assert _gen(monkeypatch, tmp_path, dp)["unwatermarked"] is True
+    assert dp.replies == ["确认生成", "确认生成"]
+    sent = dp.reply_payloads[1]
+    assert all(m["message_status"] == 1 for m in sent["messages"])          # 隐藏消息，和网页按钮一致
+    assert sent["ext"]["creation_btn_rely_info"] == RELY and sent["chat_ability"] == RAW_ABILITY
+    assert "creation_btn_rely_info" not in dp.reply_payloads[0].get("ext", {})
+
+
+def authorization_failure(monkeypatch, tmp_path, script, *, enabled=True):
+    from generation_errors import UpstreamReplyError, portrait_refusal
+    import failure_text
+    short_timeout(monkeypatch)
+    no_ai(monkeypatch)
+    monkeypatch.setattr(doubao_gen.config, "DOUBAO_CONFIRM_MATERIAL_AUTH", enabled)
+    dp = with_raw_request(_FakeDP(script))
     with pytest.raises(UpstreamReplyError) as failure:
         _gen(monkeypatch, tmp_path, dp)
     error = failure.value
     assert error.category == "素材授权待确认" and AUTH_TEXT in str(error)
     assert error.generation_started is False and not error.allow_account_retry and not portrait_refusal(error)
-    assert len(dp.replies) == 1                        # 只有参数确认那一次，授权卡没有回
     assert failure_text.label_for(str(error)) == "素材授权待确认"
+    return error, dp
+
+
+def test_authorization_card_is_not_confirmed_when_disabled(monkeypatch, tmp_path):
+    error, dp = authorization_failure(monkeypatch, tmp_path, [(0, CONFIRM, []), (1, AUTH_TEXT, [CARD_BUTTON], AUTH_EXT)],
+                                      enabled=False)
+    assert "DOUBAO_CONFIRM_MATERIAL_AUTH=0" in str(error) and len(dp.replies) == 1
+
+
+def test_second_authorization_card_is_not_confirmed_again(monkeypatch, tmp_path):
+    error, dp = authorization_failure(monkeypatch, tmp_path, [
+        (0, CONFIRM, []), (1, AUTH_TEXT, [CARD_BUTTON], AUTH_EXT), (2, AUTH_TEXT, [CARD_BUTTON], AUTH_EXT)])
+    assert "已确认过一次" in str(error) and len(dp.replies) == 2
+
+
+def test_authorization_card_without_its_credential_is_not_guessed(monkeypatch, tmp_path):
+    error, dp = authorization_failure(monkeypatch, tmp_path, [(0, CONFIRM, []), (1, AUTH_TEXT, [AUTH_BUTTON], AUTH_EXT)])
+    assert "缺少确认凭据" in str(error) and len(dp.replies) == 1
 
 
 def test_only_the_button_scene_marks_an_authorization_card():

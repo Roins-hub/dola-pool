@@ -520,6 +520,10 @@ IMAGE_REQUEST_TIMEOUT = max(30, int(os.getenv("DOLA_IMAGE_TIMEOUT", "240")))
 # 免费额度用完时，豆包问「本次将消耗付费额度，是否继续？」：1 = 自动确认走付费额度；
 # 0 = 不走付费，判这个号今天额度用完、换号。
 DOUBAO_ALLOW_PAID = os.getenv("DOUBAO_ALLOW_PAID", "1") == "1"
+# 豆包素材授权确认卡（「你在本功能中上传、使用的素材，均已获充分授权…」+「确认生成」按钮）：
+# 1 = 按网页点按钮的方式确认一次后继续生成；0 = 不确认，任务在生成前以「素材授权待确认」结束。
+# 开启即表示由号池使用方承担素材授权承诺（豆包按钮的含义）。
+DOUBAO_CONFIRM_MATERIAL_AUTH = os.getenv("DOUBAO_CONFIRM_MATERIAL_AUTH", "1") == "1"
 # 豆包号每天最多派几条（本地记账口径，每条记 1）。豆包不报剩余条数，真实额度以上游话术为准
 # （额度用完 / 免费用完且不走付费 → 当天不再派），这个数只是兜底上限。
 DOUBAO_DAILY_LIMIT = max(1, int(os.getenv("DOUBAO_DAILY_LIMIT", "999")))
