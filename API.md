@@ -681,7 +681,7 @@ dola 自 2026-10-12 起对 30 秒请求回「只支持 4～15 秒，按 15 秒�
 | POST | `/api/admin/accounts/{name}/verify` | 验证登录态（cookie 号走纯 API 探活，需服务器装 Node.js） |
 | POST | `/api/admin/accounts/batch-verify` | 批量验证（返回 `job_id`） |
 | GET | `/api/admin/batch/{job_id}` | 批量任务进度 |
-| POST | `/api/admin/accounts/{name}/test-generate` | 用指定账号跑一条真实出片 |
+| POST | `/api/admin/accounts/{name}/test-generate` | 用指定账号跑一条真实出片；可带 `reference_images`（URL 或 data: URL，规则同客户任务，测试结束即删除） |
 | GET | `/api/admin/test-gen/{task_id}` | 测试出片进度 |
 | POST | `/api/admin/accounts/import-cookies` | 多行 Cookie 头文本批量导入（按 `sessionid` 去重，自动命名 `accN`） |
 | POST | `/api/admin/accounts/import-accounts` | 多行「邮箱/密码/TOTP」批量登录导入 |

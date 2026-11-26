@@ -2193,7 +2193,8 @@ class BrowserPool:
 
     async def test_generate(self, account: str, prompt: str, ratio: str | None = None,
                             duration: int = 10, model: str = "seedance-2.0-fast",
-                            on_poll=None, on_conversation_id=None, execution_mode="auto", video_count=1) -> dict:
+                            on_poll=None, on_conversation_id=None, execution_mode="auto", video_count=1,
+                            reference_image_paths: list[str] | None = None) -> dict:
         """账号级测试出片：强制用指定账号生成一条，返回成功/失败与成品 URL。
 
         不经过号池选号调度（跳过 _schedulable / 每日上限等），只验证该号本身能否出片。
@@ -2219,7 +2220,7 @@ class BrowserPool:
                 result = await self._generate_effective(
                     account, prompt, ratio, duration, model,
                     on_conversation_id=on_conversation_id, on_poll=on_poll, on_balance=on_balance,
-                    reference_image_paths=[],
+                    reference_image_paths=list(reference_image_paths or []),
                     work_mode=using_work,
                     video_count=video_count,
                     execution_mode=execution_mode,

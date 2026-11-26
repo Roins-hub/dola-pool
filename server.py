@@ -421,6 +421,8 @@ class TestGenRequest(BaseModel):
     ratio: str | None = None
     execution_mode: Literal["auto", "chat", "work"] = "auto"
     video_count: Literal[1, 2] = 1
+    # 参考图 URL 或 data: URL，与客户任务的 reference_images 同样校验、下载；测试结束即删除
+    reference_images: list[str] = Field(default_factory=list)
     # 号处于风控/限流暂停/没绑代理等状态时，先返回提醒；确认后带 force=true 再发
     force: bool = False
 
@@ -3611,6 +3613,11 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         if warnings:
             # 前端认 TEST_GEN_WARN: 前缀，弹确认框列出原因，确认后带 force=true 重发
             raise HTTPException(409, "TEST_GEN_WARN:" + "\n".join(warnings))
+    try:
+        references = await validate_reference_urls(body.reference_images)
+        references = await asyncio.to_thread(materialize_data_urls, references)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     task_id = "test_" + uuid.uuid4().hex
     TEST_JOBS[task_id] = {
         "account": name,
@@ -3626,12 +3633,15 @@ async def admin_test_generate(name: str, body: TestGenRequest,
         "error": "",
     }
     asyncio.create_task(_run_test_generate(
-        task_id, name, body.prompt, body.ratio, body.duration, body.model, execution_mode, body.video_count))
+        task_id, name, body.prompt, body.ratio, body.duration, body.model, execution_mode, body.video_count,
+        references))
     return {"task_id": task_id, "account": name}
 
 
 async def _run_test_generate(task_id: str, name: str, prompt: str,
-                             ratio: str | None, duration: int, model: str, execution_mode="auto", video_count=1) -> None:
+                             ratio: str | None, duration: int, model: str, execution_mode="auto", video_count=1,
+                             reference_images: list[str] | None = None) -> None:
+    reference_root = None
     try:
         # 测试生成同样消耗账号额度，因此写入正式任务库，便于在任务列表追踪结果。
         store.create(task_id, model, prompt, ratio, duration, account=name, execution_mode=execution_mode, video_count=video_count)
@@ -3664,8 +3674,14 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
                 fields["upstream_wait"] = int(wait_seconds)
             store.update(task_id, **fields)
 
+        reference_root, reference_paths = await download_reference_images(reference_images or [], task_id)
+        if reference_paths:
+            thumbs = await asyncio.to_thread(save_reference_thumbnails, reference_paths, task_id)
+            if thumbs:
+                store.update(task_id, reference_thumbs=json.dumps(thumbs))
         result = await pool.test_generate(name, prompt, ratio, duration, model, on_poll=on_poll,
-                                          on_conversation_id=on_conversation_id, execution_mode=execution_mode, video_count=video_count)
+                                          on_conversation_id=on_conversation_id, execution_mode=execution_mode,
+                                          video_count=video_count, reference_image_paths=reference_paths)
         TEST_JOBS[task_id]["result"] = result
         if result.get("videos"):
             result["videos"] = [{**item, "video_url": f"{config.PUBLIC_BASE}/videos/{Path(item['local_path']).name}"}
@@ -3706,6 +3722,10 @@ async def _run_test_generate(task_id: str, name: str, prompt: str,
                          **upstream_error.failure_fields(exc), finished_at=time.time())
         except Exception:
             pass
+    finally:
+        if reference_root:
+            shutil.rmtree(reference_root, ignore_errors=True)
+        cleanup_local_references(reference_images or [])
 
 
 def _is_risk_error(err: str) -> bool:
